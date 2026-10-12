@@ -94,7 +94,7 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 9 | List & UX | Sticky table header, incremental order while scanning, A-Z/0-9 sort on header click when idle, real-time search (title), filters (mojibake/traditional/no-lyrics/no-cover/no-artist), paginated rendering, lazy cover loading, mobile responsive (vertical/landscape) |
 | 10 | Theme | Dark/light modern flat UI, language toggle 中/EN |
 | 11 | Security | Salted password hashing (auto-migrates legacy plaintext), login rate limiting, CSRF guard, security headers (CSP/nosniff/X-Frame), request size limits, parameterized SQL, no shell command injection |
-| 12 | Plugin system | All scraping sources are plugin-style toggles in **Settings** (no code changes to add/remove); FFmpeg is an installable/configurable tool plugin; a generic plugin API (`GET/POST /api/plugins`) reserves `download` / `protocol` kinds for future plugins (downloaders, auto-switch strategy, Subsonic, …) |
+| 12 | Plugin system | Built-in plugins (scrape sources / FFmpeg) are toggle-only & undeletable; **3rd-party plugins import as ZIP packages** (extract & ready, `plugin.json` + executable entry, cross-platform, JSON run protocol, persistent after restart, deletable); generic plugin API reserves `download` / `protocol` kinds for future plugins (downloaders, auto-switch strategy, Subsonic, …) |
 
 ### Scraping sources
 
@@ -130,8 +130,9 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | POST | `/api/scrape/batch` | Batch scrape (background) |
 | GET | `/api/scrape/jobs/{id}` `/api/scrape/search` `/api/scrape/sources` | Job progress / search / sources |
 | GET | `/api/lyrics` | Fetch lyrics |
-| POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/set-chorus` `/api/identify` | Convert / fix mojibake / script convert / chorus / identify |
+| POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/identify` | Convert / fix mojibake / script convert / identify |
 | GET/POST | `/api/plugins` | List / toggle / configure all plugins (scrape sources, FFmpeg, reserved kinds) |
+| POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | Import ZIP/JSON plugin · delete 3rd-party plugin · invoke ZIP plugin entry |
 | GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg probe · one-click install (container) |
 | GET/POST | `/api/settings` | Read/write settings (DB-backed) |
 | POST | `/api/change-password` | Change password |
@@ -237,7 +238,7 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 9 | 列表与体验 | 表头冻结；扫描中递增排序不乱序，暂停/完成后点表头 A-Z 0-9（中文按拼音）；输入即搜歌名；筛选（乱码/繁体/无歌词/无封面/无艺术家）；分页渲染不卡、封面懒加载；手机横竖屏适配 |
 | 10 | 主题与语言 | 黑/白现代扁平主题；界面中英双语一键切换 |
 | 11 | 安全加固 | 密码加盐哈希存储（旧明文自动迁移）、登录失败限流、CSRF 防护、安全响应头（CSP/nosniff/X-Frame）、请求体大小限制、SQL 全参数化、命令无注入风险 |
-| 12 | 插件系统 | 全部刮削源改为插件式开关（设置页直接启停，无需改代码）；FFmpeg 为可安装/可配置工具插件；通用插件接口（`GET/POST /api/plugins`）预留 download/protocol 两类，后续接入下载器、自动换源、Subsonic 等插件 |
+| 12 | 插件系统 | 内置插件（刮削源 / FFmpeg）只有开关、不可删除；**第三方插件以 ZIP 插件包导入**（解压即用：plugin.json + 可执行入口、跨平台、JSON 调用协议、重启保留、可删除）；通用插件接口预留 download/protocol 两类，后续接入下载器、自动换源、Subsonic 等插件 |
 
 ### 刮削源清单
 
@@ -273,8 +274,9 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | POST | `/api/scrape/batch` | 批量刮削（后台任务） |
 | GET | `/api/scrape/jobs/{id}` `/api/scrape/search` `/api/scrape/sources` | 任务进度 / 搜索 / 源列表 |
 | GET | `/api/lyrics` | 获取歌词 |
-| POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/set-chorus` `/api/identify` | 转换 / 乱码修复 / 简繁转换 / 合唱 / 音频识别 |
+| POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/identify` | 转换 / 乱码修复 / 简繁转换 / 音频识别 |
 | GET/POST | `/api/plugins` | 插件列表 / 启停与配置（刮削源、FFmpeg、预留类型） |
+| POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | 导入 ZIP/JSON 插件 · 删除第三方插件 · 调用 ZIP 插件入口 |
 | GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg 探测 · 容器内一键安装 |
 | GET/POST | `/api/settings` | 读写配置（存数据库） |
 | POST | `/api/change-password` | 修改密码 |

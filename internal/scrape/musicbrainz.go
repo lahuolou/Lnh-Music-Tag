@@ -5,19 +5,31 @@
 package scrape
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 const (
 	mbBase    = "https://musicbrainz.org/ws/2"
 	coverBase = "https://coverartarchive.org"
 	userAgent = "LNH-MusicTag/0.1 (local prototype; contact: dev@example.invalid)"
+)
+
+// API 速率限制（文档口径）：
+//   - AcoustID 免费层：3 请求/秒（桶容量 1，保持稳定间隔）
+//   - MusicBrainz：1 请求/秒/IP（硬性上限）
+var (
+	acoustidLimit = rate.Limit(3)
+	musicbrainzQPS = rate.Limit(1)
 )
 
 // Client is a MusicBrainz scraper.
@@ -34,10 +46,25 @@ type Client struct {
 	// SpotifyID/SpotifySecret enable Spotify search (client credentials).
 	SpotifyID     string
 	SpotifySecret string
+
+	acOnce, mbOnce sync.Once
+	acLim, mbLim   *rate.Limiter
 }
 
 func NewClient() *Client {
 	return &Client{HTTP: &http.Client{Timeout: 20 * time.Second}}
+}
+
+// acoustidLimiter 返回 AcoustID 3 QPS 令牌桶（懒初始化）。
+func (c *Client) acoustidLimiter() *rate.Limiter {
+	c.acOnce.Do(func() { c.acLim = rate.NewLimiter(acoustidLimit, 1) })
+	return c.acLim
+}
+
+// musicbrainzLimiter 返回 MusicBrainz 1 QPS 令牌桶（懒初始化）。
+func (c *Client) musicbrainzLimiter() *rate.Limiter {
+	c.mbOnce.Do(func() { c.mbLim = rate.NewLimiter(musicbrainzQPS, 1) })
+	return c.mbLim
 }
 
 // RecordingResult is a single search hit.
@@ -135,6 +162,10 @@ type ReleaseDetail struct {
 	Genres  []string
 	Date    string
 	Tracks  []ReleaseTrack
+	// 扩展元素
+	Language  string
+	AlbumType string
+	TotalDiscs int
 }
 
 // ReleaseTrack is a track within a release.
@@ -154,13 +185,19 @@ func (c *Client) ReleaseDetail(mbid string) (*ReleaseDetail, error) {
 	}
 	var resp struct {
 		Date         string `json:"date"`
+		Language     string `json:"language"`
 		ArtistCredit []struct {
 			Name string `json:"name"`
 		} `json:"artist-credit"`
 		Genres []struct {
 			Name string `json:"name"`
 		} `json:"genres"`
+		ReleaseGroup struct {
+			PrimaryType string `json:"primary-type"`
+		} `json:"release-group"`
 		Media []struct {
+			Position   int `json:"position"`
+			TrackCount int `json:"track-count"`
 			Tracks []struct {
 				Title  string `json:"title"`
 				Number string `json:"number"`
@@ -170,7 +207,7 @@ func (c *Client) ReleaseDetail(mbid string) (*ReleaseDetail, error) {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, err
 	}
-	rd := &ReleaseDetail{Date: resp.Date}
+	rd := &ReleaseDetail{Date: resp.Date, Language: resp.Language, AlbumType: resp.ReleaseGroup.PrimaryType, TotalDiscs: len(resp.Media)}
 	for _, ac := range resp.ArtistCredit {
 		if ac.Name != "" {
 			rd.Artists = append(rd.Artists, ac.Name)
@@ -192,11 +229,17 @@ func (c *Client) ReleaseDetail(mbid string) (*ReleaseDetail, error) {
 // LookupByFingerprint identifies a recording from a Chromaprint fingerprint
 // via the AcoustID API (requires AcoustIDAPIKey). Returns the best matching
 // recording; error when the key is missing or nothing matches.
+// 限速：3 QPS（AcoustID 免费层硬性上限）。
 func (c *Client) LookupByFingerprint(fp string, durationSec int) (RecordingResult, error) {
 	if c.AcoustIDAPIKey == "" {
 		return RecordingResult{}, fmt.Errorf("AcoustID API Key 未设置（设置页填写）")
 	}
-	u := fmt.Sprintf("https://api.acoustid.org/v2/lookup?client=%s&fingerprint=%s&meta=recordings&format=json",
+	if err := c.acoustidLimiter().Wait(context.Background()); err != nil {
+		return RecordingResult{}, err
+	}
+	// meta=recordings+releasegroups+compress：返回录音 + 发行组信息并 GZip 压缩。
+	// 服务端 gzip 由 Go http.Transport 自动解压。
+	u := fmt.Sprintf("https://api.acoustid.org/v2/lookup?client=%s&fingerprint=%s&meta=recordings+releasegroups+compress&format=json",
 		url.QueryEscape(c.AcoustIDAPIKey), url.QueryEscape(fp))
 	if durationSec > 0 {
 		u += fmt.Sprintf("&duration=%d", durationSec)
@@ -213,9 +256,9 @@ func (c *Client) LookupByFingerprint(fp string, durationSec int) (RecordingResul
 		Results []struct {
 			Score      float64 `json:"score"`
 			Recordings []struct {
-				ID       string `json:"id"`
-				Title    string `json:"title"`
-				Duration int    `json:"duration"`
+				ID       string  `json:"id"`
+				Title    string  `json:"title"`
+				Duration float64 `json:"duration"`
 				Artists  []struct {
 					Name string `json:"name"`
 				} `json:"artists"`
@@ -243,7 +286,7 @@ func (c *Client) LookupByFingerprint(fp string, durationSec int) (RecordingResul
 				continue
 			}
 			if best.MBID == "" { // 取第一个有效匹配（分数最高）
-				best = RecordingResult{MBID: rec.ID, Title: rec.Title, Duration: rec.Duration}
+				best = RecordingResult{MBID: rec.ID, Title: rec.Title, Duration: int(rec.Duration)}
 				for _, a := range rec.Artists {
 					if a.Name != "" {
 						best.Artists = append(best.Artists, a.Name)
@@ -262,6 +305,125 @@ func (c *Client) LookupByFingerprint(fp string, durationSec int) (RecordingResul
 		return RecordingResult{}, fmt.Errorf("音频指纹未匹配到录音（AcoustID 无结果）")
 	}
 	return best, nil
+}
+
+// RecordingDetail 是 AcoustID 命中后由 MusicBrainz Recording lookup 补全的
+// 完整元数据：标题、艺术家、专辑、专辑艺术家、流派、年代、曲目号。
+type RecordingDetail struct {
+	MBID        string
+	Title       string
+	Artists     []string
+	Album       string
+	AlbumArtist []string
+	Date        string
+	Genres      []string
+	TrackNumber string
+	// 扩展元素（MusicBrainz Release/ReleaseGroup 提供）
+	Language   string
+	AlbumType  string
+	DiscNumber int
+	TotalTracks int
+	TotalDiscs  int
+}
+
+// LookupRecording queries MusicBrainz for the full metadata of a recording
+// (inc=artists+releases+release-groups+tags) and picks the first release for
+// album / album-artist / date / track-number enrichment.
+// 限速：1 QPS（MusicBrainz 硬性上限）。
+func (c *Client) LookupRecording(mbid string) (*RecordingDetail, error) {
+	if mbid == "" {
+		return nil, fmt.Errorf("recording MBID 为空")
+	}
+	if err := c.musicbrainzLimiter().Wait(context.Background()); err != nil {
+		return nil, err
+	}
+	u := fmt.Sprintf("%s/recording/%s?inc=artists+releases+release-groups+tags&fmt=json",
+		mbBase, url.PathEscape(mbid))
+	body, err := c.get(u)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		ArtistCredit []struct {
+			Name string `json:"name"`
+		} `json:"artist-credit"`
+		Tags []struct {
+			Name  string `json:"name"`
+			Count int    `json:"count"`
+		} `json:"tags"`
+		ReleaseGroups []struct {
+			FirstReleaseDate string `json:"first-release-date"`
+			PrimaryType      string `json:"primary-type"`
+		} `json:"release-groups"`
+		Releases []struct {
+			Title    string `json:"title"`
+			Date     string `json:"date"`
+			Language string `json:"language"`
+			ArtistCredit []struct {
+				Name string `json:"name"`
+			} `json:"artist-credit"`
+			Media []struct {
+				Position   int `json:"position"`
+				TrackCount int `json:"track-count"`
+				Tracks     []struct {
+					Title  string `json:"title"`
+					Number string `json:"number"`
+				} `json:"tracks"`
+			} `json:"media"`
+		} `json:"releases"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse musicbrainz recording: %w", err)
+	}
+	d := &RecordingDetail{MBID: resp.ID, Title: resp.Title}
+	for _, ac := range resp.ArtistCredit {
+		if ac.Name != "" {
+			d.Artists = append(d.Artists, ac.Name)
+		}
+	}
+	for _, g := range resp.Tags {
+		if g.Name != "" {
+			d.Genres = append(d.Genres, g.Name)
+		}
+	}
+	if len(resp.ReleaseGroups) > 0 {
+		if resp.ReleaseGroups[0].FirstReleaseDate != "" {
+			d.Date = resp.ReleaseGroups[0].FirstReleaseDate
+		}
+		d.AlbumType = resp.ReleaseGroups[0].PrimaryType
+	}
+	if len(resp.Releases) > 0 {
+		rel := resp.Releases[0]
+		d.Album = rel.Title
+		if d.Date == "" {
+			d.Date = rel.Date
+		}
+		d.Language = rel.Language
+		for _, ac := range rel.ArtistCredit {
+			if ac.Name != "" {
+				d.AlbumArtist = append(d.AlbumArtist, ac.Name)
+			}
+		}
+		d.TotalDiscs = len(rel.Media)
+		// 曲目号：在该发行版 media 中按标题匹配本录音的曲目；
+		// 同时补全光盘编号与总音轨数。
+		for _, med := range rel.Media {
+			for _, tr := range med.Tracks {
+				if strings.EqualFold(strings.TrimSpace(tr.Title), strings.TrimSpace(resp.Title)) && tr.Number != "" {
+					d.TrackNumber = tr.Number
+					d.DiscNumber = med.Position
+					d.TotalTracks = med.TrackCount
+					break
+				}
+			}
+			if d.TrackNumber != "" {
+				break
+			}
+		}
+	}
+	return d, nil
 }
 
 // FetchCover retrieves the front cover for a release as bytes. Returns

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -29,10 +30,11 @@ var keyedSources = map[string]string{
 func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 	for _, s := range ms.Sources() {
 		name := "scrape." + s.Name
-		builtin := s.Name == "auto"
+		// 内置插件（内部）：只有开关，不可删除
+		builtin := true
 		keyField := keyedSources[s.Name]
 		// 需 Key 的源默认关闭（并且实际生效），配置 Key 前不参与自动刮削
-		enabled := builtin || keyField == ""
+		enabled := s.Name == "auto" || keyField == ""
 		if !enabled {
 			ms.SetEnabled(s.Name, false)
 		}
@@ -53,6 +55,7 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 		Label:       "FFmpeg",
 		Kind:        PluginTool,
 		Enabled:     true,
+		Builtin:     true,
 		Installable: true,
 		Hint:        "ffHint",
 		Fields: []PluginField{
@@ -60,17 +63,6 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 		},
 	}
 	registerPlugin(ff, nil)
-	// 音乐解锁插件（tool.unlock）：执行逻辑见 unlock_plugin.go。
-	// 内置注册以保证重启后仍在（loadPluginsFromDB 只恢复已注册插件状态）；
-	// unlock.plugin.json 声明保留作导入参考（内置同名时导入会提示已存在）。
-	registerPlugin(&Plugin{
-		Name:    unlockPluginName,
-		Label:   "音乐解锁",
-		Kind:    PluginTool,
-		Enabled: true,
-		Version: "1.0.0",
-		Hint:    "解锁网易云(NCM/UC)、QQ音乐(QMC/MFLAC/MGG/缓存/TM)、酷狗(KGM/VPR)、酷我(KWM)、虾米(XM)、咪咕(MG3D)、喜马拉雅(X2M/X3M)等加密音乐格式。",
-	}, nil)
 	// 预留类型注册示例（后续实现时在此补充）：
 	//   registerPlugin(&Plugin{Name:"download.example", Label:"…", Kind:PluginDownload,...})
 	//   registerPlugin(&Plugin{Name:"protocol.subsonic", Label:"Subsonic", Kind:PluginProtocol,...})
@@ -112,20 +104,34 @@ type pluginImportDecl struct {
 	Fields  []PluginField `json:"fields,omitempty"`
 }
 
-// pluginsImportHandler POST /api/plugins/import 导入第三方插件声明。
-// body 支持三种形态：单对象、{"plugins":[...]}、裸数组。
+// pluginsImportHandler POST /api/plugins/import 导入第三方插件。
+// 支持两种形态：
+//  1. ZIP 插件包（推荐）：包内 plugin.json + 可执行入口，导入即解压即用；
+//  2. JSON 声明：单对象 / {"plugins":[...]} / 裸数组。
 // 校验：name 非空且不得与已注册插件冲突（防止覆盖内置/重复导入）、
 // kind 必须合法。导入成功即注册并持久化（重启后仍在插件列表）。
-// 说明：当前版本第三方插件先以"声明 + 启停 + 配置管理"接入；执行逻辑
-// 通过源码扩展点接入（见 docs/PLUGINS.md）。
-func pluginsImportHandler(cfg *cstore.Config) http.HandlerFunc {
+func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var decls []pluginImportDecl
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
 			return
 		}
+		// ZIP 插件包：魔数 PK\x03\x04
+		if len(body) >= 4 && body[0] == 0x50 && body[1] == 0x4B && body[2] == 0x03 && body[3] == 0x04 {
+			zipName := "plugin.zip"
+			if cd := r.Header.Get("X-File-Name"); cd != "" && len(cd) < 200 {
+				zipName = cd
+			}
+			p, err := importPluginZip(cfg, configDir, body, zipName)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"imported": []Plugin{*p}, "plugins": pluginsSnapshot()})
+			return
+		}
+		var decls []pluginImportDecl
 		// 先探测形态：{plugins:[...]} / 裸数组 / 单对象
 		var probe struct {
 			Plugins []pluginImportDecl `json:"plugins"`
@@ -180,6 +186,76 @@ func pluginsImportHandler(cfg *cstore.Config) http.HandlerFunc {
 		}
 		savePluginsToDB(cfg)
 		writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "plugins": pluginsSnapshot()})
+	}
+}
+
+// pluginsDeleteHandler DELETE /api/plugins/{name} 删除上传导入的第三方插件。
+// 内置插件不可删除（返回 400）；删除后立即持久化。
+func pluginsDeleteHandler(cfg *cstore.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if name == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing plugin name"})
+			return
+		}
+		reg.mu.RLock()
+		p := reg.plugins[name]
+		reg.mu.RUnlock()
+		if p == nil || p.Builtin {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件不存在或是内置插件，无法删除: " + name})
+			return
+		}
+		if !unregisterPlugin(name) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件不存在或是内置插件，无法删除: " + name})
+			return
+		}
+		savePluginsToDB(cfg)
+		deletePluginZip(p)
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": name, "plugins": pluginsSnapshot()})
+	}
+}
+
+// pluginsRunHandler POST /api/plugins/{name}/run 调用第三方 ZIP 插件：
+// body: {"op":"...", ...args} → 宿主以固定 JSON 协议 exec 插件入口，返回插件输出。
+// 仅 ZIP 插件（已解压）支持调用；内置插件无入口则返回明确错误。
+func pluginsRunHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		reg.mu.RLock()
+		p := reg.plugins[name]
+		reg.mu.RUnlock()
+		if p == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "插件不存在: " + name})
+			return
+		}
+		if p.ZipDir == "" || len(p.Entries) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件无可执行入口（内置插件不支持直接调用）: " + name})
+			return
+		}
+		var args map[string]any
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if len(bytes.TrimSpace(body)) > 0 {
+			if err := json.Unmarshal(body, &args); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+				return
+			}
+		}
+		op, _ := args["op"].(string)
+		if op == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少 op 字段"})
+			return
+		}
+		delete(args, "op")
+		res, err := runPluginEntry(p, op, args)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "detail": res})
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
 	}
 }
 

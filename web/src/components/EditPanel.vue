@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
-import { state, cur, toast, refresh } from '../store.js'
+import { state, cur, toast, refresh, busy } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
 
@@ -167,16 +167,16 @@ function srcLabel(name) { return (state.sources.find(s => s.name === name) || { 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px">
       <label style="margin:0">{{ t('fLyrics') }}</label>
       <div class="row" style="gap:6px">
-        <button v-if="cur().hasLrcFile" class="ghost sm" @click="importLrc" :title="t('lrcTitle')">{{ t('importLrc') }}</button>
-        <button class="ghost sm" @click="getLyrics">{{ t('getLyrics') }}</button>
-        <button class="ghost sm" @click="clearLyrics">{{ t('clearLyrics') }}</button>
+        <button v-if="cur().hasLrcFile" class="ghost sm" :disabled="busy()" @click="importLrc" :title="t('lrcTitle')">{{ t('importLrc') }}</button>
+        <button class="ghost sm" :disabled="busy()" @click="getLyrics">{{ t('getLyrics') }}</button>
+        <button class="ghost sm" :disabled="busy()" @click="clearLyrics">{{ t('clearLyrics') }}</button>
       </div>
     </div>
     <textarea rows="8" v-model="f.lyrics"></textarea>
 
     <div class="row" style="margin-top:12px">
-      <button class="sm" @click="save">{{ t('saveTags') }}</button>
-      <button class="ghost sm" @click="clearCover">{{ t('clearCover') }}</button>
+      <button class="sm" :disabled="busy()" @click="save">{{ t('saveTags') }}</button>
+      <button class="ghost sm" :disabled="busy()" @click="clearCover">{{ t('clearCover') }}</button>
     </div>
 
     <label style="margin-top:14px">{{ t('searchScrape') }}</label>
@@ -185,7 +185,7 @@ function srcLabel(name) { return (state.sources.find(s => s.name === name) || { 
         <option v-for="s in state.sources" :key="s.name" :value="s.name" v-show="s.name === 'auto' || s.enabled !== false">{{ s.label }}</option>
       </select>
       <input type="text" v-model="sQuery" :placeholder="t('searchPlaceholder')" @keydown.enter="mbSearch" />
-      <button class="sm" @click="mbSearch">{{ t('search') }}</button>
+      <button class="sm" :disabled="busy() || searching" @click="mbSearch">{{ t('search') }}</button>
     </div>
 
     <div v-if="searching" class="loading" style="margin-top:8px">{{ t('searching') }}</div>
@@ -210,8 +210,8 @@ function srcLabel(name) { return (state.sources.find(s => s.name === name) || { 
           <div class="t"><span class="tag src">{{ srcLabel(r.source) }}</span> {{ r.title }} <span class="muted">{{ r.artists ? r.artists.join(', ') : '' }}</span></div>
           <div class="m">{{ r.album }} <span class="muted">({{ r.date || t('unknown') }})</span></div>
           <div class="acts">
-            <button class="sm" @click="apply(i, true)">{{ t('applyWithCover') }}</button>
-            <button class="ghost sm" @click="apply(i, false)">{{ t('applyTagsOnly') }}</button>
+            <button class="sm" :disabled="busy()" @click="apply(i, true)">{{ t('applyWithCover') }}</button>
+            <button class="ghost sm" :disabled="busy()" @click="apply(i, false)">{{ t('applyTagsOnly') }}</button>
           </div>
         </div>
       </div>

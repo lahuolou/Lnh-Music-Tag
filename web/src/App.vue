@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { state, logout, resumeJobs, verState, checkVersion } from './store.js'
 import { api } from './api.js'
 import { t, lang, setLang } from './i18n.js'
@@ -11,6 +11,7 @@ import BatchPanel from './components/BatchPanel.vue'
 import DedupPanel from './components/DedupPanel.vue'
 import Settings from './views/Settings.vue'
 import Plugins from './views/Plugin.vue'
+import ActivityLog from './components/ActivityLog.vue'
 import Toast from './components/Toast.vue'
 import UpdateModal from './components/UpdateModal.vue'
 import AboutModal from './components/AboutModal.vue'
@@ -28,6 +29,14 @@ function goHome() { state.view = 'home'; }
 
 const aboutOpen = ref(false)
 const gearOpen = ref(false)
+
+// 顶部全局任务徽标：同一时刻只显示一个正在运行的任务（优先批量刮削，
+// 否则工具任务）；进入批量页时由页内统一进度条承担显示，顶部隐藏，避免双进度条。
+const topJob = computed(() => {
+  if (state.batchJob && state.batchJob.status !== 'done') return { type: 'batch', d: state.batchJob.done, t: state.batchJob.total };
+  if (state.toolJob && state.toolJob.status === 'running') return { type: 'tool', d: state.toolJob.done, t: state.toolJob.total };
+  return null;
+});
 
 // 登录成功后自动从公开首页进入后台
 watch(() => state.authed, v => { if (v) state.view = 'app'; })
@@ -61,13 +70,10 @@ onMounted(async () => {
       <span class="badge">{{ t('tracks', { n: state.tracks.length }) }}</span>
       <!-- 新版本徽标：点击打开更新弹窗 -->
       <a v-if="verState.ver" class="badge newver" :title="t('newVerTitle')" @click="verState.showUpdate = true">{{ t('newVer') }} v{{ verState.ver.latest }}</a>
-      <!-- 全局批量进度：后台任务进行中，任意页面可见，点击回到批量页 -->
-      <span v-if="state.batchJob && state.batchJob.status !== 'done'" class="badge batch" :title="t('batchRunningTitle')" @click="tab('batch')">
-        {{ t('batchProgress', { d: state.batchJob.done, t: state.batchJob.total }) }}
-      </span>
-      <!-- 通用工具任务进度（识别/转换/乱码/简繁）：后台运行，任意页面可见 -->
-      <span v-if="state.toolJob && state.toolJob.status === 'running'" class="badge batch" :title="t('jobRunningTitle')" @click="tab('batch')">
-        {{ t('jobRunning', { d: state.toolJob.done, t: state.toolJob.total, c: '' }) }}
+      <!-- 全局任务进度（单个徽标）：批量/工具任务后台运行时任意页面可见；
+           在批量页内由页内统一进度条显示，此处隐藏避免双进度条 -->
+      <span v-if="state.activeTab !== 'batch' && topJob" class="badge batch" :title="t('batchRunningTitle')" @click="tab('list')">
+        {{ topJob.type === 'batch' ? t('batchProgress', { d: topJob.d, t: topJob.t }) : t('jobRunning', { d: topJob.d, t: topJob.t, c: '' }) }}
       </span>
       <button class="ghost sm" :class="{ on: state.activeTab !== 'settings' && state.activeTab !== 'plugins' }" @click="tab('list')">{{ t('list') }}</button>
       <button class="ghost sm" :title="t('home')" @click="goHome">
@@ -80,18 +86,19 @@ onMounted(async () => {
         </button>
         <div class="gear-menu" @click.stop>
           <button @click="toggleTheme(); gearOpen = false">{{ theme === 'dark' ? t('darkMode') : t('lightMode') }}</button>
-          <button @click="toggleLang(); gearOpen = false">{{ lang === 'zh' ? '切换 CN' : 'Switch EN' }}</button>
-          <button @click="tab('settings'); gearOpen = false">{{ t('settings') }}</button>
+          <button @click="toggleLang(); gearOpen = false">{{ lang === 'zh' ? '切换EN' : 'Switch CN' }}</button>
           <button @click="tab('plugins'); gearOpen = false">{{ t('plugins') }}</button>
-          <button @click="aboutOpen = true; gearOpen = false">{{ t('about') }}</button>
+          <button @click="tab('logs'); gearOpen = false">{{ t('logs') }}</button>
           <button @click="checkVersion(true); gearOpen = false">{{ t('checkUpdate') }}</button>
+          <button @click="aboutOpen = true; gearOpen = false">{{ t('about') }}</button>
+          <button @click="tab('settings'); gearOpen = false">{{ t('settings') }}</button>
           <button class="danger" @click="logout">{{ t('logout') }}</button>
         </div>
       </div>
     </nav>
 
-    <!-- 合并页：左 音乐列表，右 编辑/批量/去重 -->
-    <div v-if="state.activeTab !== 'settings' && state.activeTab !== 'plugins'" class="page merge">
+    <!-- 工作台：左 音乐列表（扫描/搜索/筛选/勾选），右 编辑/批量/去重 -->
+    <div v-if="state.activeTab !== 'settings' && state.activeTab !== 'plugins' && state.activeTab !== 'logs'" class="page merge">
       <div class="split">
         <div class="left">
           <MusicTree />
@@ -111,6 +118,10 @@ onMounted(async () => {
 
     <div v-else-if="state.activeTab === 'plugins'" class="page">
       <Plugins />
+    </div>
+
+    <div v-else-if="state.activeTab === 'logs'" class="page">
+      <ActivityLog />
     </div>
 
     <div v-else class="page">

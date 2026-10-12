@@ -76,6 +76,7 @@ func trackFrom(path string, st os.FileInfo, tags map[string][]string, props tagl
 		Duration:   props.Length.Seconds(),
 		Bitrate:    props.BitRate,
 		SampleRate: props.SampleRate,
+		BitDepth:   props.BitDepth,
 		Channels:   props.Channels,
 		HasCover:   len(props.Images) > 0,
 		HasLrcFile: LrcPath(path) != "",
@@ -144,6 +145,26 @@ const (
 	Lyrics       = taglib.Lyrics
 	Comment      = taglib.Comment
 	Composer     = taglib.Composer
+	Lyricist     = taglib.Lyricist
+	Language     = taglib.Language
+	ReleaseType  = taglib.ReleaseType // 专辑类型（album/single/ep/compilation…）
+	Length       = taglib.Length      // 时长（属性值写入标签）
+
+	// 增益/峰值与总数：TagLib 无内置常量，使用跨格式通用自定义键
+	// （FLAC/Vorbis 写为 VorbisComment，MP3 写为 TXXX，MP4 写为 iTunes 原子）。
+	ReplayGainTrackGain = "REPLAYGAIN_TRACK_GAIN"
+	ReplayGainTrackPeak = "REPLAYGAIN_TRACK_PEAK"
+	ReplayGainAlbumGain = "REPLAYGAIN_ALBUM_GAIN"
+	ReplayGainAlbumPeak = "REPLAYGAIN_ALBUM_PEAK"
+	TrackTotal          = "TRACKTOTAL"
+	DiscTotal           = "DISCTOTAL"
+
+	// 音频属性键：勾选后把探测值写入标签（自定义键），播放器可读。
+	Bitrate    = "BITRATE"
+	SampleRate = "SAMPLERATE"
+	BitDepth   = "BITDEPTH"
+	Channels   = "CHANNELS"
+	FileSize   = "FILESIZE"
 
 	MBTrackID        = taglib.MusicBrainzTrackID
 	MBAlbumID        = taglib.MusicBrainzAlbumID

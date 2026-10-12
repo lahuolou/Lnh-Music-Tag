@@ -8,6 +8,7 @@
 package finger
 
 import (
+	"encoding/json"
 	"math/bits"
 	"os/exec"
 	"strings"
@@ -28,13 +29,29 @@ func (f *Fpcalc) Available() bool {
 }
 
 // Fingerprint returns the raw Chromaprint fingerprint (space-separated ints)
-// for a file.
+// for a file. Raw fingerprints are used for local Hamming-distance matching.
 func (f *Fpcalc) Fingerprint(path string) (string, error) {
 	out, err := exec.Command(f.Bin, "-raw", path).Output()
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// CompressedFingerprint returns the compressed Chromaprint fingerprint
+// (fpcalc -json) for a file. This is the format required by the AcoustID API.
+func (f *Fpcalc) CompressedFingerprint(path string) (string, error) {
+	out, err := exec.Command(f.Bin, "-json", path).Output()
+	if err != nil {
+		return "", err
+	}
+	var r struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.Unmarshal(out, &r); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(r.Fingerprint), nil
 }
 
 // Similarity returns a 0..1 score between two fingerprints: 1 means identical.

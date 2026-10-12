@@ -19,6 +19,7 @@ type Track struct {
 	Duration   float64           `json:"duration"` // seconds
 	Bitrate    uint              `json:"bitrate"` // kbit/s
 	SampleRate uint              `json:"sampleRate"`
+	BitDepth   uint              `json:"bitDepth"` // bits per sample（无损；有损为 0）
 	Channels   uint              `json:"channels"`
 	HasCover   bool              `json:"hasCover"`
 	HasLrcFile bool              `json:"hasLrcFile"` // 同目录存在外挂 .lrc 歌词文件

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { state, toast, refresh, loadSources } from '../store.js'
+import { state, toast, refresh, loadSources, busy } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
 const q = ref('');
@@ -86,8 +86,10 @@ function sortVal(t, k) {
     case 'albumartist': return t.tags.ALBUMARTIST || '';
     case 'year': return parseInt(t.tags.DATE || '', 10) || 0;
     case 'genre': return t.tags.GENRE || '';
+    case 'tracknumber': return parseInt(t.tags.TRACKNUMBER || '', 10) || 0;
     case 'size': return t.size || 0;
     case 'duration': return t.duration || 0;
+    case 'bitrate': return t.bitrate || 0;
   }
   return '';
 }
@@ -135,6 +137,13 @@ function fmtSize(s) {
   const mb = s / 1048576;
   return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb.toFixed(1) + ' MB';
 }
+function fmtDur(d) {
+  if (!d) return '';
+  const m = Math.floor(d / 60), s = Math.floor(d % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+function tag(t, k) { return (t.tags && t.tags[k]) || ''; }
+function fmtKHz(v) { return v ? (v / 1000).toFixed(1) + ' kHz' : ''; }
 
 function isAllSel() { return filtered.value.length > 0 && filtered.value.every(t => state.selected.has(t.id)); }
 function toggleAll(e) {
@@ -173,6 +182,16 @@ async function scan() {
     toast(t('scanStarted'), 'ok');
     startPoll();
   } catch (e) { toast(t('searchFail', { m: e.message }), 'err'); scanMsg.value = ''; }
+}
+
+// 刷新列表：校验文件是否仍存在于磁盘（被其他程序删除的自动清理），
+// 再同步最新列表与乱码/待识别标记。
+async function refreshList() {
+  try {
+    const r = await api('/api/tracks/refresh');
+    state.tracks = r.tracks;
+    toast(r.removed ? t('refreshListDone', { n: r.removed }) : t('refreshListNone'), 'ok');
+  } catch (e) { toast(t('delFail', { m: e.message }), 'err'); }
 }
 async function tick() {
   try {
@@ -215,7 +234,8 @@ onBeforeUnmount(stopPoll);
     <div class="ml-toolbar">
       <div class="row">
         <input type="text" v-model="scanDir" :placeholder="t('scanPlaceholder')" @keydown.enter="scan" style="min-width:0" />
-        <button class="sm" @click="scan" :disabled="state.scanStatus.running">{{ state.scanStatus.running ? t('scanning') : t('scan') }}</button>
+        <button class="sm" @click="scan" :disabled="state.scanStatus.running || busy()">{{ state.scanStatus.running ? t('scanning') : t('scan') }}</button>
+        <button class="ghost sm" @click="refreshList" :disabled="state.scanStatus.running || busy()">{{ t('refreshList') }}</button>
         <button v-if="state.scanStatus.running" class="ghost sm" @click="togglePause">{{ state.scanStatus.paused ? t('resume') : t('pause') }}</button>
       </div>
       <div class="row" style="margin-top:8px">
@@ -225,8 +245,8 @@ onBeforeUnmount(stopPoll);
         <button v-for="f in filterOpts" :key="f.id" class="chip" :class="{ on: filter === f.id }" @click="filter = f.id">{{ f.label() }}</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-        <button v-if="state.selected.size > 0" class="ghost sm danger" @click="delSel">{{ t('deleteSel', { n: state.selected.size }) }}</button>
-        <button v-if="state.selected.size > 0" class="ghost sm" @click="state.selected.clear()">{{ t('clearSel') }}</button>
+        <button v-if="state.selected.size > 0" class="ghost sm danger" :disabled="busy()" @click="delSel">{{ t('deleteSel', { n: state.selected.size }) }}</button>
+        <button v-if="state.selected.size > 0" class="ghost sm" :disabled="busy()" @click="state.selected.clear()">{{ t('clearSel') }}</button>
       </div>
       <div class="loading" style="margin-top:6px">{{ scanMsg }}{{ state.scanStatus.paused ? t('pausedMark') : '' }}</div>
     </div>
@@ -245,9 +265,28 @@ onBeforeUnmount(stopPoll);
             <th class="th-sort" @click="setSort('artist')">{{ t('hArtist') }} {{ sortIcon('artist') }}</th>
             <th class="th-sort" @click="setSort('album')">{{ t('hAlbum') }} {{ sortIcon('album') }}</th>
             <th class="th-sort" @click="setSort('albumartist')">{{ t('hAlbumArtist') }} {{ sortIcon('albumartist') }}</th>
-            <th style="width:52px" :title="t('lyrTitle')">{{ t('hLyric') }}</th>
-            <th class="th-sort" style="width:60px" @click="setSort('year')">{{ t('hYear') }} {{ sortIcon('year') }}</th>
             <th class="th-sort" @click="setSort('genre')">{{ t('hGenre') }} {{ sortIcon('genre') }}</th>
+            <th class="th-sort" style="width:60px" @click="setSort('year')">{{ t('hYear') }} {{ sortIcon('year') }}</th>
+            <th class="th-sort" style="width:56px" @click="setSort('tracknumber')">{{ t('bTrack') }} {{ sortIcon('tracknumber') }}</th>
+            <th style="width:52px" :title="t('lyrTitle')">{{ t('hLyric') }}</th>
+            <th>{{ t('bFileName') }}</th>
+            <th>{{ t('bComposer') }}</th>
+            <th>{{ t('bLyricist') }}</th>
+            <th>{{ t('bAlbumType') }}</th>
+            <th>{{ t('bLanguage') }}</th>
+            <th>{{ t('bComment') }}</th>
+            <th>{{ t('bDiscNumber') }}</th>
+            <th>{{ t('bDiscTotal') }}</th>
+            <th>{{ t('bTrackTotal') }}</th>
+            <th>{{ t('bTrackGain') }}</th>
+            <th>{{ t('bAlbumGain') }}</th>
+            <th>{{ t('bTrackPeak') }}</th>
+            <th>{{ t('bAlbumPeak') }}</th>
+            <th class="th-sort" style="width:64px" @click="setSort('bitrate')">{{ t('bBitrate') }} {{ sortIcon('bitrate') }}</th>
+            <th>{{ t('bSampleRate') }}</th>
+            <th>{{ t('bBitDepth') }}</th>
+            <th>{{ t('bChannels') }}</th>
+            <th class="th-sort" style="width:56px" @click="setSort('duration')">{{ t('bDuration') }} {{ sortIcon('duration') }}</th>
             <th class="th-sort" style="width:64px" @click="setSort('size')">{{ t('hSize') }} {{ sortIcon('size') }}</th>
           </tr>
         </thead>
@@ -260,15 +299,34 @@ onBeforeUnmount(stopPoll);
             </td>
             <td :title="item.tags.TITLE ? item.tags.TITLE : baseName(item)">{{ displayTitle(item) }}</td>
             <td :title="item.tags.ARTIST ? item.tags.ARTIST : nameArtist(item)">{{ displayArtist(item) }}</td>
-            <td>{{ item.tags.ALBUM || '' }}</td>
-            <td>{{ item.tags.ALBUMARTIST || '' }}</td>
+            <td>{{ tag(item, 'ALBUM') }}</td>
+            <td>{{ tag(item, 'ALBUMARTIST') }}</td>
+            <td>{{ tag(item, 'GENRE') }}</td>
+            <td>{{ tag(item, 'DATE') }}</td>
+            <td>{{ tag(item, 'TRACKNUMBER') }}</td>
             <td :title="item.hasLrcFile || hasLyrics(item) ? t('lyrTitle') : ''">{{ lrcMark(item) }}</td>
-            <td>{{ item.tags.DATE || '' }}</td>
-            <td>{{ item.tags.GENRE || '' }}</td>
+            <td :title="item.fileName">{{ item.fileName }}</td>
+            <td>{{ tag(item, 'COMPOSER') }}</td>
+            <td>{{ tag(item, 'LYRICIST') }}</td>
+            <td>{{ tag(item, 'RELEASETYPE') }}</td>
+            <td>{{ tag(item, 'LANGUAGE') }}</td>
+            <td :title="tag(item, 'COMMENT')">{{ tag(item, 'COMMENT') }}</td>
+            <td>{{ tag(item, 'DISCNUMBER') }}</td>
+            <td>{{ tag(item, 'DISCTOTAL') }}</td>
+            <td>{{ tag(item, 'TRACKTOTAL') }}</td>
+            <td>{{ tag(item, 'REPLAYGAIN_TRACK_GAIN') }}</td>
+            <td>{{ tag(item, 'REPLAYGAIN_ALBUM_GAIN') }}</td>
+            <td>{{ tag(item, 'REPLAYGAIN_TRACK_PEAK') }}</td>
+            <td>{{ tag(item, 'REPLAYGAIN_ALBUM_PEAK') }}</td>
+            <td>{{ item.bitrate || '' }}</td>
+            <td>{{ fmtKHz(item.sampleRate) }}</td>
+            <td>{{ item.bitDepth || '' }}</td>
+            <td>{{ item.channels || '' }}</td>
+            <td>{{ fmtDur(item.duration) }}</td>
             <td class="muted">{{ fmtSize(item.size) }}</td>
           </tr>
           <tr v-if="!shown.length">
-            <td colspan="10" class="muted" style="padding:16px;text-align:center">
+            <td colspan="29" class="muted" style="padding:16px;text-align:center">
               {{ state.tracks.length ? t('noMatch') : t('noTracks') }}
             </td>
           </tr>

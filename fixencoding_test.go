@@ -104,7 +104,7 @@ func TestEffectiveSearchTerms(t *testing.T) {
 		wantT    string
 		wantA    string
 	}{
-		{mk("蓝色蝴蝶", "Unknown", "Unknown - 蓝色蝴蝶.mp3"), "蓝色蝴蝶", "Unknown"},
+		{mk("蓝色蝴蝶", "Unknown", "Unknown - 蓝色蝴蝶.mp3"), "蓝色蝴蝶", ""},
 		{mk("", "", "陈慧娴 - 傻女.flac"), "傻女", "陈慧娴"},
 		{mk("七里香", "周杰伦", "周杰伦 - 七里香.flac"), "七里香", "周杰伦"},
 		{mk("姒荤◈锟斤拷", "未知", "蓝色蝴蝶.mp3"), "蓝色蝴蝶", ""},

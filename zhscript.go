@@ -49,6 +49,10 @@ var tradDetector = func() func(string) string {
 	}
 }()
 
+// simpConverter converts Traditional Chinese text to Simplified (t2s).
+// Reused by audio identification so identified titles arrive in Simplified.
+var simpConverter = tradDetector
+
 func detectTraditional(tags map[string]string) bool {
 	for _, k := range textFields {
 		v := strings.TrimSpace(tags[k])

@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"sync"
 
 	cstore "LNH-musictag/internal/store"
@@ -45,6 +46,10 @@ type Plugin struct {
 	Hint       string            `json:"hint,omitempty"`
 	Fields     []PluginField     `json:"fields,omitempty"`
 	Config     map[string]string `json:"config"` // 始终输出（可能为空 {}），避免前端渲染崩溃
+	// —— ZIP 插件包字段（第三方上传导入，解压即用）——
+	ZipDir  string            `json:"-"`                 // 解压目录（绝对路径，仅宿主内部使用）
+	Entries map[string]string `json:"entries,omitempty"` // 平台(linux/windows/darwin) -> zip 内相对入口
+	ZipName string            `json:"zipName,omitempty"` // 插件包文件名（导入时上传的原文件名）
 }
 
 // applyFn 插件配置生效回调（启停/配置变更时执行）。
@@ -91,6 +96,29 @@ func pluginsSnapshot() []Plugin {
 	return out
 }
 
+// unregisterPlugin 删除插件（仅非内置插件；内置插件受保护）。
+// 用于「上传导入的第三方插件」的删除操作。返回是否删除成功。
+func unregisterPlugin(name string) bool {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	p, ok := reg.plugins[name]
+	if !ok {
+		return false
+	}
+	if p.Builtin {
+		return false // 内置插件不可删除
+	}
+	delete(reg.plugins, name)
+	delete(reg.apply, name)
+	for i, n := range reg.order {
+		if n == name {
+			reg.order = append(reg.order[:i], reg.order[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
 // getPluginConfig 返回某插件的配置 map（nil 安全）。
 func getPluginConfig(name string) map[string]string {
 	reg.mu.RLock()
@@ -132,13 +160,22 @@ func applyPluginState(name string, enabled bool, cfg map[string]string) {
 
 // loadPluginsFromDB 启动时从设置库恢复全部插件启停/配置。
 // 兼容迁移：旧键 sources_enabled（刮削源开关）与 ffmpeg_path 首次迁移到 plugins。
-func loadPluginsFromDB(cfg *cstore.Config) {
+// 同时会把 DB 中已保存但尚未注册的第三方插件（导入的）重新注册，保证重启后仍存在。
+func loadPluginsFromDB(cfg *cstore.Config, configDir string) {
 	if cfg == nil {
 		return
 	}
 	type record struct {
 		Enabled *bool             `json:"enabled"`
 		Config  map[string]string `json:"config,omitempty"`
+		Name    string            `json:"name,omitempty"`
+		Label   string            `json:"label,omitempty"`
+		Kind    string            `json:"kind,omitempty"`
+		Version string            `json:"version,omitempty"`
+		Hint    string            `json:"hint,omitempty"`
+		Fields  []PluginField     `json:"fields,omitempty"`
+		ZipName string            `json:"zipName,omitempty"`
+		Entries map[string]string `json:"entries,omitempty"`
 	}
 	var all = map[string]record{}
 	if raw, ok := cfg.Get("plugins"); ok && raw != "" {
@@ -157,6 +194,36 @@ func loadPluginsFromDB(cfg *cstore.Config) {
 		if p, ok := cfg.Get("ffmpeg_path"); ok && p != "" {
 			all["tool.ffmpeg"] = record{Config: map[string]string{"path": p}}
 		}
+	}
+	// 恢复 DB 中已保存但尚未注册的第三方导入插件（含完整声明）。
+	for name, r := range all {
+		if _, ok := reg.plugins[name]; ok {
+			continue
+		}
+		if r.Name == "" || r.Label == "" || r.Kind == "" {
+			continue
+		}
+		kind := PluginKind(r.Kind)
+		switch kind {
+		case PluginScrape, PluginTool, PluginDownload, PluginProtocol:
+		default:
+			continue
+		}
+		enabled := r.Enabled != nil && *r.Enabled
+		registerPlugin(&Plugin{
+			Name:    name,
+			Label:   r.Label,
+			Kind:    kind,
+			Enabled: enabled,
+			Version: r.Version,
+			Hint:    r.Hint,
+			Fields:  r.Fields,
+			ZipName: r.ZipName,
+			Entries: r.Entries,
+			// 解压目录按 插件名 命名（与导入时一致），重启后据此重建，
+			// 使插件入口可用、删除时可清理。
+			ZipDir: pluginsRoot(cfg, configDir) + string(os.PathSeparator) + name,
+		}, nil)
 	}
 	for _, p := range pluginsSnapshot() {
 		r, ok := all[p.Name]
@@ -189,7 +256,27 @@ func savePluginsToDB(cfg *cstore.Config) {
 	srcMap := map[string]bool{}
 	ffPath := ""
 	for _, p := range pluginsSnapshot() {
-		rec := map[string]any{"enabled": p.Enabled}
+		rec := map[string]any{
+			"enabled": p.Enabled,
+			"name":    p.Name,
+			"label":   p.Label,
+			"kind":    string(p.Kind),
+		}
+		if p.Version != "" {
+			rec["version"] = p.Version
+		}
+		if p.Hint != "" {
+			rec["hint"] = p.Hint
+		}
+		if len(p.Fields) > 0 {
+			rec["fields"] = p.Fields
+		}
+		if p.ZipName != "" {
+			rec["zipName"] = p.ZipName
+		}
+		if len(p.Entries) > 0 {
+			rec["entries"] = p.Entries
+		}
 		if len(p.Config) > 0 {
 			rec["config"] = p.Config
 		}

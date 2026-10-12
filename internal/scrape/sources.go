@@ -27,6 +27,15 @@ type SearchResult struct {
 	TrackNumber  int      `json:"trackNumber,omitempty"`
 	Duration     int      `json:"duration"` // seconds
 	CoverURL     string   `json:"coverURL,omitempty"`
+	// 扩展元素（MusicBrainz 提供；其他源暂留空）
+	Composer    []string `json:"composer,omitempty"`
+	Lyricist    []string `json:"lyricist,omitempty"`
+	Language    string   `json:"language,omitempty"`
+	AlbumType   string   `json:"albumType,omitempty"`
+	Comment     string   `json:"comment,omitempty"`
+	DiscNumber  int      `json:"discNumber,omitempty"`
+	TotalTracks int      `json:"totalTracks,omitempty"`
+	TotalDiscs  int      `json:"totalDiscs,omitempty"`
 }
 
 // Source is a metadata provider. Search receives a plain text query.
@@ -178,7 +187,83 @@ func (m *MultiSource) Search(name, query string, limit int) ([]SearchResult, err
 	return []SearchResult{}, nil
 }
 
-// Enrich fills album-artist, genre, release date and track number from the
+// SearchWithFallback searches the named source first; when it fails or returns
+// no result, it automatically falls back through the remaining enabled sources
+// in language-preference order ("auto" chain). This powers the one-key pipeline:
+// a source with no hit → the next source is tried automatically.
+func (m *MultiSource) SearchWithFallback(name, query string, limit int) ([]SearchResult, error) {
+	if name == "" || name == "auto" {
+		return m.Search("auto", query, limit)
+	}
+	if s, ok := m.byName[name]; ok && m.IsEnabled(name) {
+		if res, err := s.Search(m.client, query, limit); err == nil && len(res) > 0 {
+			return res, nil
+		}
+	}
+	return m.Search("auto", query, limit)
+}
+
+// coverOrder builds the source order used to look for a cover: the source that
+// produced the result first, then the language-preference chain.
+func (m *MultiSource) coverOrder(prefer string) []string {
+	order := []string{}
+	if prefer != "" && prefer != "auto" {
+		order = append(order, prefer)
+	}
+	all := append([]string{}, domesticOrder...)
+	all = append(all, internationalOrder...)
+	for _, n := range all {
+		if n != prefer && !contains(order, n) {
+			order = append(order, n)
+		}
+	}
+	return order
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// FetchCoverFallback finds cover art for a query, trying the preferred source
+// first and then every other enabled source until one returns cover bytes. It
+// returns the first non-empty cover image. Used by the one-key pipeline so a
+// source without a poster automatically falls back to the next source.
+func (m *MultiSource) FetchCoverFallback(query, prefer string) ([]byte, error) {
+	var lastErr error
+	for _, n := range m.coverOrder(prefer) {
+		s, ok := m.byName[n]
+		if !ok || !m.IsEnabled(n) {
+			continue
+		}
+		res, err := s.Search(m.client, query, 1)
+		if err != nil || len(res) == 0 {
+			if err != nil {
+				lastErr = err
+			}
+			continue
+		}
+		img, err := m.FetchCover(res[0])
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(img) > 0 {
+			return img, nil
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, nil
+}
+
+// Enrich fills album-artist, genre, release date, track number and the
+// extended elements (language / album type / totals / disc number) from the
 // source's release detail when available (currently MusicBrainz). Best-effort;
 // never returns an error.
 func (m *MultiSource) Enrich(sr *SearchResult) {
@@ -198,6 +283,17 @@ func (m *MultiSource) Enrich(sr *SearchResult) {
 	if rd.Date != "" {
 		sr.Date = rd.Date
 	}
+	if rd.Language != "" {
+		sr.Language = rd.Language
+	}
+	if rd.AlbumType != "" {
+		sr.AlbumType = rd.AlbumType
+	}
+	if rd.TotalDiscs > 0 {
+		sr.TotalDiscs = rd.TotalDiscs
+	}
+	// 曲目级信息（曲目号）按标题匹配补全；光盘编号/总音轨数由
+	// recording 级 lookup（识别链路）提供，ReleaseDetail 平铺后无法还原。
 	for _, tr := range rd.Tracks {
 		if strings.EqualFold(strings.TrimSpace(tr.Title), strings.TrimSpace(sr.Title)) {
 			if n, e := strconv.Atoi(tr.Number); e == nil && n > 0 {

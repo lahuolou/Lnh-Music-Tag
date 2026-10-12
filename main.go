@@ -32,7 +32,7 @@ import (
 // AppVersion 当前版本号（与 GitHub Release tag 比较，用于“新版本提示”）。
 // 每次发布新版本时同步 bump（发布流程约束：推送前 bump 版本并打对应 Release tag，
 // 否则项目内“检查更新”会因 current==latest 而检测不到新版本）。
-const AppVersion = "1.4.7"
+const AppVersion = "1.4.8"
 
 //go:embed web/dist
 var webFS embed.FS
@@ -238,6 +238,8 @@ func (sm *scanManager) start(store *store, dir string, autoFix, autoRename bool)
 			st.Error = err.Error()
 		}
 		st.mu.Unlock()
+		// 写操作日志：扫描完成（新增/跳过/清理的失效文件数）
+		addLog("act_scan", err == nil, added, 0, st.snapshot().Skipped, actDetail("removed", removed))
 	}()
 	return nil
 }
@@ -278,11 +280,16 @@ func main() {
 	} else {
 		loadTracksFromDB(store, cfg.DB())
 	}
+	// 操作日志表（扫描/刮削/转换等用户操作的记录，后台可查看与删除）
+	activityDB = cfg.DB()
+	if err := ensureActivityTable(cfg.DB()); err != nil {
+		log.Printf("ensure activity table: %v", err)
+	}
 	ms := scrape.NewMultiSource()
 	// 插件框架：注册内置插件（刮削源 + FFmpeg），再从设置库恢复启停/配置
 	// （首次启动自动迁移旧的 sources_enabled / ffmpeg_path 键）
 	registerBuiltinPlugins(cfg, ms)
-	loadPluginsFromDB(cfg)
+	loadPluginsFromDB(cfg, configDir)
 
 	if k, ok := cfg.Get("acoustid_key"); ok && k != "" {
 		ms.Client().AcoustIDAPIKey = k
@@ -321,8 +328,10 @@ func main() {
 
 	pm := http.NewServeMux()
 	pm.HandleFunc("POST /api/change-password", sessions.changePasswordHandler)
-	pm.HandleFunc("POST /api/scrape/batch", batchScrapeHandler(jobs, store, ms))
+	pm.HandleFunc("POST /api/scrape/batch", batchScrapeHandler(jobs, store, ms, cfg))
+	pm.HandleFunc("POST /api/scrape/onekey", oneKeyScrapeHandler(jobs, store, ms, cfg))
 	pm.HandleFunc("GET /api/scrape/jobs/{id}", jobProgressHandler(jobs))
+	pm.HandleFunc("POST /api/jobs/{id}/cancel", cancelJobHandler(jobs)) // 取消批量/工具任务
 	pm.HandleFunc("GET /api/jobs/{id}", jobProgressHandler(jobs)) // 通用后台任务进度（转换/识别/乱码/简繁）
 	pm.HandleFunc("GET /api/jobs", activeJobsHandler(jobs))        // 进行中的任务列表（刷新/换设备后恢复进度）
 	pm.HandleFunc("GET /api/scrape/sources", func(w http.ResponseWriter, r *http.Request) {
@@ -331,7 +340,9 @@ func main() {
 	// 通用插件设置接口：列出/启停/配置全部插件（刮削源、FFmpeg、预留类型）
 	pm.HandleFunc("GET /api/plugins", pluginsHandler(cfg))
 	pm.HandleFunc("POST /api/plugins", pluginsUpdateHandler(cfg))
-	pm.HandleFunc("POST /api/plugins/import", pluginsImportHandler(cfg))
+	pm.HandleFunc("POST /api/plugins/import", pluginsImportHandler(cfg, configDir))
+	pm.HandleFunc("DELETE /api/plugins/{name}", pluginsDeleteHandler(cfg))
+	pm.HandleFunc("POST /api/plugins/{name}/run", pluginsRunHandler())
 	pm.HandleFunc("POST /api/convert", convertHandler(jobs, store, cfg))
 	pm.HandleFunc("GET /api/ffmpeg/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ffmpegStatus(cfg))
@@ -350,14 +361,15 @@ func main() {
 	})
 	pm.HandleFunc("POST /api/fix-encoding", fixEncodingHandler(jobs, store))
 	pm.HandleFunc("POST /api/convert-script", convertScriptHandler(jobs, store))
-	pm.HandleFunc("POST /api/identify", identifyHandler(jobs, store, ms))
+	pm.HandleFunc("POST /api/rename-clean", renameCleanHandler(jobs, store))
+	pm.HandleFunc("POST /api/identify", identifyHandler(jobs, store, ms, cfg))
 	pm.HandleFunc("GET /api/version", updates.versionHandler)
 	pm.HandleFunc("GET /api/version/check", updates.versionCheckHandler)
-	// 音乐解锁插件（tool.unlock）：上传体可能超过 limitBody 的 8MiB 限制，
-	// 因此挂在 mux 顶层（仍 requireAuth + csrfGuard；执行逻辑见 unlock_plugin.go）。
-	mux.Handle("POST /api/unlock", sessions.requireAuth(csrfGuard(unlockHandler(cfg))))
-	mux.Handle("GET /api/unlock/dl/{token}", sessions.requireAuth(unlockDownloadHandler()))
-	mux.Handle("POST /api/unlock/save", sessions.requireAuth(csrfGuard(unlockSaveHandler(store, cfg))))
+
+	// 操作日志：列表 / 勾选删除 / 清空
+	pm.HandleFunc("GET /api/logs", logsHandler(cfg.DB()))
+	pm.HandleFunc("POST /api/logs/delete", logsDeleteHandler(cfg.DB()))
+	pm.HandleFunc("POST /api/logs/clear", logsClearHandler(cfg.DB()))
 	mux.Handle("/api/", sessions.requireAuth(csrfGuard(limitBody(pm))))
 
 	// Static UI (Vue SPA built into web/dist; /api/... routes win over this)
@@ -402,54 +414,6 @@ func main() {
 		}
 		scans.pause(req.Paused)
 		writeJSON(w, http.StatusOK, scans.status())
-	})
-
-	// 艺术家过多改“合唱”：ARTIST 拆分后 >3 位 → 置为“合唱”
-	pm.HandleFunc("POST /api/set-chorus", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ IDs []string `json:"ids"` }
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		type res struct {
-			ID       string `json:"id"`
-			FileName string `json:"fileName"`
-			Changed  bool   `json:"changed"`
-			Before   string `json:"before"`
-			Message  string `json:"message,omitempty"`
-		}
-		results := []res{}
-		for _, id := range req.IDs {
-			t := store.get(id)
-			if t == nil {
-				continue
-			}
-			artist := strings.TrimSpace(t.Tags["ARTIST"])
-			parts := strings.FieldsFunc(artist, func(r rune) bool {
-				return r == '/' || r == ';' || r == '、' || r == '，' || r == ',' || r == '&' || r == '_'
-			})
-			uniq := map[string]bool{}
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					uniq[p] = true
-				}
-			}
-			r := res{ID: t.ID, FileName: t.FileName, Before: artist}
-			if len(uniq) > 3 {
-				if err := taglibx.WriteTags(t.Path, map[string][]string{taglibx.Artist: {"合唱"}}, false); err == nil {
-					refreshTrack(store, t.Path)
-					r.Changed = true
-					r.Message = "→ 合唱（原 " + strconv.Itoa(len(uniq)) + " 位）"
-				} else {
-					r.Message = "写标签失败: " + err.Error()
-				}
-			} else {
-				r.Message = "艺术家 ≤3 位，跳过"
-			}
-			results = append(results, r)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"total": len(results), "results": results})
 	})
 
 	// --- Config / settings (stored in DB) ---
@@ -551,6 +515,25 @@ func main() {
 		writeJSON(w, http.StatusOK, tracks)
 	})
 
+	// Refresh the list: drop records whose files no longer exist on disk
+	// (deleted by another program, external cleanup, etc.), then return the
+	// fresh list with up-to-date garbled/needsIdentify markers.
+	pm.HandleFunc("GET /api/tracks/refresh", func(w http.ResponseWriter, r *http.Request) {
+		removed := 0
+		for _, t := range store.all() {
+			if _, err := os.Stat(t.Path); err != nil {
+				store.removeByPath(t.Path)
+				removed++
+			}
+		}
+		tracks := store.all()
+		for _, t := range tracks {
+			t.Garbled = looksGarbledTags(t)
+			t.NeedsIdentify = needsIdentify(t)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "tracks": tracks})
+	})
+
 	// Duplicates (hash-based, plus fingerprint if available)
 	pm.HandleFunc("GET /api/duplicates", func(w http.ResponseWriter, r *http.Request) {
 		tracks := store.all()
@@ -584,6 +567,7 @@ func main() {
 			store.remove(id)
 			removed++
 		}
+		addLog("act_dedup", len(failed) == 0, removed, len(failed), 0, "")
 		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "failed": failed})
 	})
 
@@ -608,6 +592,7 @@ func main() {
 			store.remove(id)
 			removed++
 		}
+		addLog("act_del", len(failed) == 0, removed, len(failed), 0, "")
 		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "failed": failed})
 	})
 
@@ -686,6 +671,7 @@ func main() {
 		if !renamed {
 			refreshTrack(store, t.Path)
 		}
+		addLog("act_save", true, 1, 0, 0, t.FileName+(func() string { if renamed { return " → " + newName }; return "" })())
 		writeJSON(w, http.StatusOK, map[string]any{"ok": "written", "renamed": renamed, "name": newName})
 	})
 
@@ -863,6 +849,7 @@ func main() {
 			}
 		}
 		refreshTrack(store, t.Path)
+		addLog("act_scrapeone", true, 1, 0, 0, t.FileName+" ["+req.Source+"]")
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "scraped"})
 	})
 

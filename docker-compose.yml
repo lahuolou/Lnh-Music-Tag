@@ -8,7 +8,8 @@ services:
     volumes:
       # 默认音乐目录（NAS 路径）。应用会把标签/封面写回文件，所以必须可读写，别改成 :ro
       - /mnt/sata3-1/mp3:/music
-      # 配置卷：持久化后台初始/修改后的密码（admin.json），重启不丢失
+      # 配置卷：持久化后台初始/修改后的密码（admin.json）、数据库配置、第三方插件包
+      # （插件 ZIP 导入后解压到 /config/plugins/，重启不丢失）
       - lnh_config:/config
     environment:
       # 账号/密码/Key 默认存数据库（/config/lnh.db），以下环境变量仅作【首次启动】的一次性初始化种子

@@ -18,8 +18,6 @@ export const state = reactive({
   scanMsg: '',
   scanStatus: { running: false, paused: false, added: 0, total: 0, done: 0, skipped: 0, error: '' },
   bSource: 'auto',
-  bFetchCover: true,
-  bFetchLyrics: false,
   batchBusy: false,
   batchJob: null,
   toolJob: null, // 通用工具任务（音频识别/格式转换/乱码修复/简繁转换）进度
@@ -28,6 +26,12 @@ export const state = reactive({
 })
 
 export function go(p) { location.hash = p }
+
+// 是否有后台任务在跑（批量/一键刮削 或 音频识别/乱码/简繁/格式转换）。
+// 任务进行中时，前端一律禁用会改库/改文件的操作按钮，避免并发冲突。
+export function busy() {
+  return state.batchBusy || !!(state.toolJob && state.toolJob.status === 'running');
+}
 
 export function cur() { return state.tracks.find(t => t.id === state.currentId) || null }
 
@@ -122,6 +126,13 @@ export async function startBatchPoll(jobId) {
         state.batchJob = null;
         state.batchBusy = false; // 完成必须解锁，否则批量/识别等按钮一直禁用
         await refresh(); // 兜底同步一次，保证与后端完全一致
+      } else if (job.status === 'cancelled') {
+        stopBatchPoll();
+        toast(t('jobCancelled'), 'err');
+        state.selected.clear();
+        state.batchJob = null;
+        state.batchBusy = false;
+        await refresh();
       }
     } catch (e) {
       stopBatchPoll();
@@ -162,6 +173,10 @@ export async function startToolJob(jobId, total, kind = 'tool') {
         tj.ok = (j.results || []).filter(r => r.ok).length;
         tj.fail = (j.results || []).filter(r => !r.ok && !r.skip).length;
         tj.errors = (j.results || []).filter(r => !r.ok && !r.skip && r.message);
+      } else if (j.status === 'cancelled') {
+        stopToolJob();
+        tj.status = 'cancelled';
+        tj.finished = true;
       }
     } catch (e) { /* 瞬时网络抖动忽略，下一轮再试 */ }
   };
@@ -171,6 +186,13 @@ export async function startToolJob(jobId, total, kind = 'tool') {
 
 export function stopToolJob() {
   if (_toolTimer) { clearInterval(_toolTimer); _toolTimer = null; }
+}
+
+// 取消进行中的任务（批量刮削 / 一键刮削 / 工具任务通用）。
+// 后端置位 Cancel，任务循环在下一步前检查并立即停止。
+export async function cancelJob(jobId) {
+  const r = await api('/api/jobs/' + encodeURIComponent(jobId) + '/cancel', { method: 'POST', body: '{}' });
+  return r.ok || r.error;
 }
 
 // 恢复进行中的任务：页面刷新或换设备登录后，把后端仍在运行的任务接回来，

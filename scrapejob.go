@@ -10,6 +10,7 @@ import (
 
 	"LNH-musictag/internal/model"
 	"LNH-musictag/internal/scrape"
+	cstore "LNH-musictag/internal/store"
 	"LNH-musictag/internal/taglibx"
 )
 
@@ -18,8 +19,9 @@ import (
 // scraping more than one.
 
 // ScrapeFields selects which metadata fields to write during scraping.
+// 顺序即前端展示顺序（常用优先）：核心标签 → 扩展标签 → 操作项 → 音频属性。
 type ScrapeFields struct {
-	Cover       bool
+	// 核心标签
 	Title       bool
 	Artist      bool
 	Album       bool
@@ -28,6 +30,42 @@ type ScrapeFields struct {
 	Year        bool
 	TrackNumber bool
 	Lyrics      bool
+	Cover       bool
+	// 扩展标签
+	Composer   bool
+	Lyricist   bool
+	AlbumType  bool
+	Language   bool
+	DiscNumber bool
+	DiscTotal  bool
+	TrackTotal bool
+	Comment    bool
+	TrackGain  bool
+	AlbumGain  bool
+	TrackPeak  bool
+	AlbumPeak  bool
+	// 操作项
+	FileName bool // 按「艺术家 - 标题.后缀」重命名
+	// 音频属性（写标签自定义键）
+	Bitrate    bool
+	SampleRate bool
+	BitDepth   bool
+	Channels   bool
+	Duration   bool
+	FileSize   bool
+}
+
+// fieldNames 返回按常用度排序的全部字段名（前端展示与后端解析共用）。
+// 常用优先：海报 → 核心标签 → 操作项（文件名重命名）→ 扩展标签 → 音频属性。
+// UI 中文别名在此映射；用户清单中"简介/描述"合并为 COMMENT 一项。
+func (f ScrapeFields) fieldNames() []string {
+	return []string{
+		"cover", "title", "artist", "album", "albumartist", "genre", "year",
+		"tracknumber", "lyrics", "filename", "composer", "lyricist",
+		"albumtype", "language", "comment", "discnumber", "disctotal", "tracktotal",
+		"trackgain", "albumgain", "trackpeak", "albumpeak",
+		"bitrate", "samplerate", "bitdepth", "channels", "duration", "filesize",
+	}
 }
 
 // allMetadataFields returns fields with every metadata tag enabled but no
@@ -36,7 +74,22 @@ func allMetadataFields() ScrapeFields {
 	return ScrapeFields{
 		Title: true, Artist: true, Album: true, AlbumArtist: true,
 		Genre: true, Year: true, TrackNumber: true,
+		Composer: true, Lyricist: true, AlbumType: true, Language: true,
+		DiscNumber: true, DiscTotal: true, TrackTotal: true, Comment: true,
+		TrackGain: true, AlbumGain: true, TrackPeak: true, AlbumPeak: true,
+		Bitrate: true, SampleRate: true, BitDepth: true, Channels: true,
+		Duration: true, FileSize: true,
 	}
+}
+
+// allScrapeFields 一键刮削使用的完整字段集：与批量刮削元素全部字段一致
+// （含海报、歌词、文件名重命名 + 全部扩展标签与音频属性）。
+func allScrapeFields() ScrapeFields {
+	f := allMetadataFields()
+	f.Cover = true
+	f.Lyrics = true
+	f.FileName = true
+	return f
 }
 
 // fieldsFromList converts an explicit list of selected field names (from the
@@ -63,14 +116,33 @@ func fieldsFromList(list []string, fetchCover, fetchLyrics bool) ScrapeFields {
 	}
 	return ScrapeFields{
 		Cover:       has("cover", "海报", "封面"),
-		Title:       has("title", "歌名"),
+		Title:       has("title", "歌名", "标题"),
 		Artist:      has("artist", "艺术家"),
 		Album:       has("album", "专辑"),
 		AlbumArtist: has("albumartist", "专辑艺术家"),
-		Genre:       has("genre", "流派"),
-		Year:        has("year", "年代"),
-		TrackNumber: has("tracknumber", "曲目号"),
-		Lyrics:      has("lyrics", "歌词"),
+		Genre:       has("genre", "流派", "风格"),
+		Year:        has("year", "年代", "年份"),
+		TrackNumber: has("tracknumber", "曲目号", "音轨号"),
+		Lyrics:      has("lyrics", "歌词", "lrcfile", "歌词(lrc文件)", "lrc"), // 内置方式：抓歌词写内嵌标签（兼容旧 LRC 别名）
+		Composer:    has("composer", "作曲家"),
+		Lyricist:    has("lyricist", "作词家"),
+		AlbumType:   has("albumtype", "专辑类型"),
+		Language:    has("language", "语言"),
+		DiscNumber:  has("discnumber", "光盘编号"),
+		DiscTotal:   has("disctotal", "总光盘数"),
+		TrackTotal:  has("tracktotal", "总音轨数"),
+		Comment:     has("comment", "简介", "描述"),
+		TrackGain:   has("trackgain", "曲目增益"),
+		AlbumGain:   has("albumgain", "专辑增益"),
+		TrackPeak:   has("trackpeak", "曲目峰值"),
+		AlbumPeak:   has("albumpeak", "专辑峰值"),
+		FileName:    has("filename", "文件名"),
+		Bitrate:     has("bitrate", "比特率"),
+		SampleRate:  has("samplerate", "采样率"),
+		BitDepth:    has("bitdepth", "位深度"),
+		Channels:    has("channels", "声道"),
+		Duration:    has("duration", "时长"),
+		FileSize:    has("filesize", "文件大小"),
 	}
 }
 
@@ -97,11 +169,35 @@ func trackHasField(t *model.Track, field string) bool {
 
 // applySkipFilled drops fields whose value the track already has. It returns
 // true if at least one field remains to be written.
+// tagNeedsFill 判定某标签是否"需要补全"：字段为空、"Unknown"占位、乱码，
+// 或与文件名解析出的标题/艺术家不一致（如 "Unknown - 蓝色蝴蝶.mp3" 的标签
+// 残留错误内容）——都视为未填充，刮削阶段会继续修正而不是智能跳过。
+func tagNeedsFill(t *model.Track, k string) bool {
+	v := strings.TrimSpace(t.Tags[k])
+	if v == "" || looksUnknown(v) || looksGarbled(v) {
+		return true
+	}
+	fa, ft := parseFileNameArtistTitle(t.FileName)
+	switch k {
+	case taglibx.Title:
+		return ft != "" && v != ft
+	case taglibx.Artist:
+		// 文件名只有 "Unknown" 占位（无真实艺术家）时，标签艺术家不可信，
+		// 一律交给刮削阶段按歌名补全（如 "Unknown - 蓝色蝴蝶.mp3" 修正标签）。
+		// 文件名解析不出艺术家（fa 为空）时不做强制。
+		if fa != "" && looksUnknown(fa) {
+			return true
+		}
+		return fa != "" && !looksGarbled(fa) && v != fa
+	}
+	return false
+}
+
 func applySkipFilled(t *model.Track, f *ScrapeFields) bool {
-	if f.Title && trackHasField(t, taglibx.Title) {
+	if f.Title && !tagNeedsFill(t, taglibx.Title) {
 		f.Title = false
 	}
-	if f.Artist && trackHasField(t, taglibx.Artist) {
+	if f.Artist && !tagNeedsFill(t, taglibx.Artist) {
 		f.Artist = false
 	}
 	if f.Album && trackHasField(t, taglibx.Album) {
@@ -125,23 +221,97 @@ func applySkipFilled(t *model.Track, f *ScrapeFields) bool {
 	if f.Lyrics && trackHasField(t, "lyrics") {
 		f.Lyrics = false
 	}
+	// 扩展标签
+	if f.Composer && trackHasField(t, taglibx.Composer) {
+		f.Composer = false
+	}
+	if f.Lyricist && trackHasField(t, taglibx.Lyricist) {
+		f.Lyricist = false
+	}
+	if f.AlbumType && trackHasField(t, taglibx.ReleaseType) {
+		f.AlbumType = false
+	}
+	if f.Language && trackHasField(t, taglibx.Language) {
+		f.Language = false
+	}
+	if f.DiscNumber && trackHasField(t, taglibx.DiscNumber) {
+		f.DiscNumber = false
+	}
+	if f.DiscTotal && trackHasField(t, taglibx.DiscTotal) {
+		f.DiscTotal = false
+	}
+	if f.TrackTotal && trackHasField(t, taglibx.TrackTotal) {
+		f.TrackTotal = false
+	}
+	if f.Comment && trackHasField(t, taglibx.Comment) {
+		f.Comment = false
+	}
+	if f.TrackGain && trackHasField(t, taglibx.ReplayGainTrackGain) {
+		f.TrackGain = false
+	}
+	if f.AlbumGain && trackHasField(t, taglibx.ReplayGainAlbumGain) {
+		f.AlbumGain = false
+	}
+	if f.TrackPeak && trackHasField(t, taglibx.ReplayGainTrackPeak) {
+		f.TrackPeak = false
+	}
+	if f.AlbumPeak && trackHasField(t, taglibx.ReplayGainAlbumPeak) {
+		f.AlbumPeak = false
+	}
+	// 操作项：文件名已是「艺术家-标题」则跳过
+	if f.FileName {
+		if !fileNameNeedsRename(t) {
+			f.FileName = false
+		}
+	}
+	// 音频属性：标签已有探测值则跳过
+	if f.Bitrate && trackHasField(t, taglibx.Bitrate) {
+		f.Bitrate = false
+	}
+	if f.SampleRate && trackHasField(t, taglibx.SampleRate) {
+		f.SampleRate = false
+	}
+	if f.BitDepth && trackHasField(t, taglibx.BitDepth) {
+		f.BitDepth = false
+	}
+	if f.Channels && trackHasField(t, taglibx.Channels) {
+		f.Channels = false
+	}
+	if f.Duration && trackHasField(t, taglibx.Length) {
+		f.Duration = false
+	}
+	if f.FileSize && trackHasField(t, taglibx.FileSize) {
+		f.FileSize = false
+	}
 	return f.Cover || f.Title || f.Artist || f.Album || f.AlbumArtist ||
-		f.Genre || f.Year || f.TrackNumber || f.Lyrics
+		f.Genre || f.Year || f.TrackNumber || f.Lyrics ||
+		f.Composer || f.Lyricist || f.AlbumType || f.Language ||
+		f.DiscNumber || f.DiscTotal || f.TrackTotal || f.Comment ||
+		f.TrackGain || f.AlbumGain || f.TrackPeak || f.AlbumPeak ||
+		f.FileName ||
+		f.Bitrate || f.SampleRate || f.BitDepth || f.Channels || f.Duration || f.FileSize
 }
 
 type scrapeJob struct {
 	ID      string         `json:"id"`
-	Kind    string         `json:"kind"` // scrape | convert | identify | fixEnc | script
+	Kind    string         `json:"kind"` // scrape | convert | identify | fixEnc | script | onekey
 	Total   int            `json:"total"`
 	Done    int            `json:"done"`
 	Current string         `json:"current"`
-	Status  string         `json:"status"` // "running" | "done"
+	Status  string         `json:"status"` // "running" | "done" | "cancelled"
 	Results []scrapeResult `json:"results"`
+	// Stage 标识当前流水线阶段（仅 onekey 任务使用，如 fixEnc/script/artist/scrape）；
+	// StageLabel 是该阶段面向用户的中文/英文文案（由后端按请求语言给出）。
+	Stage      string `json:"stage,omitempty"`
+	StageLabel string `json:"stageLabel,omitempty"`
 	// Updated carries tracks whose tags/cover changed since the last poll.
 	// Each progress poll consumes (clears) it so the UI can patch the list
 	// incrementally instead of reloading the whole list.
 	Updated []*model.Track `json:"updated"`
 	mu      sync.Mutex
+	// Cancel 由用户在前端点击“取消”置位；各任务循环在下一步前检查，
+	// 发现后立即置 status="cancelled" 并退出，不再处理剩余曲目。
+	Cancel bool `json:"-"`
 }
 
 type scrapeResult struct {
@@ -173,6 +343,41 @@ func (js *jobStore) get(id string) *scrapeJob {
 	return js.jobs[id]
 }
 
+// cancel 请求取消任务：置位 Cancel，任务循环在下一步前检查并立即停止。
+// 任务可能已在取消请求前完成（幂等，返回 false 表示无需取消）。
+func (js *jobStore) cancel(id string) bool {
+	j := js.get(id)
+	if j == nil {
+		return false
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.Status != "running" {
+		return false
+	}
+	j.Cancel = true
+	return true
+}
+
+// jobCanceled 报告任务是否已被请求取消（供各任务循环在每步前检查）。
+func jobCanceled(j *scrapeJob) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.Cancel
+}
+
+// cancelJobHandler: POST /api/jobs/{id}/cancel
+func cancelJobHandler(js *jobStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if !js.cancel(id) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "任务不存在或已结束"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "已请求取消"})
+	}
+}
+
 // active returns snapshots of all running jobs. The frontend calls this on
 // login/refresh so tasks keep showing progress across page reloads and devices
 // (the job itself runs in this process; a container restart cancels it).
@@ -196,11 +401,14 @@ func (js *jobStore) active() []*scrapeJob {
 
 // runProgressJob 启动通用后台任务（格式转换 / 音频识别 / 乱码修复 / 简繁转换）：
 // 串行处理 total 项，每完成一项更新 Done/Current/Results，
-// 前端通过 GET /api/jobs/{id} 轮询可视化进度。
+// 前端通过 GET /api/jobs/{id} 轮询可视化进度。用户取消时立即停止。
 func (js *jobStore) runProgressJob(kind string, total int, step func(j *scrapeJob, i int) scrapeResult) *scrapeJob {
 	job := js.create(total, kind)
 	go func() {
 		for i := 0; i < total; i++ {
+			if jobCanceled(job) {
+				break
+			}
 			r := step(job, i)
 			job.mu.Lock()
 			job.Done++
@@ -208,15 +416,21 @@ func (js *jobStore) runProgressJob(kind string, total int, step func(j *scrapeJo
 			job.mu.Unlock()
 		}
 		job.mu.Lock()
-		job.Status = "done"
+		if job.Cancel {
+			job.Status = "cancelled"
+		} else {
+			job.Status = "done"
+		}
 		job.Current = ""
 		job.mu.Unlock()
+		logJobDone(job) // 任务完成后统一写入操作日志
 	}()
 	return job
 }
 
 // batchScrapeHandler starts a background job that scrapes the given track ids.
-func batchScrapeHandler(js *jobStore, store *store, ms *scrape.MultiSource) http.HandlerFunc {
+// 配置了 AcoustID Key 时，存疑曲目（Unknown/乱码/缺艺术家）先自动走音频识别。
+func batchScrapeHandler(js *jobStore, store *store, ms *scrape.MultiSource, cfg *cstore.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			IDs         []string `json:"ids"`
@@ -239,7 +453,7 @@ func batchScrapeHandler(js *jobStore, store *store, ms *scrape.MultiSource) http
 		}
 		fields := fieldsFromList(req.Fields, req.FetchCover, req.FetchLyrics)
 		job := js.create(len(req.IDs), "scrape")
-		go runBatch(job, store, ms, req.Source, req.IDs, fields, req.SkipFilled)
+		go runBatch(job, store, ms, cfg, req.Source, req.IDs, fields, req.SkipFilled)
 		writeJSON(w, http.StatusOK, map[string]any{"jobId": job.ID, "total": job.Total})
 	}
 }
@@ -263,13 +477,15 @@ func jobProgressHandler(js *jobStore) http.HandlerFunc {
 		}
 		j.mu.Lock()
 		out := scrapeJob{
-			ID:      j.ID,
-			Total:   j.Total,
-			Done:    j.Done,
-			Current: j.Current,
-			Status:  j.Status,
-			Results: append([]scrapeResult(nil), j.Results...),
-			Updated: j.Updated,
+			ID:         j.ID,
+			Total:      j.Total,
+			Done:       j.Done,
+			Current:    j.Current,
+			Status:     j.Status,
+			Stage:      j.Stage,
+			StageLabel: j.StageLabel,
+			Results:    append([]scrapeResult(nil), j.Results...),
+			Updated:    j.Updated,
 		}
 		j.Updated = nil
 		j.mu.Unlock()
@@ -277,15 +493,22 @@ func jobProgressHandler(js *jobStore) http.HandlerFunc {
 	}
 }
 
-func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, source string, ids []string, fields ScrapeFields, skipFilled bool) {
+func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.Config, source string, ids []string, fields ScrapeFields, skipFilled bool) {
 	defer func() {
 		job.mu.Lock()
-		job.Status = "done"
+		if job.Cancel {
+			job.Status = "cancelled"
+		} else {
+			job.Status = "done"
+		}
 		job.Current = ""
 		job.mu.Unlock()
 	}()
 	multi := len(ids) > 1
 	for _, id := range ids {
+		if jobCanceled(job) {
+			return
+		}
 		t := store.get(id)
 		if t == nil {
 			job.mu.Lock()
@@ -293,6 +516,15 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, source strin
 			job.Done++
 			job.mu.Unlock()
 			continue
+		}
+		// 存疑自动识别：配了 AcoustID Key 才启用（识别含库内指纹回退；
+		// 识别重命名产生新 ID 后，后续刮削基于新曲目继续）
+		if cfg.GetDefault("acoustid_key", "") != "" && trackIsDoubtful(t) {
+			if res := identifyDoubtfulTrack(store, ms, t, cfg); res.OK && res.NewID != "" {
+				if nt := store.get(res.NewID); nt != nil {
+					t = nt
+				}
+			}
 		}
 		job.mu.Lock()
 		job.Current = t.FileName
@@ -325,75 +557,173 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, source strin
 // fields and optionally fetch the cover and/or lyrics. When skipFilled is set,
 // fields the track already carries are left untouched (smart skip to save
 // hardware); if nothing needs filling, the track is skipped without searching.
+// 操作项（文件名/LRC/音频属性）不依赖源搜索，勾选后始终执行。
 // Returns (message, ok).
 func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, fields ScrapeFields, skipFilled bool, store *store) (string, bool) {
+	needOp := fields.FileName ||
+		fields.Bitrate || fields.SampleRate || fields.BitDepth ||
+		fields.Channels || fields.Duration || fields.FileSize
 	if skipFilled {
-		// Drop already-filled fields; if nothing remains, skip without searching.
-		if !applySkipFilled(t, &fields) {
+		// Drop already-filled fields; if nothing remains (except ops), skip search.
+		if !applySkipFilled(t, &fields) && !needOp {
 			return "已有完整标签，智能跳过", true
 		}
 	}
-
-	// 搜索关键词：优先真实标签；标签为空/“Unknown”/乱码时回退文件名解析
-	// （如 `Unknown - 蓝色蝴蝶.mp3` → 用“蓝色蝴蝶”去刮削）。
-	title, artist := effectiveSearchTerms(t)
-	query := title
-	if artist != "" && !looksUnknown(artist) && !looksGarbled(artist) {
-		query += " " + artist
-	}
-	if strings.TrimSpace(query) == "" {
-		return "无标题/艺术家，跳过", false
-	}
-	results, err := ms.Search(source, query, 3)
-	if err != nil {
-		return "搜索失败: " + err.Error(), false
-	}
-	if len(results) == 0 {
-		return "无匹配结果", false
-	}
-	sr := pickBest(results)
-	ms.Enrich(&sr) // 补全专辑艺术家/流派/年代/曲目号
+	hasSearch := fields.Cover || fields.Title || fields.Artist || fields.Album ||
+		fields.AlbumArtist || fields.Genre || fields.Year || fields.TrackNumber ||
+		fields.Lyrics || fields.Composer || fields.Lyricist || fields.AlbumType ||
+		fields.Language || fields.Comment || fields.DiscNumber ||
+		fields.TrackTotal || fields.DiscTotal
 
 	tags := map[string][]string{}
-	if fields.Title && stripAudioExt(strings.TrimSpace(sr.Title)) != "" {
-		tags[taglibx.Title] = []string{stripAudioExt(strings.TrimSpace(sr.Title))}
-	}
-	if fields.Artist && len(sr.Artists) > 0 {
-		tags[taglibx.Artist] = sr.Artists
-	}
-	if fields.Album && sr.Album != "" {
-		tags[taglibx.Album] = []string{sr.Album}
-	}
-	if fields.AlbumArtist && len(sr.AlbumArtist) > 0 {
-		tags[taglibx.AlbumArtist] = sr.AlbumArtist
-	}
-	if fields.Genre && len(sr.Genre) > 0 {
-		tags[taglibx.Genre] = sr.Genre
-	}
-	if fields.Year && sr.Date != "" {
-		tags[taglibx.Date] = []string{sr.Date}
-	}
-	if fields.TrackNumber && sr.TrackNumber > 0 {
-		tags[taglibx.TrackNumber] = []string{strconv.Itoa(sr.TrackNumber)}
-	}
-	if sr.Source == "musicbrainz" && sr.SourceID != "" {
-		tags[taglibx.MBTrackID] = []string{sr.SourceID}
-	}
-	if sr.ReleaseMBID != "" {
-		tags[taglibx.MBAlbumID] = []string{sr.ReleaseMBID}
-	}
-	if fields.Lyrics {
-		if lyric, err := ms.FetchLyrics(sr); err == nil && strings.TrimSpace(lyric) != "" {
-			tags[taglibx.Lyrics] = []string{lyric}
+	var sr scrape.SearchResult
+	query := ""
+	if hasSearch {
+		// 搜索关键词：优先真实标签；标签为空/“Unknown”/乱码时回退文件名解析
+		// （如 `Unknown - 蓝色蝴蝶.mp3` → 用“蓝色蝴蝶”去刮削）。
+		title, artist := effectiveSearchTerms(t)
+		query = title
+		if artist != "" && !looksUnknown(artist) && !looksGarbled(artist) {
+			query += " " + artist
+		}
+		if strings.TrimSpace(query) == "" && !needOp {
+			return "无标题/艺术家，跳过", false
+		}
+		if strings.TrimSpace(query) != "" {
+			// 源降级：首选源（或 auto 语言优选链）无结果时自动匹配下一条源，
+			// 保证"这个源没搜到 → 自动换下一个源"。auto 时等价于语言优选链。
+			results, err := ms.SearchWithFallback(source, query, 3)
+			if err != nil {
+				if !needOp {
+					return "搜索失败: " + err.Error(), false
+				}
+			} else if len(results) > 0 {
+				sr = pickBest(results, title)
+				ms.Enrich(&sr) // 补全专辑艺术家/流派/年代/曲目号/语言/专辑类型/总数
+
+				// 部分源会把 GBK 编码字节按 Latin-1 塞进 JSON，得到
+				// "习惯了寂寞" → "Ï°¹ßÁË¼ÅÄ¯" 这类乱码。写入标签前统一修复，
+				// 防止把乱码写进文件（fixMojibake 有得分保护，正常文本不受影响）。
+				fixSrc := func(s string) string {
+					if s == "" {
+						return s
+					}
+					if f := fixMojibake(s); f != s {
+						return f
+					}
+					return s
+				}
+				sr.Title = fixSrc(sr.Title)
+				sr.Album = fixSrc(sr.Album)
+				sr.Language = fixSrc(sr.Language)
+				sr.AlbumType = fixSrc(sr.AlbumType)
+				sr.Comment = fixSrc(sr.Comment)
+				for i := range sr.Artists {
+					sr.Artists[i] = fixSrc(sr.Artists[i])
+				}
+				for i := range sr.AlbumArtist {
+					sr.AlbumArtist[i] = fixSrc(sr.AlbumArtist[i])
+				}
+				for i := range sr.Genre {
+					sr.Genre[i] = fixSrc(sr.Genre[i])
+				}
+				for i := range sr.Composer {
+					sr.Composer[i] = fixSrc(sr.Composer[i])
+				}
+				for i := range sr.Lyricist {
+					sr.Lyricist[i] = fixSrc(sr.Lyricist[i])
+				}
+
+				// 核心标签
+				if fields.Title && stripAudioExt(strings.TrimSpace(sr.Title)) != "" {
+					tags[taglibx.Title] = []string{stripAudioExt(strings.TrimSpace(sr.Title))}
+				}
+				if fields.Artist && len(sr.Artists) > 0 {
+					tags[taglibx.Artist] = sr.Artists
+				}
+				if fields.Album && sr.Album != "" {
+					tags[taglibx.Album] = []string{sr.Album}
+				}
+				if fields.AlbumArtist && len(sr.AlbumArtist) > 0 {
+					tags[taglibx.AlbumArtist] = sr.AlbumArtist
+				}
+				if fields.Genre && len(sr.Genre) > 0 {
+					tags[taglibx.Genre] = sr.Genre
+				}
+				if fields.Year && sr.Date != "" {
+					tags[taglibx.Date] = []string{sr.Date}
+				}
+				if fields.TrackNumber && sr.TrackNumber > 0 {
+					tags[taglibx.TrackNumber] = []string{strconv.Itoa(sr.TrackNumber)}
+				}
+				if sr.Source == "musicbrainz" && sr.SourceID != "" {
+					tags[taglibx.MBTrackID] = []string{sr.SourceID}
+				}
+				if sr.ReleaseMBID != "" {
+					tags[taglibx.MBAlbumID] = []string{sr.ReleaseMBID}
+				}
+				// 扩展标签（源提供才写，源没有的字段不写入）
+				if fields.Composer && len(sr.Composer) > 0 {
+					tags[taglibx.Composer] = sr.Composer
+				}
+				if fields.Lyricist && len(sr.Lyricist) > 0 {
+					tags[taglibx.Lyricist] = sr.Lyricist
+				}
+				if fields.Language && sr.Language != "" {
+					tags[taglibx.Language] = []string{sr.Language}
+				}
+				if fields.AlbumType && sr.AlbumType != "" {
+					tags[taglibx.ReleaseType] = []string{sr.AlbumType}
+				}
+				if fields.Comment && sr.Comment != "" {
+					tags[taglibx.Comment] = []string{sr.Comment}
+				}
+				if fields.DiscNumber && sr.DiscNumber > 0 {
+					tags[taglibx.DiscNumber] = []string{strconv.Itoa(sr.DiscNumber)}
+				}
+				if fields.TrackTotal && sr.TotalTracks > 0 {
+					tags[taglibx.TrackTotal] = []string{strconv.Itoa(sr.TotalTracks)}
+				}
+				if fields.DiscTotal && sr.TotalDiscs > 0 {
+					tags[taglibx.DiscTotal] = []string{strconv.Itoa(sr.TotalDiscs)}
+				}
+				if fields.Lyrics {
+					if lyric, err := ms.FetchLyrics(sr); err == nil && strings.TrimSpace(lyric) != "" {
+						tags[taglibx.Lyrics] = []string{lyric}
+					}
+				}
+			}
 		}
 	}
+	// 音频属性写标签（本地探测值，无源依赖）
+	if fields.Bitrate && t.Bitrate > 0 {
+		tags[taglibx.Bitrate] = []string{strconv.Itoa(int(t.Bitrate))}
+	}
+	if fields.SampleRate && t.SampleRate > 0 {
+		tags[taglibx.SampleRate] = []string{strconv.Itoa(int(t.SampleRate))}
+	}
+	if fields.BitDepth && t.BitDepth > 0 {
+		tags[taglibx.BitDepth] = []string{strconv.Itoa(int(t.BitDepth))}
+	}
+	if fields.Channels && t.Channels > 0 {
+		tags[taglibx.Channels] = []string{strconv.Itoa(int(t.Channels))}
+	}
+	if fields.Duration && t.Duration > 0 {
+		tags[taglibx.Length] = []string{strconv.Itoa(int(t.Duration))}
+	}
+	if fields.FileSize && t.Size > 0 {
+		tags[taglibx.FileSize] = []string{strconv.FormatInt(t.Size, 10)}
+	}
+
 	newPath := ""
+	coverWritten := false
 	if len(tags) > 0 {
 		if err := taglibx.WriteTags(t.Path, tags, false); err != nil {
 			return "写标签失败: " + err.Error(), false
 		}
 		// 标签与文件名不符时重命名「艺术家 - 标题.后缀」（如
-		// Unknown - 开始恋爱.flac → E-kids - 开始恋爱.flac）
+		// Unknown - 开始恋爱.flac → E-kids - 开始恋爱.flac）。
+		// 未写艺术家/标题标签时回退已有标签值，保证 FileName 操作可用。
 		artist, title := "", ""
 		if a := tags[taglibx.Artist]; len(a) > 0 {
 			artist = a[0]
@@ -401,28 +731,50 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 		if tt := tags[taglibx.Title]; len(tt) > 0 {
 			title = tt[0]
 		}
-		if artist != "" || title != "" {
+		if artist == "" {
+			artist = strings.TrimSpace(t.Tags[taglibx.Artist])
+		}
+		if title == "" {
+			title = strings.TrimSpace(t.Tags[taglibx.Title])
+		}
+		if fields.FileName || (artist != "" && title != "") {
 			newPath = renameFileToArtistTitle(store, t, artist, title)
 		}
 	}
 	if fields.Cover {
-		if img, err := ms.FetchCover(sr); err == nil && len(img) > 0 {
+		// 封面降级：当前源没有海报 → 自动匹配下一条源补一张
+		img, err := ms.FetchCover(sr)
+		if err != nil || len(img) == 0 {
+			img, _ = ms.FetchCoverFallback(query, sr.Source)
+		}
+		if len(img) > 0 {
 			taglibx.WriteCover(t.Path, img)
+			coverWritten = true
 		}
 	}
-	if newPath == "" {
-		refreshTrack(store, t.Path)
-	}
-
+	// 只报告实际执行的动作（搜索失败/无属性值时不再误报"文件名"）
 	var wrote []string
-	if fields.Title {
+	if _, ok := tags[taglibx.Title]; ok {
 		wrote = append(wrote, "歌名")
 	}
-	if fields.Cover {
+	if coverWritten {
 		wrote = append(wrote, "海报")
 	}
-	if fields.Lyrics {
+	if _, ok := tags[taglibx.Lyrics]; ok {
 		wrote = append(wrote, "歌词")
+	}
+	for _, k := range []string{taglibx.Bitrate, taglibx.SampleRate, taglibx.BitDepth,
+		taglibx.Channels, taglibx.Length, taglibx.FileSize} {
+		if _, ok := tags[k]; ok {
+			wrote = append(wrote, "属性")
+			break
+		}
+	}
+	if newPath != "" {
+		wrote = append(wrote, "文件名")
+	}
+	if len(wrote) == 0 {
+		return "无可用数据，跳过", true
 	}
 	msg := "刮削完成"
 	if len(wrote) > 0 {
@@ -431,12 +783,92 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	return msg, true
 }
 
-// pickBest chooses the first result that has an album, else the first result.
-func pickBest(results []scrape.SearchResult) scrape.SearchResult {
+// fileNameNeedsRename 报告文件名是否不是「艺术家 - 标题」格式（标签可用时）。
+func fileNameNeedsRename(t *model.Track) bool {
+	artist := strings.TrimSpace(t.Tags[taglibx.Artist])
+	title := strings.TrimSpace(t.Tags[taglibx.Title])
+	if artist == "" || title == "" || looksUnknown(artist) || looksGarbled(artist) || looksGarbled(title) {
+		return false
+	}
+	want := sanitizeName(artist) + " - " + sanitizeName(stripAudioExt(title))
+	return stripAudioExt(t.FileName) != want
+}
+
+// pickBest 从搜索结果中挑出与目标标题最匹配的一条：按标题相似度评分
+// （归一化后去掉括号变体，Dice 二元组相似度），分数相同时优先带专辑的
+// 完整结果；若全部低于阈值（源没返回真正匹配的曲目），退回"第一个有
+// 专辑的结果，否则第一个"，避免拿完全无关的结果乱写标签。
+func pickBest(results []scrape.SearchResult, wantTitle string) scrape.SearchResult {
+	if len(results) == 0 {
+		return scrape.SearchResult{}
+	}
+	best, bestScore := results[0], -1.0
+	for i := range results {
+		sc := titleSimilar(results[i].Title, wantTitle)
+		hasAlbum := results[i].Album != ""
+		if sc > bestScore || (sc == bestScore && hasAlbum && best.Album == "") {
+			best, bestScore = results[i], sc
+		}
+	}
+	if bestScore >= 0.35 {
+		return best
+	}
 	for i := range results {
 		if results[i].Album != "" {
 			return results[i]
 		}
 	}
 	return results[0]
+}
+
+// titleSimilar 返回两个标题的相似度（0~1）。先归一化：小写、去空白、
+// 去掉 (…)（…）等括号变体（伴奏/现场/版本标注不影响匹配）。
+func titleSimilar(a, b string) float64 {
+	a, b = normTitle(a), normTitle(b)
+	if a == "" || b == "" {
+		return 0
+	}
+	if a == b {
+		return 1
+	}
+	// Dice 二元组相似度：对中英文短标题都稳定
+	ga := map[string]int{}
+	for i := 0; i+2 <= len(a); i++ {
+		ga[a[i:i+2]]++
+	}
+	gb := map[string]int{}
+	for i := 0; i+2 <= len(b); i++ {
+		gb[b[i:i+2]]++
+	}
+	inter := 0
+	for k, v := range ga {
+		if gb[k] > 0 {
+			if v < gb[k] {
+				inter += v
+			} else {
+				inter += gb[k]
+			}
+		}
+	}
+	ta, tb := len(a)-1, len(b)-1
+	if ta <= 0 || tb <= 0 {
+		return 0
+	}
+	return 2 * float64(inter) / float64(ta+tb)
+}
+
+// normTitle 归一化标题：小写、去空白、去掉括号及其内容。
+func normTitle(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	for {
+		lo := strings.IndexAny(s, "([（")
+		if lo < 0 {
+			return strings.TrimSpace(s)
+		}
+		cl := strings.IndexAny(s[lo:], ")]）")
+		if cl < 0 {
+			return strings.TrimSpace(s[:lo])
+		}
+		s = s[:lo] + s[lo+cl+1:]
+	}
 }

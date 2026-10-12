@@ -1,11 +1,21 @@
-// 音频内容识别：对“无文件名信息、无标签”的曲目（如 track01.mp3）用
-// Chromaprint 音频指纹与库内已标注曲目做相似度匹配，命中后把标签复制
-// 过去，并尝试抓取歌词，让这类文件也能自动补全。
+// 音频内容识别：对"无文件名信息、无标签"的曲目（如 track01.mp3）按文档
+// 方案走 AcoustID → MusicBrainz 全链路流水线：
+//
+//	音频文件 → Chromaprint 指纹 → AcoustID 查询（3 QPS）→ MusicBrainz
+//	Recording 补全（1 QPS）→ taglib 写标签 → 重命名"艺术家 - 标题.后缀"
+//
+// 需要转码的格式（m4a/aac/alac/aiff/wma/ape/wv/dsf/dff 等）先由 FFmpeg
+// 转为 WAV 再送入指纹计算；DSD（.dsf/.dff）同样先转 PCM。AcoustID 未配置
+// Key 或未命中时，回退到库内已标注曲目的指纹匹配（本地高速路径）。
 package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,8 +24,70 @@ import (
 	"LNH-musictag/internal/finger"
 	"LNH-musictag/internal/model"
 	"LNH-musictag/internal/scrape"
+	cstore "LNH-musictag/internal/store"
 	"LNH-musictag/internal/taglibx"
 )
+
+// identifyExts 是内容识别支持的音频格式（文档 14 种 + 兼容已有 .mpc/.mka）。
+var identifyExts = map[string]bool{
+	".mp3": true, ".m4a": true, ".aac": true, ".flac": true, ".alac": true,
+	".wav": true, ".aiff": true, ".aif": true, ".ogg": true, ".opus": true,
+	".wma": true, ".ape": true, ".wv": true, ".dsf": true, ".dff": true,
+	".mpc": true, ".mka": true,
+}
+
+// identifyNeedsTranscode 报告该格式能否直接送入 fpcalc。
+// Chromaprint 原生支持 MP3 / FLAC / WAV / OGG（Vorbis/Opus）；其余格式
+//（含 DSD）需先经 FFmpeg 转为 WAV 再指纹。
+func identifyNeedsTranscode(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".mp3", ".flac", ".wav", ".ogg", ".opus":
+		return false
+	default:
+		return true
+	}
+}
+
+// ffmpegToWAV 用 FFmpeg 把任意音频转成 16bit/44.1kHz/双声道 WAV（指纹输入）。
+func ffmpegToWAV(bin, src, dst string) error {
+	cmd := exec.Command(bin, "-y", "-loglevel", "error", "-i", src,
+		"-f", "wav", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", dst)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg 转码失败: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// fpForTrack 计算曲目指纹：需要转码的格式先转 WAV（临时文件，用完删除）。
+// 返回压缩指纹（AcoustID 查询用）与 raw 指纹（库内海明距离匹配用）。
+func fpForTrack(fp *finger.Fpcalc, ffBin string, t *model.Track) (compressed, raw string, err error) {
+	src := t.Path
+	if identifyNeedsTranscode(t.Ext) {
+		if ffBin == "" {
+			return "", "", fmt.Errorf("格式 %s 需 FFmpeg 转码为 WAV 后识别，但未检测到 FFmpeg（可在设置/插件页配置）", t.Ext)
+		}
+		tmp, terr := os.CreateTemp("", "lnh-identify-*.wav")
+		if terr != nil {
+			return "", "", fmt.Errorf("创建临时文件失败: %w", terr)
+		}
+		tmpPath := tmp.Name()
+		tmp.Close()
+		defer os.Remove(tmpPath)
+		if terr := ffmpegToWAV(ffBin, t.Path, tmpPath); terr != nil {
+			return "", "", terr
+		}
+		src = tmpPath
+	}
+	compressed, err = fp.CompressedFingerprint(src)
+	if err != nil {
+		return "", "", err
+	}
+	raw, err = fp.Fingerprint(src)
+	if err != nil {
+		return "", "", err
+	}
+	return compressed, raw, nil
+}
 
 // filenameNoInfo reports whether a filename carries no usable title info:
 // empty, placeholder ("Unknown"), garbled, or a bare track number (01, track01).
@@ -59,7 +131,7 @@ func needsIdentify(t *model.Track) bool {
 	if title != "" && !looksUnknown(title) && !looksGarbled(title) {
 		base := strings.TrimSuffix(filepath.Base(t.FileName), filepath.Ext(t.FileName))
 		if !strings.EqualFold(strings.ToLower(title), strings.ToLower(base)) {
-			return false // 标签是真实信息（如 01.mp3 内嵌“七里香”）
+			return false // 标签是真实信息（如 01.mp3 内嵌"七里香"）
 		}
 	}
 	return true
@@ -69,6 +141,7 @@ func needsIdentify(t *model.Track) bool {
 // do not re-analyze the whole library (keyed by id; built once per process).
 var (
 	identifyBaseOnce sync.Once
+	identifyBaseMu   sync.Mutex
 	identifyBase     = map[string]string{} // trackID -> fingerprint
 )
 
@@ -94,7 +167,9 @@ func buildIdentifyBase(s *store, fp *finger.Fpcalc) {
 						continue
 					}
 					if f, err := fp.Fingerprint(t.Path); err == nil && f != "" {
+						identifyBaseMu.Lock()
 						identifyBase[t.ID] = f
+						identifyBaseMu.Unlock()
 					}
 				}
 			}()
@@ -114,12 +189,14 @@ type identifyResult struct {
 	Title    string `json:"title,omitempty"`
 	Artist   string `json:"artist,omitempty"`
 	Message  string `json:"message"`
+	// NewID 为重命名后新曲目的 ID（批量刮削后续步骤据其继续处理）
+	NewID string `json:"newId,omitempty"`
 }
 
 // identifyHandler matches selected (or all unknown) tracks against the tagged
 // library by audio fingerprint, copies the matched tags and fetches lyrics.
 // Runs as a background job with per-track progress.
-func identifyHandler(js *jobStore, s *store, ms *scrape.MultiSource) http.HandlerFunc {
+func identifyHandler(js *jobStore, s *store, ms *scrape.MultiSource, cfg *cstore.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			IDs []string `json:"ids"`
@@ -133,6 +210,7 @@ func identifyHandler(js *jobStore, s *store, ms *scrape.MultiSource) http.Handle
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "音频识别引擎不可用：容器内需安装 chromaprint（fpcalc），请更新镜像"})
 			return
 		}
+		ffBin := ffmpegBin(cfg)
 
 		var targets []*model.Track
 		if len(req.IDs) > 0 {
@@ -149,23 +227,28 @@ func identifyHandler(js *jobStore, s *store, ms *scrape.MultiSource) http.Handle
 			return
 		}
 
-		buildIdentifyBase(s, fp)
-
 		job := js.runProgressJob("identify", len(targets), func(j *scrapeJob, i int) scrapeResult {
+			// 首次识别时在任务内异步构建全库指纹缓存（POST 立即返回，
+			// 前端进度显示"构建指纹库…"；构建完成后才开始识别）
+			if i == 0 {
+				j.mu.Lock()
+				j.Current = "构建指纹库…"
+				j.mu.Unlock()
+				buildIdentifyBase(s, fp)
+			}
 			t := targets[i]
 			j.mu.Lock()
 			j.Current = t.FileName
 			j.mu.Unlock()
-			f, err := fp.Fingerprint(t.Path)
+			compressed, rawFp, err := fpForTrack(fp, ffBin, t)
 			if err != nil {
-				return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "指纹计算失败: " + err.Error()}
+				return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: err.Error()}
 			}
-			res := matchAndWrite(s, ms, t, f, identifyBase)
+			res := identifyTrack(s, ms, t, compressed, rawFp, identifyBase)
 			if res.OK {
 				return scrapeResult{ID: t.ID, FileName: t.FileName, OK: true, Message: res.Message}
 			}
-			// 未匹配/匹配来源无标题：属“未识别”，中性跳过，不算失败、不标红；
-			// 仅写标签失败等真错误计入失败。
+			// 未匹配/无标题：中性跳过，不算失败、不标红；仅写标签失败等真错误计入失败。
 			skip := strings.Contains(res.Message, "未匹配") || strings.Contains(res.Message, "无标题")
 			return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Skip: skip, Message: res.Message}
 		})
@@ -173,8 +256,34 @@ func identifyHandler(js *jobStore, s *store, ms *scrape.MultiSource) http.Handle
 	}
 }
 
-// matchAndWrite finds the best fingerprint match, copies tags and fetches
-// lyrics for a track. It returns the per-track result.
+// identifyTrack 是单曲识别主流程（文档流水线）：
+//  1. AcoustID 指纹查询（3 QPS）→ 命中后 MusicBrainz Recording 补全（1 QPS）
+//     → 写标签 → 重命名；
+//  2. AcoustID 未配置 Key 或未命中 → 回退库内已标注曲目指纹匹配。
+// fpComp 为 AcoustID 需要的压缩指纹；fpRaw 为库内匹配用的 raw 指纹。
+func identifyTrack(s *store, ms *scrape.MultiSource, t *model.Track, fpComp, fpRaw string, base map[string]string) identifyResult {
+	// 主路径：AcoustID → MusicBrainz
+	if rec, aerr := ms.Client().LookupByFingerprint(fpComp, int(t.Duration)); aerr == nil && rec.Title != "" && len(rec.Artists) > 0 {
+		var det *scrape.RecordingDetail
+		if d, derr := ms.Client().LookupRecording(rec.MBID); derr == nil {
+			det = d
+			slog.Info("identify: acoustid+musicbrainz", "file", t.FileName, "mbid", rec.MBID, "album", d.Album)
+		} else {
+			slog.Warn("identify: musicbrainz recording lookup failed", "file", t.FileName, "mbid", rec.MBID, "err", derr)
+		}
+		return writeIdentifyFull(s, ms, t, rec, det)
+	} else if aerr != nil {
+		slog.Warn("identify: acoustid lookup failed", "file", t.FileName, "err", aerr)
+	} else {
+		slog.Warn("identify: acoustid no usable recording", "file", t.FileName)
+	}
+	// 回退：库内指纹匹配（识别准确、无需外部 Key）
+	slog.Info("identify: fallback library match", "file", t.FileName)
+	return matchAndWrite(s, ms, t, fpRaw, base)
+}
+
+// matchAndWrite finds the best library fingerprint match, copies tags and
+// fetches lyrics for a track. It returns the per-track result.
 func matchAndWrite(s *store, ms *scrape.MultiSource, t *model.Track, fp string, base map[string]string) identifyResult {
 	bestID, bestSim := "", 0.0
 	for id, f := range base {
@@ -196,59 +305,84 @@ func matchAndWrite(s *store, ms *scrape.MultiSource, t *model.Track, fp string, 
 		}
 	}
 	if src == nil {
-		// 库内未匹配到 → 外部 AcoustID 听声识曲（需设置页填 AcoustID API Key）
-		rec, aerr := ms.Client().LookupByFingerprint(fp, int(t.Duration))
-		if aerr == nil && rec.Title != "" && len(rec.Artists) > 0 {
-			return writeIdentify(s, ms, t, rec.Title, rec.Artists, rec.Releases, rec.FirstDate)
-		}
-		msg := "音频内容未匹配到库内曲目"
-		if aerr != nil && strings.Contains(aerr.Error(), "API Key") {
-			msg += "；如需外部听声识曲，请在设置页填写 AcoustID API Key"
-		}
+		msg := "音频内容未匹配到库内曲目（AcoustID 未配置 Key 或未命中）"
 		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: msg}
 	}
 	if title == "" {
 		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "匹配来源无标题"}
 	}
-	tags := map[string][]string{taglibx.Title: {title}}
-	if artist != "" {
-		tags[taglibx.Artist] = []string{artist}
-	}
-	for k, v := range map[string]string{
-		taglibx.Album:       src.Tags["ALBUM"],
-		taglibx.AlbumArtist: src.Tags["ALBUMARTIST"],
-		taglibx.Genre:       src.Tags["GENRE"],
-		taglibx.Date:        src.Tags["DATE"],
-		taglibx.TrackNumber: src.Tags["TRACKNUMBER"],
+	// 与 AcoustID 路径一致：写标签统一转简体
+	title = simpConverter(title)
+	artist = simpConverter(artist)
+	extra := map[string]string{}
+	for k, srcKey := range map[string]string{
+		taglibx.Album:       "ALBUM",
+		taglibx.AlbumArtist: "ALBUMARTIST",
+		taglibx.Genre:       "GENRE",
+		taglibx.Date:        "DATE",
+		taglibx.TrackNumber: "TRACKNUMBER",
 	} {
+		if v := simpConverter(strings.TrimSpace(src.Tags[srcKey])); v != "" {
+			extra[k] = v
+		}
+	}
+	artists := []string(nil)
+	if artist != "" {
+		artists = []string{artist}
+	}
+	return finalizeIdentify(s, ms, t, title, artists, extra)
+}
+
+// writeIdentifyFull 按 AcoustID 命中（+ MusicBrainz Recording 补全）写标签、
+// 抓歌词并按"艺术家 - 标题.后缀"重命名。
+func writeIdentifyFull(s *store, ms *scrape.MultiSource, t *model.Track, rec scrape.RecordingResult, det *scrape.RecordingDetail) identifyResult {
+	title := strings.TrimSpace(rec.Title)
+	artists := rec.Artists
+	album, albumArtist, date, genre, trackNo := "", "", "", "", ""
+	if det != nil {
+		if len(det.Artists) > 0 {
+			artists = det.Artists
+		}
+		album = det.Album
+		albumArtist = strings.Join(det.AlbumArtist, " / ")
+		date = det.Date
+		if len(det.Genres) > 0 {
+			genre = det.Genres[0]
+		}
+		trackNo = det.TrackNumber
+	}
+	if title == "" || len(artists) == 0 {
+		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "识别结果无标题/无艺术家"}
+	}
+	// MusicBrainz 原始数据常含繁体（如「圓」），识别写入统一转简体
+	title = simpConverter(title)
+	album = simpConverter(album)
+	albumArtist = simpConverter(albumArtist)
+	genre = simpConverter(genre)
+	for i := range artists {
+		artists[i] = simpConverter(artists[i])
+	}
+	extra := map[string]string{
+		taglibx.Album:       album,
+		taglibx.AlbumArtist: albumArtist,
+		taglibx.Genre:       genre,
+		taglibx.Date:        date,
+		taglibx.TrackNumber: trackNo,
+	}
+	return finalizeIdentify(s, ms, t, title, artists, extra)
+}
+
+// finalizeIdentify 识别成功后的公共收尾（AcoustID 主路径与库内回退共用）：
+// 写标签 → 抓歌词 → 刷新列表 → 按「艺术家 - 标题.后缀」重命名。
+func finalizeIdentify(s *store, ms *scrape.MultiSource, t *model.Track, title string, artists []string, extra map[string]string) identifyResult {
+	tags := map[string][]string{taglibx.Title: {title}}
+	if len(artists) > 0 {
+		tags[taglibx.Artist] = artists
+	}
+	for k, v := range extra {
 		if strings.TrimSpace(v) != "" {
 			tags[k] = []string{v}
 		}
-	}
-	if err := taglibx.WriteTags(t.Path, tags, false); err != nil {
-		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "写标签失败: " + err.Error()}
-	}
-	// 抓歌词
-	sr := scrape.SearchResult{Title: title}
-	if artist != "" {
-		sr.Artists = []string{artist}
-	}
-	if lyric, err := ms.FetchLyrics(sr); err == nil && strings.TrimSpace(lyric) != "" {
-		taglibx.WriteTags(t.Path, map[string][]string{taglibx.Lyrics: {lyric}}, false)
-	}
-	refreshTrack(s, t.Path)
-	return identifyResult{ID: t.ID, FileName: t.FileName, OK: true, Title: title, Artist: artist, Message: "已识别：" + title + (func() string { if artist != "" { return " - " + artist }; return "" })()}
-}
-
-// writeIdentify applies an AcoustID-recognized recording to a track and
-// fetches lyrics for it.
-func writeIdentify(s *store, ms *scrape.MultiSource, t *model.Track, title string, artists []string, releases []scrape.Release, date string) identifyResult {
-	tags := map[string][]string{taglibx.Title: {title}, taglibx.Artist: artists}
-	if len(releases) > 0 && strings.TrimSpace(releases[0].Title) != "" {
-		tags[taglibx.Album] = []string{releases[0].Title}
-	}
-	if strings.TrimSpace(date) != "" {
-		tags[taglibx.Date] = []string{date}
 	}
 	if err := taglibx.WriteTags(t.Path, tags, false); err != nil {
 		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "写标签失败: " + err.Error()}
@@ -258,5 +392,47 @@ func writeIdentify(s *store, ms *scrape.MultiSource, t *model.Track, title strin
 		taglibx.WriteTags(t.Path, map[string][]string{taglibx.Lyrics: {lyric}}, false)
 	}
 	refreshTrack(s, t.Path)
-	return identifyResult{ID: t.ID, FileName: t.FileName, OK: true, Title: title, Artist: strings.Join(artists, " / "), Message: "已识别：" + title + " - " + strings.Join(artists, " / ")}
+	artistLabel := strings.Join(artists, " / ")
+	newPath := renameFileToArtistTitle(s, t, artistLabel, title)
+	res := identifyResult{ID: t.ID, FileName: t.FileName, OK: true, Title: title, Artist: artistLabel, Message: "已识别：" + title + " - " + artistLabel}
+	if newPath != "" {
+		res.NewID = s.byPathID(newPath)
+	}
+	return res
+}
+
+// trackIsDoubtful 判定曲目"存疑"：文件名艺术家为占位（Unknown/未知/track01）、
+// 标签艺术家为占位/乱码/空、或无有效标题。这类文件在配置了 AcoustID Key 时，
+// 批量刮削/一键刮削会先走音频识别（指纹 → AcoustID → MusicBrainz → 写标签
+// → 重命名），再进入刮削，避免"Unknown - 歌名"这类错误艺术家被源误配。
+func trackIsDoubtful(t *model.Track) bool {
+	fa, _ := parseFileNameArtistTitle(t.FileName)
+	artist := strings.TrimSpace(t.Tags[taglibx.Artist])
+	title := strings.TrimSpace(t.Tags[taglibx.Title])
+	if fa == "" || looksUnknown(fa) {
+		return true
+	}
+	if artist == "" || looksUnknown(artist) || looksGarbled(artist) {
+		return true
+	}
+	if title == "" || looksUnknown(title) || looksGarbled(title) {
+		return true
+	}
+	return false
+}
+
+// identifyDoubtfulTrack 对单首存疑曲目执行音频识别（AcoustID 主路径 +
+// 库内指纹回退）。供批量刮削/一键刮削在配置 AcoustID Key 时调用；
+// 未命中时返回 OK=false，调用方继续走刮削兜底。
+func identifyDoubtfulTrack(s *store, ms *scrape.MultiSource, t *model.Track, cfg *cstore.Config) identifyResult {
+	fp := &finger.Fpcalc{Bin: "fpcalc"}
+	if !fp.Available() {
+		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "音频识别引擎不可用（未安装 fpcalc）"}
+	}
+	buildIdentifyBase(s, fp)
+	compressed, rawFp, err := fpForTrack(fp, ffmpegBin(cfg), t)
+	if err != nil {
+		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: err.Error()}
+	}
+	return identifyTrack(s, ms, t, compressed, rawFp, identifyBase)
 }

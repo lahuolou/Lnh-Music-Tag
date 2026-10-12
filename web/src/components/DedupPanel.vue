@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, watch } from 'vue'
-import { state, toast, loadDups, refresh } from '../store.js'
+import { state, toast, loadDups, refresh, busy } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
 
@@ -38,14 +38,32 @@ function checkAll(gi, g) {
 }
 function clearGroup(gi, g) { checks[gi].clear(); }
 
-async function delChecked(gi, g) {
-  const del = selIds(gi, g);
+// 全局操作：跨所有分组统一勾选/清空/删除
+function totalChecked() {
+  let n = 0;
+  state.dupGroups.forEach((_, gi) => { if (checks[gi]) n += checks[gi].size; });
+  return n;
+}
+function allCheckedIds() {
+  const ids = [];
+  state.dupGroups.forEach((_, gi) => { if (checks[gi]) ids.push(...checks[gi]); });
+  return ids;
+}
+function checkAllGroups() {
+  state.dupGroups.forEach((g, gi) => checkAll(gi, g));
+}
+function clearAllGroups() {
+  Object.keys(checks).forEach(k => checks[k].clear());
+}
+async function delAllChecked() {
+  const del = allCheckedIds();
   if (!del.length) { toast(t('dupSelFirst'), 'err'); return; }
-  const sure = confirm(t('dupDelConfirm', { n: del.length }) + '：\n' + del.map(fileName).join('\n') + '\n\n' + t('confirm') + '？' + t('dupIrreversible'));
+  const sure = confirm(t('dupDelConfirm', { n: del.length }) + '\n\n' + t('confirm') + '？' + t('dupIrreversible'));
   if (!sure) return;
   try {
     const r = await api('/api/duplicates/remove', { method: 'POST', body: JSON.stringify({ ids: del }) });
     toast(t('dupDelDone', { n: r.removed }) + (r.failed.length ? t('dupDelFail2', { f: r.failed.length }) : ''), r.failed.length ? 'err' : 'ok');
+    clearAllGroups();
     await refresh();
     await loadDups();
   } catch (e) { toast(t('dupDelFail', { m: e.message }), 'err'); }
@@ -53,10 +71,16 @@ async function delChecked(gi, g) {
 </script>
 
 <template>
-  <button class="ghost sm" @click="loadDups">{{ t('dupRecheck') }}</button>
+  <button class="ghost sm" :disabled="busy()" @click="loadDups">{{ t('dupRecheck') }}</button>
   <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.7">
     {{ t('dupHint') }}<br />
     {{ t('dupGuide') }}
+  </div>
+  <!-- 全局操作栏：跨所有分组勾选后批量删除 -->
+  <div v-if="state.dupGroups.length" style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+    <button class="ghost sm" :disabled="busy()" @click="checkAllGroups">{{ t('dupKeepAll') }}</button>
+    <button class="ghost sm" :disabled="busy()" @click="clearAllGroups">{{ t('clearSel') }}</button>
+    <button class="ghost sm danger" :disabled="busy() || !totalChecked()" @click="delAllChecked">{{ t('dupDel') }} ({{ totalChecked() }})</button>
   </div>
   <div v-if="state.dupGroups.length === 0" class="muted" style="margin-top:10px">{{ t('dupNone') }}</div>
   <div v-for="(g, gi) in state.dupGroups" :key="gi" class="dup">
@@ -70,9 +94,9 @@ async function delChecked(gi, g) {
         <span class="muted" style="margin-left:auto;font-size:11px">{{ fileInfo(id) }}</span>
       </span>
       <span style="display:flex;gap:8px;margin-top:4px">
-        <button class="ghost sm" @click="checkAll(gi, g)">{{ t('dupKeepAll') }}</button>
-        <button class="ghost sm" @click="clearGroup(gi, g)">{{ t('clearSel') }}</button>
-        <button class="ghost sm" :disabled="!selIds(gi, g).length" @click="delChecked(gi, g)">{{ t('dupDel') }} ({{ selIds(gi, g).length }})</button>
+        <button class="ghost sm" :disabled="busy()" @click="checkAll(gi, g)">{{ t('dupKeepAll') }}</button>
+        <button class="ghost sm" :disabled="busy()" @click="clearGroup(gi, g)">{{ t('clearSel') }}</button>
+        <button class="ghost sm" :disabled="busy() || !selIds(gi, g).length" @click="delChecked(gi, g)">{{ t('dupDel') }} ({{ selIds(gi, g).length }})</button>
       </span>
     </span>
   </div>

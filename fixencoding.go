@@ -310,23 +310,79 @@ func looksUnknown(s string) bool {
 func effectiveSearchTerms(t *model.Track) (title, artist string) {
 	title = strings.TrimSpace(t.Tags["TITLE"])
 	artist = strings.TrimSpace(t.Tags["ARTIST"])
-	if title == "" || looksUnknown(title) || looksGarbled(title) ||
-		artist == "" || looksUnknown(artist) || looksGarbled(artist) {
-		fa, ft := parseFileNameArtistTitle(t.FileName) // 返回 (artist, title)
-		if title == "" || looksUnknown(title) || looksGarbled(title) {
-			title = ft
-		}
-		if artist == "" || looksUnknown(artist) || looksGarbled(artist) {
+	fa, ft := parseFileNameArtistTitle(t.FileName) // 返回 (artist, title)
+	// 文件名解析出的标题/艺术家更可信：标签缺失、占位、乱码或与文件名
+	// 不一致时一律优先文件名。典型场景 "Unknown - 蓝色蝴蝶.mp3"：标签可能
+	// 残留错误的艺人/标题，用文件名歌名去刮削才能匹配到正确的歌。
+	if ft != "" && (title == "" || looksUnknown(title) || looksGarbled(title) || title != ft) {
+		title = ft
+	}
+	if artist == "" || looksUnknown(artist) || looksGarbled(artist) {
+		// 标签艺术家为空/占位（Unknown/未知）/乱码：尝试从文件名取真实
+		// 艺术家；文件名也只有占位或为空时置空，仅凭歌名去匹配
+		// （如 "Unknown - 蓝色蝴蝶.mp3" → 搜 "蓝色蝴蝶"）。
+		if fa != "" && !looksGarbled(fa) && !looksUnknown(fa) {
 			artist = fa
+		} else {
+			artist = ""
 		}
 	}
 	return title, artist
+}
+
+// repairTrackText 是"乱码修复"的单曲公共逻辑（批量页 fixEncodingHandler 与
+// 一键流水线 stageFixEncoding 复用同一实现）：
+//  1. 修复文本标签中的乱码；有明确乱码特征的标题/艺术家回退文件名解析结果；
+//  2. 修复结果统一转简体（与音频识别一致，整理后的文本应为简体）；
+//  3. 计算乱码文件名的修复目标基名（不实际写盘，重命名由调用方执行）。
+//
+// 返回：修复的字段集合、待写标签表、文件名修复后的新基名（空=无需重命名）。
+func repairTrackText(t *model.Track) (changed map[string]string, m map[string][]string, newBase string) {
+	changed = map[string]string{}
+	m = map[string][]string{}
+	for _, k := range textFields {
+		v := strings.TrimSpace(t.Tags[k])
+		if v == "" {
+			continue
+		}
+		f := fixMojibake(v)
+		// 有明确乱码特征（◈/注音/FFFD/Latin-1 控制区）的字段：文件名解析结果
+		// 远比"尽力修复"可信，标题/艺术家直接回退文件名；其他字段仍尽力修复。
+		if looksGarbled(v) && (k == taglibx.Title || k == taglibx.Artist) {
+			fArtist, fTitle := parseFileNameArtistTitle(t.FileName)
+			if k == taglibx.Title && fTitle != "" {
+				f = fTitle
+			} else if k == taglibx.Artist && fArtist != "" {
+				f = fArtist
+			}
+			if f == v { // 文件名解析不出有效值，退回尽力修复
+				f = fixMojibake(v)
+			}
+		}
+		// 修复结果仍含替换符/乱码特征时丢弃，避免以乱易乱；统一转简体
+		if f != v && !strings.ContainsRune(f, '\uFFFD') && !looksGarbled(f) {
+			f = simpConverter(f)
+			if f != v {
+				changed[k] = f
+				m[k] = []string{f}
+			}
+		}
+	}
+	// 文件名乱码 → 计算修复目标基名（列表显示的就是文件名，不修不会消失）
+	base := stripAudioExt(t.FileName)
+	if looksGarbledText(base) {
+		if f := fixMojibake(base); f != "" && f != base && !strings.ContainsRune(f, '\uFFFD') && !looksGarbled(f) {
+			newBase = simpConverter(f)
+		}
+	}
+	return changed, m, newBase
 }
 
 // fixEncodingHandler rewrites the text fields of selected tracks, repairing
 // any mojibake it can detect. When a tag cannot be repaired (double-corrupted,
 // information lost) but the filename carries a clean "artist - title", the
 // artist/title tags fall back to the filename so the track stays readable.
+// Repaired text is converted to Simplified Chinese (same as identification).
 // Runs as a background job for live progress.
 func fixEncodingHandler(js *jobStore, s *store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -345,57 +401,27 @@ func fixEncodingHandler(js *jobStore, s *store) http.HandlerFunc {
 			j.mu.Lock()
 			j.Current = t.FileName
 			j.mu.Unlock()
-			changed := map[string]string{}
-			m := map[string][]string{}
-			for _, k := range textFields {
-				v := strings.TrimSpace(t.Tags[k])
-				if v == "" {
-					continue
-				}
-				f := fixMojibake(v)
-				// 有明确乱码特征（◈/注音/FFFD/Latin-1 控制区）的字段：文件名解析结果
-				// 远比“尽力修复”可信，标题/艺术家直接回退文件名；其他字段仍尽力修复。
-				if looksGarbled(v) && (k == taglibx.Title || k == taglibx.Artist) {
-					fArtist, fTitle := parseFileNameArtistTitle(t.FileName)
-					if k == taglibx.Title && fTitle != "" {
-						f = fTitle
-					} else if k == taglibx.Artist && fArtist != "" {
-						f = fArtist
-					}
-					if f == v { // 文件名解析不出有效值，退回尽力修复
-						f = fixMojibake(v)
-					}
-				}
-				// 修复结果仍含替换符/乱码特征时丢弃，避免以乱易乱
-				if f != v && !strings.ContainsRune(f, '\uFFFD') && !looksGarbled(f) {
-					changed[k] = f
-					m[k] = []string{f}
-				}
-			}
+			changed, m, newBase := repairTrackText(t)
 			// 先写标签（写入当前路径；若有重命名，标签先写好再移动文件）
 			if len(m) > 0 {
 				if err := taglibx.WriteTags(t.Path, m, false); err != nil {
 					return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "写标签失败: " + err.Error()}
 				}
 			}
-			// 文件名乱码修复：文件名（去音频后缀）是乱码 → 修复并重命名。
-			// 列表显示的就是文件名，不修文件名用户看到的乱码不会消失。
+			// 文件名乱码修复并重命名
 			renamed := ""
-			base := stripAudioExt(t.FileName)
-			ext := t.Ext
-			if ext == "" {
-				ext = filepath.Ext(t.FileName)
-			}
-			if looksGarbledText(base) {
-				if f := fixMojibake(base); f != "" && f != base && !strings.ContainsRune(f, '\uFFFD') && !looksGarbled(f) {
-					newPath := filepath.Join(filepath.Dir(t.Path), f+ext)
-					if newPath != t.Path && !fileExists(newPath) {
-						if err := os.Rename(t.Path, newPath); err == nil {
-							renamed = f
-							// renameTrack 更新 store 路径 + 重读新路径标签 + 落库，
-							// 保持原 ID（不再 refreshTrack，避免路径变化产生重复行）
-							renameTrack(s, t, newPath)
-						}
+			if newBase != "" {
+				ext := t.Ext
+				if ext == "" {
+					ext = filepath.Ext(t.FileName)
+				}
+				newPath := filepath.Join(filepath.Dir(t.Path), newBase+ext)
+				if newPath != t.Path && !fileExists(newPath) {
+					if err := os.Rename(t.Path, newPath); err == nil {
+						renamed = newBase
+						// renameTrack 更新 store 路径 + 重读新路径标签 + 落库，
+						// 保持原 ID（避免路径变化产生重复行）
+						renameTrack(s, t, newPath)
 					}
 				}
 			}
