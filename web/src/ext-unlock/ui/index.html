@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音乐解锁</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; background: #f5f6f8; color: #222; padding: 16px; }
+@media (prefers-color-scheme: dark) { body { background: #17181c; color: #e6e6e6; } }
+h1 { font-size: 17px; margin-bottom: 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+input[type=text] { flex: 1; min-width: 200px; padding: 7px 10px; border: 1px solid rgba(128,128,128,.4); border-radius: 8px; background: transparent; color: inherit; font-size: 13px; }
+button { padding: 7px 14px; border: 1px solid rgba(128,128,128,.4); border-radius: 8px; background: rgba(128,128,128,.12); color: inherit; cursor: pointer; font-size: 13px; }
+button.primary { background: #2f80ed; border-color: #2f80ed; color: #fff; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.stats { font-size: 12px; color: #888; margin-bottom: 8px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(128,128,128,.18); font-size: 13px; vertical-align: top; }
+th { font-weight: 600; color: #888; }
+td.path { word-break: break-all; color: #888; font-size: 12px; }
+.bar { height: 8px; background: rgba(128,128,128,.2); border-radius: 4px; overflow: hidden; margin: 10px 0; }
+.bar > i { display: block; height: 100%; width: 0; background: #2f80ed; transition: width .2s; }
+.logs { max-height: 180px; overflow: auto; font-size: 12px; color: #888; border-top: 1px dashed rgba(128,128,128,.3); margin-top: 10px; padding-top: 8px; white-space: pre-wrap; }
+.logs .ok { color: #30a46c; }
+.logs .bad { color: #e5484d; }
+.empty { padding: 24px; text-align: center; color: #888; }
+</style>
+</head>
+<body>
+<h1>🔓 音乐解锁</h1>
+<div class="row">
+  <input type="text" id="dir" placeholder="输入音乐目录，如 E:\mp3">
+  <button id="scanBtn" class="primary">扫描加密音乐</button>
+</div>
+<div class="stats" id="stats"></div>
+<div id="ops" class="row" style="display:none">
+  <button id="allBtn">全选</button>
+  <button id="invBtn">反选</button>
+  <button id="unlockBtn" class="primary">批量解锁勾选项</button>
+</div>
+<div class="bar" id="bar" style="display:none"><i id="barIn"></i></div>
+<div style="overflow:auto;max-height:46vh">
+  <table id="tb">
+    <thead><tr><th style="width:32px"><input type="checkbox" id="headCk"></th><th>文件名</th><th>大小</th><th>状态</th></tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div class="empty" id="empty">扫描后显示需要解锁的音乐文件</div>
+</div>
+<div class="logs" id="logs"></div>
+<script src="app.js"></script>
+</body>
+</html>

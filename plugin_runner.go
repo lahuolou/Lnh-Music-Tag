@@ -36,6 +36,7 @@ type pluginZipDecl struct {
 	Hint    string            `json:"hint,omitempty"`
 	Fields  []PluginField     `json:"fields,omitempty"`
 	Entries map[string]string `json:"entries"` // 平台 -> 相对入口（bin/xxx）
+	Panel   string            `json:"panel,omitempty"` // Web 面板入口（zip 内相对路径，如 ui/index.html）
 }
 
 // pluginsRoot 返回插件包存放根目录（与配置库同级）。
@@ -164,6 +165,15 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			return nil, errors.New("插件入口文件不存在: " + entry)
 		}
 	}
+	// 5b. 校验 Web 面板入口存在（panel 可选；声明了就必须有文件）
+	if decl.Panel != "" {
+		pp := filepath.Join(cleanDest, filepath.FromSlash(decl.Panel))
+		fi, err := os.Stat(pp)
+		if err != nil || fi.IsDir() {
+			os.RemoveAll(cleanDest)
+			return nil, errors.New("插件面板文件不存在: " + decl.Panel)
+		}
+	}
 	// 6. 注册
 	p := &Plugin{
 		Name:    decl.Name,
@@ -176,6 +186,7 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 		ZipDir:  cleanDest,
 		Entries: decl.Entries,
 		ZipName: zipName,
+		Panel:   decl.Panel,
 		Config:  map[string]string{},
 	}
 	registerPlugin(p, nil)

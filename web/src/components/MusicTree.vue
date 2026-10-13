@@ -59,11 +59,14 @@ const filterOpts = [
 ];
 const filtering = computed(() => q.value.trim() !== '' || filter.value !== 'all');
 
+// 音频后缀正则（文件名显示/解析共用）
+const AUDIO_EXT = /\.(mp3|flac|wav|m4a|aac|ogg|opus|ape|wma|aiff|aif|mka|mpc|tta|dsf|dff)$/i
+
 // 文件名显示名：去尾部音频后缀（发如雪.mp3.flac -> 发如雪）
 function baseName(t) {
   let n = t.fileName || '';
   while (true) {
-    const m = n.match(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape|wma|aiff|mka)$/i);
+    const m = n.match(AUDIO_EXT);
     if (!m) break;
     n = n.slice(0, n.length - m[0].length);
   }
@@ -71,7 +74,7 @@ function baseName(t) {
 }
 // 从“艺术家 - 标题”文件名解析艺术家（标签为空时回退显示）
 function nameArtist(t) {
-  const m = (t.fileName || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape|wma|aiff|mka)$/i, '').match(/^(.*?)[\s\-—–]+([^\-—–]+)$/);
+  const m = (t.fileName || '').replace(AUDIO_EXT, '').match(/^(.*?)[\s\-—–]+([^\-—–]+)$/);
   return m ? m[1].trim() : '';
 }
 function displayTitle(t) { return (t.tags.TITLE || '').trim() || baseName(t); }

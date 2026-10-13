@@ -10,6 +10,9 @@ const sSource = ref('auto')
 const searching = ref(false)
 let lastId = null
 
+// 音频后缀正则（loadTrack 文件名解析共用）
+const AUDIO_EXT = /\.(mp3|flac|m4a|aac|ogg|opus|wav|wma|ape|mpc|aiff|mka)$/i
+
 // 手动刮削要写入的字段（可选）
 const sf = reactive({
   title: true, artist: true, albumArtist: true, genre: true, year: true, trackNumber: true, lyrics: true
@@ -31,12 +34,11 @@ function loadTrack(t) {
   let title = t.tags.TITLE || '';
   let artist = t.tags.ARTIST || '';
   if (!title) {
-    const base = (t.fileName || '').replace(/\.(mp3|flac|m4a|aac|ogg|opus|wav|wma|ape|mpc|aiff|mka)$/i, '');
+    const base = (t.fileName || '').replace(AUDIO_EXT, '');
     const m = base.match(/^(.*?)\s*-\s*(.+)$/);
     title = m ? m[2].trim() : base.trim();
     if (!artist && m) artist = m[1].trim();
-  }
-  f.value = {
+  }  f.value = {
     title, artist,
     album: t.tags.ALBUM || '', albumartist: t.tags.ALBUMARTIST || '',
     genre: t.tags.GENRE || '', date: t.tags.DATE || '',

@@ -10,11 +10,12 @@ import (
 )
 
 // securityHeaders sets hardened HTTP response headers for every response.
+// 注：frame-ancestors 放行同源（'self'）——第三方插件的 Web 面板以 iframe
+// 嵌入宿主页面，必须允许同源框架嵌入；跨站嵌入仍被禁止。
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-XSS-Protection", "1; mode=block")
 		h.Set("Content-Security-Policy",
@@ -23,16 +24,17 @@ func securityHeaders(next http.Handler) http.Handler {
 				"style-src 'self' 'unsafe-inline'; "+
 				"script-src 'self'; "+
 				"connect-src 'self'; "+
-				"frame-ancestors 'none'")
+				"frame-ancestors 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
 
 // limitBody caps request bodies (e.g. batch IDs, tags, settings) to 8 MiB and
 // rejects anything larger, protecting the JSON decoders from memory abuse.
+// 插件导入允许大包（handler 内部已有 256MiB 上限），其余 API 保持 8MiB 防滥用。
 func limitBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil {
+		if r.Body != nil && r.URL.Path != "/api/plugins/import" {
 			r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 		}
 		next.ServeHTTP(w, r)

@@ -29,10 +29,15 @@ func OpenConfig(dir string) (*Config, error) {
 		}
 	}
 	path := filepath.Join(dir, "lnh.db")
-	db, err := sql.Open("sqlite", path)
+	// 批量任务/扫描/日志会并发写库：WAL + busy_timeout 让并发写等待而非
+	// 直接报 SQLITE_BUSY 失败（此前并发下会出现大量 database is locked）。
+	// PRAGMA 通过 DSN 参数下发，保证连接池每个新连接都生效。
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(4)
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
 		return nil, err
 	}

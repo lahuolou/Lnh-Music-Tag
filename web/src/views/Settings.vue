@@ -9,7 +9,7 @@ const newPass = ref('')
 const confirm = ref('')
 const msg = ref('')
 
-const cfg = ref({ adminUser: '', acoustidKey: '', lastfmKey: '', discogsToken: '', jamendoClientID: '', spotifyID: '', spotifySecret: '', autoFixTitle: true, autoRenameFile: true, scanDir: '' })
+const cfg = ref({ adminUser: '', autoFixTitle: true, autoRenameFile: true, scanDir: '' })
 const cfgMsg = ref('')
 
 async function doChange() {
@@ -36,12 +36,6 @@ async function saveCfg() {
       method: 'POST',
       body: JSON.stringify({
         adminUser: cfg.value.adminUser,
-        acoustidKey: cfg.value.acoustidKey,
-        lastfmKey: cfg.value.lastfmKey,
-        discogsToken: cfg.value.discogsToken,
-        jamendoClientID: cfg.value.jamendoClientID,
-        spotifyID: cfg.value.spotifyID,
-        spotifySecret: cfg.value.spotifySecret,
         autoFixTitle: cfg.value.autoFixTitle,
         autoRenameFile: cfg.value.autoRenameFile,
         scanDir: cfg.value.scanDir
@@ -80,12 +74,6 @@ onMounted(loadCfg);
       <div class="panel">
         <h2>{{ t('dbCfg') }}</h2>
         <div class="field"><label>{{ t('fAdmin') }}</label><input type="text" v-model="cfg.adminUser" /></div>
-        <div class="field"><label>{{ t('fAcoustid') }}</label><input type="text" v-model="cfg.acoustidKey" :placeholder="t('optional')" /></div>
-        <div class="field"><label>{{ t('fLastfm') }}</label><input type="text" v-model="cfg.lastfmKey" placeholder="https://www.last.fm/api/account/create" /></div>
-        <div class="field"><label>{{ t('fDiscogs') }}</label><input type="text" v-model="cfg.discogsToken" placeholder="https://www.discogs.com/settings/developers" /></div>
-        <div class="field"><label>{{ t('fJamendo') }}</label><input type="text" v-model="cfg.jamendoClientID" placeholder="https://devportal.jamendo.com" /></div>
-        <div class="field"><label>{{ t('fSpotifyId') }}</label><input type="text" v-model="cfg.spotifyID" placeholder="https://developer.spotify.com/dashboard" /></div>
-        <div class="field"><label>{{ t('fSpotifySecret') }}</label><input type="password" v-model="cfg.spotifySecret" :placeholder="t('fSpotifySecret')" /></div>
         <div class="field"><label>{{ t('fScanDir') }}</label><input type="text" v-model="cfg.scanDir" placeholder="/music" /></div>
         <div class="chk" style="margin:6px 0 14px">
           <input type="checkbox" id="autoFix" class="tchk" v-model="cfg.autoFixTitle" />

@@ -503,6 +503,7 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.
 		}
 		job.Current = ""
 		job.mu.Unlock()
+		logJobDone(job) // 批量刮削完成后写入操作日志
 	}()
 	multi := len(ids) > 1
 	for _, id := range ids {
@@ -533,18 +534,13 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.
 		msg, ok := scrapeOneTrack(t, ms, source, fields, skipFilled, store)
 		skip := strings.Contains(msg, "智能跳过")
 		// 完成后把最新曲目快照加入增量队列（前端据此实时更新列表，不整表刷新）
+		job.mu.Lock()
 		if nt := store.get(t.ID); nt != nil {
-			job.mu.Lock()
 			job.Updated = append(job.Updated, nt)
-			job.Results = append(job.Results, scrapeResult{ID: t.ID, FileName: t.FileName, OK: ok, Skip: skip, Message: msg})
-			job.Done++
-			job.mu.Unlock()
-		} else {
-			job.mu.Lock()
-			job.Results = append(job.Results, scrapeResult{ID: t.ID, FileName: t.FileName, OK: ok, Skip: skip, Message: msg})
-			job.Done++
-			job.mu.Unlock()
 		}
+		job.Results = append(job.Results, scrapeResult{ID: t.ID, FileName: t.FileName, OK: ok, Skip: skip, Message: msg})
+		job.Done++
+		job.mu.Unlock()
 
 		if multi {
 			time.Sleep(1100 * time.Millisecond) // respect source rate limits

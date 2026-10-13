@@ -1,6 +1,6 @@
 # LNH-MusicTag 开发文档
 
-> 版本：v1.4.8（进行中）· 仓库：github.com/lahuolou/lnh-musictag · 协议：MIT
+> 版本：v1.4.8 · 仓库：github.com/lahuolou/lnh-musictag · 协议：MIT
 > 本文面向开发者：介绍项目架构、模块职责、数据模型、API、插件扩展点、音频识别与一键刮削流水线、发布流程。
 
 ---

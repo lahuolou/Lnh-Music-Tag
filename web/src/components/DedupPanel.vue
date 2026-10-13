@@ -38,6 +38,21 @@ function checkAll(gi, g) {
 }
 function clearGroup(gi, g) { checks[gi].clear(); }
 
+// 删除某分组内勾选的重复文件（保持与全局删除一致的二次确认与统计）
+async function delChecked(gi, g) {
+  const del = selIds(gi, g);
+  if (!del.length) { toast(t('dupSelFirst'), 'err'); return; }
+  const sure = confirm(t('dupDelConfirm', { n: del.length }) + '\n\n' + t('confirm') + '？' + t('dupIrreversible'));
+  if (!sure) return;
+  try {
+    const r = await api('/api/duplicates/remove', { method: 'POST', body: JSON.stringify({ ids: del }) });
+    toast(t('dupDelDone', { n: r.removed }) + (r.failed.length ? t('dupDelFail2', { f: r.failed.length }) : ''), r.failed.length ? 'err' : 'ok');
+    checks[gi].clear();
+    await refresh();
+    await loadDups();
+  } catch (e) { toast(t('dupDelFail', { m: e.message }), 'err'); }
+}
+
 // 全局操作：跨所有分组统一勾选/清空/删除
 function totalChecked() {
   let n = 0;

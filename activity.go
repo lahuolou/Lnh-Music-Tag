@@ -56,21 +56,35 @@ func addLog(action string, ok bool, count, fail, skip int, detail string) {
 	}
 }
 
-// logJobDone 在 runProgressJob 完成后统一写日志：按任务类型统计成功/失败/跳过。
+// logJobDone 在 runProgressJob / 批量刮削 / 一键刮削完成后统一写日志：
+// 按任务类型统计成功/失败/跳过。一键刮削为一首曲目多阶段记录，
+// 按曲目聚合（每首取最后一个阶段的结果）后再统计。
 func logJobDone(j *scrapeJob) {
 	if j == nil || j.Kind == "" {
 		return
 	}
 	ok, fail, skip := 0, 0, 0
-	for _, r := range j.Results {
-		if r.OK {
-			if r.Skip {
-				skip++
-			} else {
-				ok++
-			}
+	count := func(r *scrapeResult) {
+		// 跳过优先判定：OK=false 但 Skip=true 是"中性跳过"（如无乱码/已完整），不算失败
+		if r.Skip {
+			skip++
+		} else if r.OK {
+			ok++
 		} else {
 			fail++
+		}
+	}
+	if j.Kind == "onekey" {
+		last := map[string]*scrapeResult{}
+		for i := range j.Results {
+			last[j.Results[i].ID] = &j.Results[i]
+		}
+		for _, r := range last {
+			count(r)
+		}
+	} else {
+		for i := range j.Results {
+			count(&j.Results[i])
 		}
 	}
 	act := "act_job"

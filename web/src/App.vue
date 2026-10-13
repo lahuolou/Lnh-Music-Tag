@@ -9,6 +9,7 @@ import MusicTree from './components/MusicTree.vue'
 import EditPanel from './components/EditPanel.vue'
 import BatchPanel from './components/BatchPanel.vue'
 import DedupPanel from './components/DedupPanel.vue'
+import ExtPanel from './components/ExtPanel.vue'
 import Settings from './views/Settings.vue'
 import Plugins from './views/Plugin.vue'
 import ActivityLog from './components/ActivityLog.vue'
@@ -30,6 +31,22 @@ function goHome() { state.view = 'home'; }
 const aboutOpen = ref(false)
 const gearOpen = ref(false)
 
+// 第三方插件（非内置且有 Web 面板）动态注册到「编辑/批量/去重」之后的 tab 区
+const extPanels = ref([])
+async function loadExtPanels() {
+  try {
+    extPanels.value = ((await api('/api/plugins'))?.plugins || []).filter(p => !p.builtin && p.panel);
+    // 当前激活的插件 tab 已被删除时，自动切回编辑页
+    if (state.activeTab && state.activeTab.startsWith('ext:') && !extPanels.value.some(p => 'ext:' + p.name === state.activeTab)) {
+      state.activeTab = 'edit';
+    }
+  } catch (e) { extPanels.value = []; }
+}
+const extActive = computed(() => {
+  if (!state.activeTab || !state.activeTab.startsWith('ext:')) return null;
+  return extPanels.value.find(p => 'ext:' + p.name === state.activeTab) || null;
+});
+
 // 顶部全局任务徽标：同一时刻只显示一个正在运行的任务（优先批量刮削，
 // 否则工具任务）；进入批量页时由页内统一进度条承担显示，顶部隐藏，避免双进度条。
 const topJob = computed(() => {
@@ -39,10 +56,11 @@ const topJob = computed(() => {
 });
 
 // 登录成功后自动从公开首页进入后台
-watch(() => state.authed, v => { if (v) state.view = 'app'; })
+watch(() => state.authed, v => { if (v) { state.view = 'app'; loadExtPanels(); } })
 
 onMounted(async () => {
   applyTheme();
+  window.addEventListener('plugins-changed', loadExtPanels); // 插件导入/删除后实时刷新动态 tab
   try {
     const m = await api('/api/me');
     state.authed = true;
@@ -52,7 +70,7 @@ onMounted(async () => {
     state.authed = false;
   }
   checkVersion(); // 已登录（如刷新恢复会话）时检查更新；未登录时静默失败，登录成功后由 Login.vue 再查
-  if (state.authed) resumeJobs(); // 刷新/换设备后恢复进行中的批量任务进度
+  if (state.authed) { resumeJobs(); loadExtPanels(); } // 刷新/换设备后恢复进行中的批量任务进度
 });
 </script>
 
@@ -75,11 +93,11 @@ onMounted(async () => {
       <span v-if="state.activeTab !== 'batch' && topJob" class="badge batch" :title="t('batchRunningTitle')" @click="tab('list')">
         {{ topJob.type === 'batch' ? t('batchProgress', { d: topJob.d, t: topJob.t }) : t('jobRunning', { d: topJob.d, t: topJob.t, c: '' }) }}
       </span>
-      <button class="ghost sm" :class="{ on: state.activeTab !== 'settings' && state.activeTab !== 'plugins' }" @click="tab('list')">{{ t('list') }}</button>
+      <button class="ghost sm" :class="{ on: !['settings', 'plugins', 'logs'].includes(state.activeTab) }" @click="tab('list')">{{ t('list') }}</button>
       <button class="ghost sm" :title="t('home')" @click="goHome">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       </button>
-      <!-- 齿轮二级导航：主题 / 语言 / 设置 / 插件 / 关于 / 检查更新 / 退出 -->
+      <!-- 齿轮二级导航（按用户指定顺序）：主题 / 语言 / 插件 / 更新 / 关于 / 退出 -->
       <div class="gear" :class="{ open: gearOpen }" @click="gearOpen = !gearOpen">
         <button class="ghost sm gear-btn" :title="t('menu')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -89,9 +107,9 @@ onMounted(async () => {
           <button @click="toggleLang(); gearOpen = false">{{ lang === 'zh' ? '切换EN' : 'Switch CN' }}</button>
           <button @click="tab('plugins'); gearOpen = false">{{ t('plugins') }}</button>
           <button @click="tab('logs'); gearOpen = false">{{ t('logs') }}</button>
+          <button @click="tab('settings'); gearOpen = false">{{ t('settings') }}</button>
           <button @click="checkVersion(true); gearOpen = false">{{ t('checkUpdate') }}</button>
           <button @click="aboutOpen = true; gearOpen = false">{{ t('about') }}</button>
-          <button @click="tab('settings'); gearOpen = false">{{ t('settings') }}</button>
           <button class="danger" @click="logout">{{ t('logout') }}</button>
         </div>
       </div>
@@ -108,10 +126,13 @@ onMounted(async () => {
             <button class="tab" :class="{ on: state.activeTab === 'edit' }" @click="tab('edit')">{{ t('edit') }}</button>
             <button class="tab" :class="{ on: state.activeTab === 'batch' }" @click="tab('batch')">{{ t('batch') }}</button>
             <button class="tab" :class="{ on: state.activeTab === 'dedup' }" @click="tab('dedup')">{{ t('dedup') }}</button>
+            <!-- 第三方插件 Web 面板动态入口（编辑/批量/去重 之后） -->
+            <button v-for="e in extPanels" class="tab ext" :class="{ on: state.activeTab === 'ext:' + e.name }" @click="tab('ext:' + e.name)">{{ e.label }}</button>
           </div>
           <EditPanel v-if="state.activeTab === 'edit' || state.activeTab === 'list'" />
           <BatchPanel v-else-if="state.activeTab === 'batch'" />
           <DedupPanel v-else-if="state.activeTab === 'dedup'" />
+          <ExtPanel v-else-if="extActive" :plugin="extActive" />
         </div>
       </div>
     </div>

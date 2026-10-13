@@ -289,26 +289,7 @@ func main() {
 	// 插件框架：注册内置插件（刮削源 + FFmpeg），再从设置库恢复启停/配置
 	// （首次启动自动迁移旧的 sources_enabled / ffmpeg_path 键）
 	registerBuiltinPlugins(cfg, ms)
-	loadPluginsFromDB(cfg, configDir)
-
-	if k, ok := cfg.Get("acoustid_key"); ok && k != "" {
-		ms.Client().AcoustIDAPIKey = k
-	}
-	if k, ok := cfg.Get("lastfm_key"); ok && k != "" {
-		ms.Client().LastFMKey = k
-	}
-	if k, ok := cfg.Get("discogs_token"); ok && k != "" {
-		ms.Client().DiscogsToken = k
-	}
-	if k, ok := cfg.Get("jamendo_client_id"); ok && k != "" {
-		ms.Client().JamendoClientID = k
-	}
-	if v, ok := cfg.Get("spotify_id"); ok && v != "" {
-		ms.Client().SpotifyID = v
-	}
-	if v, ok := cfg.Get("spotify_secret"); ok && v != "" {
-		ms.Client().SpotifySecret = v
-	}
+	loadPluginsFromDB(cfg, configDir, ms)
 
 	adminUser, adminPass, generated, err := bootstrapAdmin(cfg, os.Getenv("LNH_ADMIN_USER"), os.Getenv("LNH_ADMIN_PASS"))
 	if err != nil {
@@ -339,10 +320,13 @@ func main() {
 	})
 	// 通用插件设置接口：列出/启停/配置全部插件（刮削源、FFmpeg、预留类型）
 	pm.HandleFunc("GET /api/plugins", pluginsHandler(cfg))
-	pm.HandleFunc("POST /api/plugins", pluginsUpdateHandler(cfg))
+	pm.HandleFunc("POST /api/plugins", pluginsUpdateHandler(cfg, ms))
 	pm.HandleFunc("POST /api/plugins/import", pluginsImportHandler(cfg, configDir))
 	pm.HandleFunc("DELETE /api/plugins/{name}", pluginsDeleteHandler(cfg))
 	pm.HandleFunc("POST /api/plugins/{name}/run", pluginsRunHandler())
+	pm.HandleFunc("GET /api/plugins/{name}/panel", pluginPanelHandler())
+	pm.HandleFunc("GET /api/plugins/{name}/panel/{path...}", panelAssetHandler(cfg, configDir))
+	pm.HandleFunc("POST /api/fs/scan-dir", fsScanDirHandler()) // 第三方插件面板通用目录扫描
 	pm.HandleFunc("POST /api/convert", convertHandler(jobs, store, cfg))
 	pm.HandleFunc("GET /api/ffmpeg/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ffmpegStatus(cfg))
@@ -358,6 +342,13 @@ func main() {
 		}
 		bin := ffmpegBin(cfg)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "path": bin, "version": ffmpegVersion(bin)})
+	})
+	pm.HandleFunc("POST /api/ffmpeg/uninstall", func(w http.ResponseWriter, r *http.Request) {
+		installMu.Lock()
+		defer installMu.Unlock()
+		uninstallFFmpeg(cfg)
+		addLog("act_plugin", true, 1, 0, 0, "停用 FFmpeg（卸载）")
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 	pm.HandleFunc("POST /api/fix-encoding", fixEncodingHandler(jobs, store))
 	pm.HandleFunc("POST /api/convert-script", convertScriptHandler(jobs, store))
@@ -419,32 +410,20 @@ func main() {
 	// --- Config / settings (stored in DB) ---
 	pm.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"adminUser":       cfg.GetDefault("admin_user", "admin"),
-			"acoustidKey":     cfg.GetDefault("acoustid_key", ""),
-			"lastfmKey":       cfg.GetDefault("lastfm_key", ""),
-			"discogsToken":    cfg.GetDefault("discogs_token", ""),
-			"jamendoClientID": cfg.GetDefault("jamendo_client_id", ""),
-			"spotifyID":       cfg.GetDefault("spotify_id", ""),
-			"spotifySecret":   cfg.GetDefault("spotify_secret", ""),
-			"autoFixTitle":    cfg.GetDefault("auto_fix_title", "1") == "1",
-			"autoRenameFile":  cfg.GetDefault("auto_rename_file", "1") == "1",
-			"scanDir":         cfg.GetDefault("scan_dir", "/music"),
-			"ffmpegPath":      cfg.GetDefault("ffmpeg_path", ""),
+			"adminUser":      cfg.GetDefault("admin_user", "admin"),
+			"autoFixTitle":   cfg.GetDefault("auto_fix_title", "1") == "1",
+			"autoRenameFile": cfg.GetDefault("auto_rename_file", "1") == "1",
+			"scanDir":        cfg.GetDefault("scan_dir", "/music"),
+			"ffmpegPath":     cfg.GetDefault("ffmpeg_path", ""),
 		})
 	})
 	pm.HandleFunc("POST /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			AdminUser       *string `json:"adminUser"`
-			AcoustidKey     *string `json:"acoustidKey"`
-			LastfmKey       *string `json:"lastfmKey"`
-			DiscogsToken    *string `json:"discogsToken"`
-			JamendoClientID *string `json:"jamendoClientID"`
-			SpotifyID       *string `json:"spotifyID"`
-			SpotifySecret   *string `json:"spotifySecret"`
-			AutoFixTitle    *bool   `json:"autoFixTitle"`
-			AutoRenameFile  *bool   `json:"autoRenameFile"`
-			ScanDir         *string `json:"scanDir"`
-			FFmpegPath      *string `json:"ffmpegPath"`
+			AdminUser      *string `json:"adminUser"`
+			AutoFixTitle   *bool   `json:"autoFixTitle"`
+			AutoRenameFile *bool   `json:"autoRenameFile"`
+			ScanDir        *string `json:"scanDir"`
+			FFmpegPath     *string `json:"ffmpegPath"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -454,30 +433,6 @@ func main() {
 			if u := strings.TrimSpace(*req.AdminUser); u != "" {
 				cfg.Set("admin_user", u)
 			}
-		}
-		if req.AcoustidKey != nil {
-			cfg.Set("acoustid_key", strings.TrimSpace(*req.AcoustidKey))
-			ms.Client().AcoustIDAPIKey = strings.TrimSpace(*req.AcoustidKey)
-		}
-		if req.LastfmKey != nil {
-			cfg.Set("lastfm_key", strings.TrimSpace(*req.LastfmKey))
-			ms.Client().LastFMKey = strings.TrimSpace(*req.LastfmKey)
-		}
-		if req.DiscogsToken != nil {
-			cfg.Set("discogs_token", strings.TrimSpace(*req.DiscogsToken))
-			ms.Client().DiscogsToken = strings.TrimSpace(*req.DiscogsToken)
-		}
-		if req.JamendoClientID != nil {
-			cfg.Set("jamendo_client_id", strings.TrimSpace(*req.JamendoClientID))
-			ms.Client().JamendoClientID = strings.TrimSpace(*req.JamendoClientID)
-		}
-		if req.SpotifyID != nil {
-			cfg.Set("spotify_id", strings.TrimSpace(*req.SpotifyID))
-			ms.Client().SpotifyID = strings.TrimSpace(*req.SpotifyID)
-		}
-		if req.SpotifySecret != nil {
-			cfg.Set("spotify_secret", strings.TrimSpace(*req.SpotifySecret))
-			ms.Client().SpotifySecret = strings.TrimSpace(*req.SpotifySecret)
 		}
 		if req.AutoFixTitle != nil {
 			v := "0"
@@ -507,12 +462,8 @@ func main() {
 	// List tracks. 每次返回时动态重算 garbled/needsIdentify 标记（覆盖扫描
 	// 时快照），升级后无需重新扫描，"乱码/待识别"筛选立即按最新算法生效。
 	pm.HandleFunc("GET /api/tracks", func(w http.ResponseWriter, r *http.Request) {
-		tracks := store.all()
-		for _, t := range tracks {
-			t.Garbled = looksGarbledTags(t)
-			t.NeedsIdentify = needsIdentify(t)
-		}
-		writeJSON(w, http.StatusOK, tracks)
+		recalcFlags(store)
+		writeJSON(w, http.StatusOK, store.all())
 	})
 
 	// Refresh the list: drop records whose files no longer exist on disk
@@ -526,12 +477,8 @@ func main() {
 				removed++
 			}
 		}
-		tracks := store.all()
-		for _, t := range tracks {
-			t.Garbled = looksGarbledTags(t)
-			t.NeedsIdentify = needsIdentify(t)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "tracks": tracks})
+		recalcFlags(store)
+		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "tracks": store.all()})
 	})
 
 	// Duplicates (hash-based, plus fingerprint if available)
@@ -543,58 +490,20 @@ func main() {
 		groups := dedup.GroupByHash(tracks)
 		groups = append(groups, dedup.GroupBySameName(tracks)...)
 		groups = append(groups, dedup.GroupByArtistTitle(tracks)...)
+		total := 0
+		for _, g := range groups {
+			total += g.Count
+		}
+		// 重复检测日志：组数 + 涉及曲目数（detail 便于人工核对）
+		addLog("act_dedupscan", true, len(groups), 0, 0, actDetail("tracks", total))
 		writeJSON(w, http.StatusOK, groups)
 	})
 
 	// Remove selected duplicate files (user-choose which to keep first)
-	pm.HandleFunc("POST /api/duplicates/remove", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ IDs []string `json:"ids"` }
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		removed := 0
-		failed := []string{}
-		for _, id := range req.IDs {
-			t := store.get(id)
-			if t == nil {
-				continue
-			}
-			if err := os.Remove(t.Path); err != nil {
-				failed = append(failed, t.FileName)
-				continue
-			}
-			store.remove(id)
-			removed++
-		}
-		addLog("act_dedup", len(failed) == 0, removed, len(failed), 0, "")
-		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "failed": failed})
-	})
+	pm.HandleFunc("POST /api/duplicates/remove", deleteTracksHandler(store, "act_dedup"))
 
 	// 列表页选中删除文件（前端二次确认后调用；同时清理 store 与磁盘）
-	pm.HandleFunc("POST /api/tracks/delete", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ IDs []string `json:"ids"` }
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		removed := 0
-		failed := []string{}
-		for _, id := range req.IDs {
-			t := store.get(id)
-			if t == nil {
-				continue
-			}
-			if err := os.Remove(t.Path); err != nil {
-				failed = append(failed, t.FileName)
-				continue
-			}
-			store.remove(id)
-			removed++
-		}
-		addLog("act_del", len(failed) == 0, removed, len(failed), 0, "")
-		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "failed": failed})
-	})
+	pm.HandleFunc("POST /api/tracks/delete", deleteTracksHandler(store, "act_del"))
 
 	// Serve embedded cover art of a track
 	pm.HandleFunc("GET /api/tracks/{id}/cover", func(w http.ResponseWriter, r *http.Request) {
@@ -1062,6 +971,44 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// recalcFlags 重算全部曲目的乱码/待识别/繁体标记（覆盖扫描时的快照）。
+// /api/tracks 与刷新接口共用，保证筛选与最新修复算法一致，无需重扫描。
+func recalcFlags(s *store) {
+	for _, t := range s.all() {
+		t.Garbled = looksGarbledTags(t)
+		t.NeedsIdentify = needsIdentify(t)
+		t.HasTrad = detectTraditional(t.Tags)
+	}
+}
+
+// deleteTracksHandler 删除勾选曲目（磁盘 + 库）：去重页与列表页删除共用。
+// actKey 是操作日志的 action 键（act_dedup / act_del）。
+func deleteTracksHandler(s *store, actKey string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ IDs []string `json:"ids"` }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		removed := 0
+		failed := []string{}
+		for _, id := range req.IDs {
+			t := s.get(id)
+			if t == nil {
+				continue
+			}
+			if err := os.Remove(t.Path); err != nil {
+				failed = append(failed, t.FileName)
+				continue
+			}
+			s.remove(id)
+			removed++
+		}
+		addLog(actKey, len(failed) == 0, removed, len(failed), 0, "")
+		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "failed": failed})
+	}
 }
 
 func decodeBase64(s string) ([]byte, error) {

@@ -9,18 +9,60 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"LNH-musictag/internal/scrape"
 	cstore "LNH-musictag/internal/store"
 )
 
 // keyedSources 需要 API Key 的刮削源：源名 -> 设置库 Key 键名。
-// 这些源默认关闭，需先在「设置 → 数据库配置」填写对应 Key 再开启。
+// 这些源默认关闭，需先在「插件页」填写对应 Key 再开启。
 var keyedSources = map[string]string{
 	"lastfm":  "lastfm_key",
 	"spotify": "spotify_id", // Spotify 需要 ID+Secret 两个 Key（KeyField 用 spotify_id）
 	"discogs": "discogs_token",
 	"jamendo": "jamendo_client_id",
+}
+
+// keyedSourceFields 需 Key 源在插件页内嵌的 Key 输入字段（渲染为密码/文本框）。
+var keyedSourceFields = map[string][]PluginField{
+	"lastfm":  {{Key: "lastfm_key", Label: "fLastfm", Type: "password"}},
+	"spotify": {{Key: "spotify_id", Label: "fSpotifyId", Type: "text"}, {Key: "spotify_secret", Label: "fSpotifySecret", Type: "password"}},
+	"discogs": {{Key: "discogs_token", Label: "fDiscogs", Type: "password"}},
+	"jamendo": {{Key: "jamendo_client_id", Label: "fJamendo", Type: "password"}},
+}
+
+// pluginKeyFields 返回某插件配置中属于"API Key"的键列表：
+// 这些键在保存/加载时会同步到设置库（cstore），供 AcoustID/刮削源
+// 内部使用点（cfg.Get 读取）直接生效，无需额外改造。
+func pluginKeyFields(p *Plugin) []string {
+	switch p.Name {
+	case "tool.acoustid":
+		return []string{"acoustid_key"}
+	case "scrape.spotify":
+		return []string{"spotify_id", "spotify_secret"}
+	}
+	if p.KeyField != "" {
+		return []string{p.KeyField}
+	}
+	return nil
+}
+
+// syncClientKeys 把设置库中的 API Key 同步到内存刮削客户端（ms.Client()），
+// 与设置页保存行为一致。启动恢复（loadPluginsFromDB）与插件页保存
+// （pluginsUpdateHandler）共用此入口，保证两条路径行为统一。
+func syncClientKeys(cfg *cstore.Config, ms *scrape.MultiSource) {
+	if cfg == nil || ms == nil {
+		return
+	}
+	ms.Client().AcoustIDAPIKey = cfg.GetDefault("acoustid_key", "")
+	ms.Client().LastFMKey = cfg.GetDefault("lastfm_key", "")
+	ms.Client().DiscogsToken = cfg.GetDefault("discogs_token", "")
+	ms.Client().JamendoClientID = cfg.GetDefault("jamendo_client_id", "")
+	ms.Client().SpotifyID = cfg.GetDefault("spotify_id", "")
+	ms.Client().SpotifySecret = cfg.GetDefault("spotify_secret", "")
 }
 
 // registerBuiltinPlugins 注册内置插件：
@@ -46,6 +88,7 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 			Builtin:   builtin,
 			NeedsKey:  keyField != "",
 			KeyField:  keyField,
+			Fields:    keyedSourceFields[s.Name], // 需 Key 源内嵌 Key 输入框（插件页直接配置）
 		}, func(n string, on bool, _ map[string]string) {
 			ms.SetEnabled(n[len("scrape."):], on)
 		})
@@ -63,6 +106,18 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 		},
 	}
 	registerPlugin(ff, nil)
+	// AcoustID 插件：AcoustID API Key 配置（可选）。配好 Key 后，
+	// 存疑曲目（Unknown/乱码/缺艺术家）自动走音频识别回退。
+	registerPlugin(&Plugin{
+		Name:      "tool.acoustid",
+		Label:     "AcoustID",
+		Kind:      PluginTool,
+		Enabled:   true,
+		Builtin:   true,
+		Hint:      "acoustidHint",
+		KeyField:  "acoustid_key",
+		Fields:    []PluginField{{Key: "acoustid_key", Label: "fAcoustid", Type: "password"}},
+	}, nil)
 	// 预留类型注册示例（后续实现时在此补充）：
 	//   registerPlugin(&Plugin{Name:"download.example", Label:"…", Kind:PluginDownload,...})
 	//   registerPlugin(&Plugin{Name:"protocol.subsonic", Label:"Subsonic", Kind:PluginProtocol,...})
@@ -73,20 +128,20 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 func pluginsHandler(cfg *cstore.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		list := pluginsSnapshot()
-		// 计算依赖 Key 的插件是否已配置（KeyConfigured）
+		// Key 配置状态：从插件自身 Config 判断（保存时已同步，重启后随
+		// loadPluginsFromDB 恢复）；无需再读设置库。
 		for i := range list {
 			p := &list[i]
-			if !p.NeedsKey || p.KeyField == "" || cfg == nil {
+			if p.KeyField == "" {
 				continue
 			}
-			// Spotify 需要 ID + Secret 两个 Key
-			if p.KeyField == "spotify_id" {
-				a, _ := cfg.Get("spotify_id")
-				b, _ := cfg.Get("spotify_secret")
+			if p.Name == "scrape.spotify" {
+				a, _ := p.Config["spotify_id"]
+				b, _ := p.Config["spotify_secret"]
 				p.KeyConfigured = a != "" && b != ""
 				continue
 			}
-			if v, ok := cfg.Get(p.KeyField); ok && v != "" {
+			if v, ok := p.Config[p.KeyField]; ok && v != "" {
 				p.KeyConfigured = true
 			}
 		}
@@ -128,6 +183,7 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
+			addLog("act_plugin_import", true, 1, 0, 0, "导入插件 "+p.Label+"（"+p.Name+"）")
 			writeJSON(w, http.StatusOK, map[string]any{"imported": []Plugin{*p}, "plugins": pluginsSnapshot()})
 			return
 		}
@@ -183,6 +239,7 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 			}, nil)
 			existing[d.Name] = true
 			imported = append(imported, Plugin{Name: d.Name, Label: d.Label, Kind: kind, Enabled: true, Version: d.Version, Hint: d.Hint, Fields: d.Fields, Config: map[string]string{}})
+			addLog("act_plugin_import", true, 1, 0, 0, "导入插件 "+d.Label+"（"+d.Name+"）")
 		}
 		savePluginsToDB(cfg)
 		writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "plugins": pluginsSnapshot()})
@@ -211,6 +268,7 @@ func pluginsDeleteHandler(cfg *cstore.Config) http.HandlerFunc {
 		}
 		savePluginsToDB(cfg)
 		deletePluginZip(p)
+		addLog("act_plugin_delete", true, 1, 0, 0, "删除插件 "+p.Label+"（"+p.Name+"）")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": name, "plugins": pluginsSnapshot()})
 	}
 }
@@ -262,7 +320,7 @@ func pluginsRunHandler() http.HandlerFunc {
 // pluginsUpdateHandler POST 批量更新插件状态：
 // body: { "scrape.qq": {"enabled": false}, "tool.ffmpeg": {"config": {"path": "/usr/bin/ffmpeg"}} }
 // 只更新传了 enabled / config 的字段；未知插件名直接报错。
-func pluginsUpdateHandler(cfg *cstore.Config) http.HandlerFunc {
+func pluginsUpdateHandler(cfg *cstore.Config, ms *scrape.MultiSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]struct {
 			Enabled *bool             `json:"enabled"`
@@ -277,6 +335,7 @@ func pluginsUpdateHandler(cfg *cstore.Config) http.HandlerFunc {
 			pp := p
 			byName[pp.Name] = &pp
 		}
+		changes := []string{}
 		for name, upd := range req {
 			p, ok := byName[name]
 			if !ok {
@@ -287,12 +346,234 @@ func pluginsUpdateHandler(cfg *cstore.Config) http.HandlerFunc {
 			if upd.Enabled != nil {
 				enabled = *upd.Enabled
 			}
-			if p.Builtin {
-				enabled = true // 内置不可停用
+			// 仅 auto（内置兜底源）不可停用；其余内置插件（刮削源/FFmpeg）
+			// 允许开关控制，仅禁止删除（删除由 pluginsDeleteHandler 限制 Builtin）
+			if p.Name == "scrape.auto" {
+				enabled = true
+			}
+			// 汇总变更摘要（启停 + 配置键），用于操作日志
+			if upd.Enabled != nil && enabled != p.Enabled {
+				if enabled {
+					changes = append(changes, "启用 "+p.Label)
+				} else {
+					changes = append(changes, "停用 "+p.Label)
+				}
+			}
+			for k, v := range upd.Config {
+				// API Key 类字段的值不写入日志（避免密钥明文泄露）
+				val := v
+				for _, kf := range pluginKeyFields(p) {
+					if k == kf {
+						val = "***"
+						break
+					}
+				}
+				changes = append(changes, p.Label+"."+k+"="+val)
 			}
 			applyPluginState(name, enabled, upd.Config)
+			// Key 字段同步到设置库（cstore）：AcoustID/刮削源使用点直接生效
+			for _, k := range pluginKeyFields(p) {
+				if v, ok := upd.Config[k]; ok {
+					cfg.Set(k, strings.TrimSpace(v))
+				}
+			}
+			// 需 Key 插件：本次保存清空了 Key → 自动停用该插件，
+			// 避免"开着但开关被禁用无法关闭"的死状态。
+			if p.NeedsKey && enabled {
+				cleared := false
+				for _, k := range pluginKeyFields(p) {
+					if v, ok := upd.Config[k]; ok && strings.TrimSpace(v) == "" {
+						cleared = true
+					}
+				}
+				if cleared {
+					enabled = false
+					applyPluginState(name, false, nil)
+					changes = append(changes, "停用 "+p.Label+"（Key 已清空）")
+				}
+			}
 		}
 		savePluginsToDB(cfg)
+		// Key 同步到内存刮削客户端（与设置页保存行为一致）
+		syncClientKeys(cfg, ms)
+		detail := ""
+		for i, c := range changes {
+			if i > 0 {
+				detail += "；"
+			}
+			detail += c
+		}
+		if detail == "" {
+			detail = "无变更"
+		}
+		addLog("act_plugin", true, len(changes), 0, 0, detail)
 		writeJSON(w, http.StatusOK, map[string]any{"plugins": pluginsSnapshot()})
+	}
+}
+
+// pluginPanelHandler GET /api/plugins/{name}/panel 返回插件面板入口文件
+// （单文件形态，兼容「全内联单文件面板」：读 plugin.json 的 panel 字段直接
+// ServeFile）。多文件面板可继续用 /panel/{path...} 路由加载资源。
+func pluginPanelHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		reg.mu.RLock()
+		p := reg.plugins[name]
+		reg.mu.RUnlock()
+		if p == nil || p.ZipDir == "" {
+			http.NotFound(w, r)
+			return
+		}
+		declPath := filepath.Join(p.ZipDir, "plugin.json")
+		b, err := os.ReadFile(declPath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		var decl struct {
+			Panel string `json:"panel"`
+		}
+		if json.Unmarshal(b, &decl) != nil || decl.Panel == "" {
+			http.NotFound(w, r)
+			return
+		}
+		root := filepath.Clean(p.ZipDir)
+		panelPath := filepath.Clean(filepath.Join(root, filepath.FromSlash(decl.Panel)))
+		if !strings.HasPrefix(panelPath, root+string(os.PathSeparator)) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", mimeTypeByExt(filepath.Ext(panelPath)))
+		http.ServeFile(w, r, panelPath)
+	}
+}
+
+// panelAssetHandler GET /api/plugins/{name}/panel/{path...} 静态服务第三方
+// 插件的 Web 面板资源（zip 内 ui 目录等）。仅服务已导入 ZIP 插件；路径做
+// 规范化与前缀校验，杜绝目录穿越。MIME 由扩展名推断，未知类型按 text/plain。
+func panelAssetHandler(cfg *cstore.Config, configDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		reg.mu.RLock()
+		p := reg.plugins[name]
+		reg.mu.RUnlock()
+		if p == nil || p.ZipDir == "" {
+			http.NotFound(w, r)
+			return
+		}
+		rel := r.PathValue("path")
+		if rel == "" {
+			http.NotFound(w, r)
+			return
+		}
+		root := filepath.Clean(p.ZipDir)
+		fp := filepath.Clean(filepath.Join(root, filepath.FromSlash(rel)))
+		if !strings.HasPrefix(fp, root+string(os.PathSeparator)) {
+			http.NotFound(w, r)
+			return
+		}
+		f, err := os.Open(fp)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil || st.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", mimeTypeByExt(filepath.Ext(fp)))
+		// 面板 HTML 允许脚本与样式（同源服务，无 CSP 限制）
+		http.ServeContent(w, r, filepath.Base(fp), st.ModTime(), f)
+	}
+}
+
+// mimeTypeByExt 按扩展名返回 Content-Type（面板资源常用类型；未知按 text/plain）。
+func mimeTypeByExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".js":
+		return "text/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".woff", ".woff2":
+		return "font/woff2"
+	default:
+		return "text/plain; charset=utf-8"
+	}
+}
+
+// fsScanDirHandler POST /api/fs/scan-dir 列出目录内匹配后缀的文件（供第三方
+// 插件面板使用：如解锁插件扫描加密音乐）。仅返回常规文件，递归子目录。
+// body: {"dir":"...", "exts":[".qmc0",".mflac",...]}；exts 为空时列出全部文件。
+func fsScanDirHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Dir  string   `json:"dir"`
+			Exts []string `json:"exts"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			return
+		}
+		dir := strings.TrimSpace(req.Dir)
+		if dir == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少目录"})
+			return
+		}
+		dir = filepath.Clean(dir)
+		st, err := os.Stat(dir)
+		if err != nil || !st.IsDir() {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不可访问: " + dir})
+			return
+		}
+		extSet := map[string]bool{}
+		for _, e := range req.Exts {
+			e = strings.ToLower(strings.TrimSpace(e))
+			if e != "" {
+				extSet[e] = true
+			}
+		}
+		files := []map[string]any{}
+		err = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil // 跳过无权限子项
+			}
+			if d.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if len(extSet) > 0 && !extSet[ext] {
+				return nil
+			}
+			fi, err := d.Info()
+			if err != nil || !fi.Mode().IsRegular() {
+				return nil
+			}
+			files = append(files, map[string]any{
+				"path":     path,
+				"fileName": filepath.Base(path),
+				"ext":      ext,
+				"size":     fi.Size(),
+			})
+			return nil
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"files": files, "total": len(files)})
 	}
 }

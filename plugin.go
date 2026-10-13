@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 
+	"LNH-musictag/internal/scrape"
 	cstore "LNH-musictag/internal/store"
 )
 
@@ -50,6 +51,7 @@ type Plugin struct {
 	ZipDir  string            `json:"-"`                 // 解压目录（绝对路径，仅宿主内部使用）
 	Entries map[string]string `json:"entries,omitempty"` // 平台(linux/windows/darwin) -> zip 内相对入口
 	ZipName string            `json:"zipName,omitempty"` // 插件包文件名（导入时上传的原文件名）
+	Panel   string            `json:"panel,omitempty"`   // Web 面板入口（zip 内相对路径，如 ui/index.html）；有则主界面出现插件 tab
 }
 
 // applyFn 插件配置生效回调（启停/配置变更时执行）。
@@ -161,7 +163,7 @@ func applyPluginState(name string, enabled bool, cfg map[string]string) {
 // loadPluginsFromDB 启动时从设置库恢复全部插件启停/配置。
 // 兼容迁移：旧键 sources_enabled（刮削源开关）与 ffmpeg_path 首次迁移到 plugins。
 // 同时会把 DB 中已保存但尚未注册的第三方插件（导入的）重新注册，保证重启后仍存在。
-func loadPluginsFromDB(cfg *cstore.Config, configDir string) {
+func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSource) {
 	if cfg == nil {
 		return
 	}
@@ -176,6 +178,7 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string) {
 		Fields  []PluginField     `json:"fields,omitempty"`
 		ZipName string            `json:"zipName,omitempty"`
 		Entries map[string]string `json:"entries,omitempty"`
+		Panel   string            `json:"panel,omitempty"`
 	}
 	var all = map[string]record{}
 	if raw, ok := cfg.Get("plugins"); ok && raw != "" {
@@ -220,6 +223,7 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string) {
 			Fields:  r.Fields,
 			ZipName: r.ZipName,
 			Entries: r.Entries,
+			Panel:   r.Panel,
 			// 解压目录按 插件名 命名（与导入时一致），重启后据此重建，
 			// 使插件入口可用、删除时可清理。
 			ZipDir: pluginsRoot(cfg, configDir) + string(os.PathSeparator) + name,
@@ -234,16 +238,22 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string) {
 		if r.Enabled != nil {
 			enabled = *r.Enabled
 		}
-		if p.Builtin { // 内置不可停用（如 auto）
-			enabled = true
-		}
-		// 用户要求：所有不需要 Key 的刮削源始终开启（无论旧配置）；
-		// 需 Key 的源保持按配置（默认关闭，配置 Key 后开启）。
-		if p.Kind == PluginScrape && !p.NeedsKey && !p.Builtin {
+		// 仅 auto（内置兜底源）不可停用；其余内置/第三方插件按持久化状态
+		// 恢复——用户在插件页的开关应跨重启生效。
+		if p.Name == "scrape.auto" {
 			enabled = true
 		}
 		applyPluginState(p.Name, enabled, r.Config)
+		// Key 字段同步回设置库（cstore）：重启后 AcoustID/刮削源使用点
+		// （cfg.Get 读取）与插件页 KeyConfigured 状态保持一致。
+		for _, k := range pluginKeyFields(&p) {
+			if v, ok := r.Config[k]; ok && v != "" {
+				cfg.Set(k, v)
+			}
+		}
 	}
+	// Key 同步到内存刮削客户端（与设置页保存行为一致）
+	syncClientKeys(cfg, ms)
 }
 
 // savePluginsToDB 把当前插件启停/配置全量持久化到 SQLite（plugins 键），
@@ -273,6 +283,9 @@ func savePluginsToDB(cfg *cstore.Config) {
 		}
 		if p.ZipName != "" {
 			rec["zipName"] = p.ZipName
+		}
+		if p.Panel != "" {
+			rec["panel"] = p.Panel
 		}
 		if len(p.Entries) > 0 {
 			rec["entries"] = p.Entries

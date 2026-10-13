@@ -83,3 +83,28 @@ func installFFmpeg() (string, error) {
 	}
 	return "", lastErr
 }
+
+// uninstallFFmpeg 卸载 FFmpeg 工具插件：清空配置路径并停用插件。
+// 容器内一键安装过的会尝试包管理器移除；宿主机/系统自带（Windows 无 sh 等）
+// 不删除文件（避免误删系统组件），仅清空配置并停用插件。
+func uninstallFFmpeg(cfg *cstore.Config) string {
+	// 容器场景：按发行版尝试包管理器卸载（白名单命令）
+	attempts := [][]string{
+		{"sh", "-c", "apk del ffmpeg"},
+		{"sh", "-c", "apt-get remove -y -qq ffmpeg"},
+		{"sh", "-c", "yum remove -y ffmpeg"},
+	}
+	for _, args := range attempts {
+		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err == nil {
+			_ = out
+			break
+		}
+	}
+	// 清空配置路径并停用插件（持久化）
+	applyPluginState("tool.ffmpeg", false, map[string]string{"path": ""})
+	savePluginsToDB(cfg)
+	if cfg != nil {
+		cfg.Set("ffmpeg_path", "") // 兼容旧设置键
+	}
+	return ""
+}

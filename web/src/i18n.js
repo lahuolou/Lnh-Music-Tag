@@ -12,7 +12,7 @@ const dict = {
     newVerTitle: '发现新版本，点击查看更新内容',
     menu: '菜单',
     about: '关于',
-    checkUpdate: '更新',
+    checkUpdate: '检查更新',
     upToDate: '当前已是最新版本',
     checkUpdateFail: '检查更新失败，请稍后重试（服务器无法访问更新源）',
     newVerFound: '发现新版本 v{latest}（当前 v{cur}），点击查看更新内容。',
@@ -42,9 +42,9 @@ const dict = {
     batch: '批量',
     dedup: '去重',
     edit: '编辑',
-    settings: '设置',
-    plugins: '插件',
-    logs: '日志',
+    settings: '系统设置',
+    plugins: '插件管理',
+    logs: '操作日志',
     logsRefresh: '刷新',
     logsDel: '删除勾选',
     logsClear: '清空全部',
@@ -71,10 +71,14 @@ const dict = {
     act_identify: '音频识别完成：成功 {n} 首，失败 {f} 首',
     act_renameclean: '修正文件后缀完成：重命名 {n} 个，失败 {f} 个',
     act_dedup: '去重删除：删除 {n} 个文件，失败 {f} 个',
+    act_dedupscan: '重复检测：发现 {n} 组重复',
     act_del: '删除曲目：删除 {n} 个文件，失败 {f} 个',
     act_save: '保存标签：{d}',
     act_scrapeone: '单曲刮削：{d}',
     act_cover: '保存封面：{d}',
+    act_plugin: '插件设置：{d}',
+    act_plugin_import: '插件导入：{d}',
+    act_plugin_delete: '插件删除：{d}',
     actSkip: '，跳过 {s}',
     pluginsEmpty: '暂无插件数据，请稍后刷新重试。',
     pluginDelete: '删除插件',
@@ -351,11 +355,72 @@ const dict = {
     ffPlugins: '🎛️ 工具插件',
     ffHint: 'FFmpeg 已从镜像移除，改为可选：可填写宿主机 FFmpeg 的绝对路径（容器内可访问），或点击下方按钮在容器内安装。',
     ffPluginsHint: '工具类插件：内置 FFmpeg（格式转换）等，每个插件独立开关。',
+    extPlugins: '🧩 第三方插件',
+    extPluginsHint: '导入的第三方插件包统一在此管理，可开关、可删除。',
+    extEmpty: '还没有导入第三方插件：点击上方「导入 ZIP 插件」选择插件包，导入后即可使用与删除。',
+    extImportZip: '导入 ZIP 插件',
+    extImporting: '导入中…',
+    extImportHint: '直接把插件包（zip）选择上传，导入即解压注册即用。',
+    extDevGuide: '📖 插件开发说明',
+    extDevGuideText: `第三方插件 = 一个 ZIP 插件包，导入即解压注册，可开关、可删除。
+
+一、插件包结构
+my-plugin.zip
+├── plugin.json          # 插件声明（必填）
+├── bin/
+│   └── run.sh           # 各平台可执行入口（见 entries）
+└── ui/                  # 可选：Web 面板目录
+    └── index.html       # 面板入口（plugin.json 里 panel 指向它）
+
+二、plugin.json 字段
+{
+  "name": "my.plugin",          // 唯一标识，不可与已有插件重名
+  "label": "我的插件",            // 插件页显示名，也是主界面插件 tab 名
+  "kind": "tool",               // 类型：scrape=刮削源 / tool=工具 / download=下载器（预留）/ protocol=协议（预留）
+  "version": "1.0.0",           // 版本号
+  "hint": "一句话说明",           // 插件页提示文案
+  "entries": {                   // 各平台可执行入口（zip 内相对路径）
+    "windows": "bin/run.cmd",
+    "linux": "bin/run.sh",
+    "darwin": "bin/run.sh"
+  },
+  "panel": "ui/index.html",      // 可选：Web 面板入口；声明后主界面
+                                 // 「编辑/批量/去重」之后自动出现该插件 tab，
+                                 // 以 iframe 嵌入你的面板页面
+  "fields": [                   // 可选：配置表单字段，保存后写入配置
+    { "key": "apiKey", "label": "API Key", "type": "password", "placeholder": "填写你的 Key" }
+  ]
+}
+
+三、运行约定（JSON 协议）
+· 宿主以固定协议调用入口：<entry> run --input in.json --output out.json
+· in.json 首字段为操作：{"op":"..."}，其余字段为参数；
+· 插件须把结果写入 out.json（如 {"ok":true,"data":...}）；
+· 宿主调用接口：POST /api/plugins/{name}/run，body 即 in.json。
+
+四、Web 面板（panel）
+· 面板页面（HTML/JS/CSS）与宿主同源，可直接 fetch 宿主接口；
+· 面板可调用：POST /api/plugins/{name}/run（执行插件）、
+  POST /api/fs/scan-dir（列目录文件，body {"dir":"...","exts":[".ext",...]}）；
+· 非 GET 请求需带请求头 X-Requested-With: LNH-MusicTag；
+· 面板支持明暗主题：CSS 用 prefers-color-scheme 适配。
+
+五、限制与安全
+· 插件包上限 256MB；
+· 解压禁止路径穿越（..），非法包直接拒绝；
+· 重名插件会被拒绝，需先删除旧插件再导入。`,
+    extImportZipOnly: '仅支持 .zip 插件包',
+    extTooBig: '插件包超过 256MB 上限，无法导入',
+    extImportOk: '已导入 {name}',
+    extImportFail: '导入失败: {m}',
+    ffUninstall: '卸载',
+    ffUninstallOk: 'FFmpeg 已卸载并停用',
+    ffUninstallFail: 'FFmpeg 卸载失败: {m}',
     builtin: '内置',
     keySet: '已配置',
     keyNotSet: '未配置',
-    keyGoSetting: '需 API Key：前往「设置 → 数据库配置」填写',
-    keyReadyToEnable: 'Key 已配置，可开启该源',
+    acoustidHint: 'AcoustID API Key（可选）。配置后，存疑曲目（Unknown/乱码/缺艺术家）自动走音频识别补全。',
+    allSwitchTitle: '一键启用/停用全部刮削源（auto 与未配置 Key 的源除外）',
     ffReady: '已就绪',
     ffMissing: '未检测到 FFmpeg',
     ffPath: 'FFmpeg 绝对路径',
@@ -368,11 +433,6 @@ const dict = {
     ffInstallFail: 'FFmpeg 安装失败: {m}',
     ffVersion: '版本',
     ffSaveFirst: '路径已保存，点击「探测」验证',
-    // 预留插件类型（下载 / 服务协议）
-    dlPlugins: '⬇️ 下载插件',
-    dlPluginsHint: '下载类插件（预留扩展位，后续接入下载器插件）。',
-    protoPlugins: '🌐 服务协议插件',
-    protoPluginsHint: '服务端协议插件，如 Subsonic / AirPlay（预留扩展位）。',
     // 通用
     ok: '确定',
     yes: '是',
@@ -385,7 +445,7 @@ const dict = {
     newVerTitle: 'A new version is available, click to view',
     menu: 'Menu',
     about: 'About',
-    checkUpdate: 'Update',
+    checkUpdate: 'Check Update',
     upToDate: 'You are up to date',
     checkUpdateFail: 'Update check failed, please retry later (server cannot reach the update source)',
     newVerFound: 'New version v{latest} available (current v{cur}), click to view the changelog.',
@@ -415,9 +475,9 @@ const dict = {
     batch: 'Batch',
     dedup: 'Duplicates',
     edit: 'Edit',
-    settings: 'Settings',
-    plugins: 'Plugins',
-    logs: 'Logs',
+    settings: 'System Settings',
+    plugins: 'Plugin Manager',
+    logs: 'Activity Log',
     logsRefresh: 'Refresh',
     logsDel: 'Delete checked',
     logsClear: 'Clear all',
@@ -444,10 +504,14 @@ const dict = {
     act_identify: 'Audio identify: {n} ok, {f} failed',
     act_renameclean: 'Extension fix: {n} renamed, {f} failed',
     act_dedup: 'Duplicate remove: {n} deleted, {f} failed',
+    act_dedupscan: 'Duplicate check: {n} groups found',
     act_del: 'Delete tracks: {n} deleted, {f} failed',
     act_save: 'Save tags: {d}',
     act_scrapeone: 'Scrape one: {d}',
     act_cover: 'Save cover: {d}',
+    act_plugin: 'Plugin settings: {d}',
+    act_plugin_import: 'Plugin import: {d}',
+    act_plugin_delete: 'Plugin delete: {d}',
     actSkip: ', {s} skipped',
     pluginsEmpty: 'No plugin data, please refresh and retry.',
     pluginDelete: 'Delete Plugin',
@@ -715,11 +779,71 @@ const dict = {
     ffPlugins: '🎛️ Tool Plugins',
     ffHint: 'FFmpeg is no longer bundled: set an absolute path reachable inside the container, or install it with the button below.',
     ffPluginsHint: 'Tool plugins: built-in FFmpeg (format conversion), each with its own toggle.',
+    extPlugins: '🧩 Third-party Plugins',
+    extPluginsHint: 'Imported third-party plugin packages are managed here: toggle and delete.',
+    extEmpty: 'No third-party plugins yet: click "Import ZIP Plugin" above to install one.',
+    extImportZip: 'Import ZIP Plugin',
+    extImporting: 'Importing…',
+    extImportHint: 'Select a plugin package (.zip); it is extracted and registered immediately.',
+    extDevGuide: '📖 Plugin Dev Guide',
+    extDevGuideText: `A third-party plugin is a ZIP package: import it and it is extracted & registered, then toggleable and deletable.
+
+1. Package layout
+my-plugin.zip
+├── plugin.json          # plugin manifest (required)
+├── bin/
+│   └── run.sh           # per-platform executable entry (see entries)
+└── ui/                  # optional: Web panel directory
+    └── index.html       # panel entry (pointed to by "panel" in plugin.json)
+
+2. plugin.json fields
+{
+  "name": "my.plugin",          // unique id, must not collide with existing plugins
+  "label": "My Plugin",         // display name on the plugin page, also the plugin tab label
+  "kind": "tool",               // scrape=scrape source / tool=tool / download=downloader (reserved) / protocol=protocol (reserved)
+  "version": "1.0.0",           // version
+  "hint": "One-line description",
+  "entries": {                  // per-platform executable entry (relative path inside zip)
+    "windows": "bin/run.cmd",
+    "linux": "bin/run.sh",
+    "darwin": "bin/run.sh"
+  },
+  "panel": "ui/index.html",     // optional: Web panel entry; when set, a plugin tab
+                                // appears after Edit/Batch/Dedup and embeds your panel in an iframe
+  "fields": [                  // optional: config form fields, saved into config
+    { "key": "apiKey", "label": "API Key", "type": "password", "placeholder": "Your key" }
+  ]
+}
+
+3. Runtime convention (JSON protocol)
+· The host invokes the entry as: <entry> run --input in.json --output out.json
+· in.json's first field is the operation: {"op":"..."}, rest are arguments;
+· The plugin must write the result to out.json (e.g. {"ok":true,"data":...});
+· Host call API: POST /api/plugins/{name}/run, body = in.json.
+
+4. Web panel
+· Panel pages (HTML/JS/CSS) are same-origin with the host, so they can fetch host APIs directly;
+· Available APIs: POST /api/plugins/{name}/run (execute the plugin),
+  POST /api/fs/scan-dir (list files in a dir, body {"dir":"...","exts":[".ext",...]});
+· Non-GET requests must carry header X-Requested-With: LNH-MusicTag;
+· Support dark mode with CSS prefers-color-scheme.
+
+5. Limits & security
+· Max package size 256MB;
+· Zip-slip (..) is rejected;
+· Duplicate names are rejected; delete the old plugin first.`,
+    extImportZipOnly: 'Only .zip plugin packages are supported',
+    extTooBig: 'Plugin package exceeds 256MB limit',
+    extImportOk: 'Imported {name}',
+    extImportFail: 'Import failed: {m}',
+    ffUninstall: 'Uninstall',
+    ffUninstallOk: 'FFmpeg uninstalled and disabled',
+    ffUninstallFail: 'FFmpeg uninstall failed: {m}',
     builtin: 'Built-in',
     keySet: 'Configured',
     keyNotSet: 'Not set',
-    keyGoSetting: 'API key required: go to Settings → Database config to fill in',
-    keyReadyToEnable: 'Key configured, you can enable this source',
+    acoustidHint: 'AcoustID API key (optional). When set, doubtful tracks (Unknown/garbled/missing artist) are auto-identified via audio fingerprint.',
+    allSwitchTitle: 'Enable/disable all scraping sources at once (auto and sources without keys excluded)',
     ffReady: 'Ready',
     ffMissing: 'FFmpeg not found',
     ffPath: 'FFmpeg absolute path',
@@ -732,11 +856,6 @@ const dict = {
     ffInstallFail: 'FFmpeg install failed: {m}',
     ffVersion: 'Version',
     ffSaveFirst: 'Path saved, click "Probe" to verify',
-    // Reserved plugin kinds (download / server protocol)
-    dlPlugins: '⬇️ Download Plugins',
-    dlPluginsHint: 'Download plugins (reserved extension point for downloaders).',
-    protoPlugins: '🌐 Protocol Plugins',
-    protoPluginsHint: 'Server-side protocol plugins, e.g. Subsonic / AirPlay (reserved).',
     ok: 'OK',
     yes: 'Yes',
     no: 'No',

@@ -130,7 +130,7 @@ func needsIdentify(t *model.Track) bool {
 	title := strings.TrimSpace(t.Tags["TITLE"])
 	if title != "" && !looksUnknown(title) && !looksGarbled(title) {
 		base := strings.TrimSuffix(filepath.Base(t.FileName), filepath.Ext(t.FileName))
-		if !strings.EqualFold(strings.ToLower(title), strings.ToLower(base)) {
+		if !strings.EqualFold(title, base) {
 			return false // 标签是真实信息（如 01.mp3 内嵌"七里香"）
 		}
 	}

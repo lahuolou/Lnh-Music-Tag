@@ -12,30 +12,23 @@ const msg = ref('')
 const ffStatus = ref({ available: false, path: '', version: '' })
 const ffInstalling = ref(false)
 
-// 每类卡片独立展开状态（默认：刮削源、工具组展开，其余收起）
-// 工具组包含 FFmpeg 与导入的第三方工具插件，默认展开便于管理
-const openGroups = ref({ scrape: true, tool: true, download: false, protocol: false })
+// 每类卡片独立展开状态（默认：刮削源、工具组、第三方插件组展开，便于管理）
+const openGroups = ref({ scrape: true, tool: true, third: true })
 const confirmDel = ref('') // 二次点击确认态：记录待删除插件名
 
 const groupMeta = [
   { kind: 'scrape', key: 'srcPlugins', hint: 'srcPluginsHint' },
   { kind: 'tool', key: 'ffPlugins', hint: 'ffPluginsHint' },
-  { kind: 'download', key: 'dlPlugins', hint: 'dlPluginsHint' },
-  { kind: 'protocol', key: 'protoPlugins', hint: 'protoPluginsHint' },
+  { kind: 'third', key: 'extPlugins', hint: 'extPluginsHint' },
 ]
 
-// 需 Key 源 -> 设置页字段文案的 i18n 键（提示用户去「设置 → 数据库配置」填写）
-const keyLabelMap = {
-  lastfm_key: 'fLastfm',
-  spotify_id: 'fSpotifyId',
-  discogs_token: 'fDiscogs',
-  jamendo_client_id: 'fJamendo',
-}
-function keyLabel(p) { return keyLabelMap[p.keyField] || '' }
-
+// 第三方插件 = 所有非内置插件（导入的 ZIP 插件包），统一在「第三方插件」组管理
 const groups = computed(() => {
-  const g = { scrape: [], tool: [], download: [], protocol: [] }
-  for (const p of plugins.value) if (g[p.kind]) g[p.kind].push(p)
+  const g = { scrape: [], tool: [], third: [] }
+  for (const p of plugins.value) {
+    if (p.builtin) { if (g[p.kind]) g[p.kind].push(p) }
+    else g.third.push(p)
+  }
   return g
 })
 
@@ -57,6 +50,28 @@ async function togglePlugin(p) {
   try {
     await api('/api/plugins', { method: 'POST', body: JSON.stringify({ [p.name]: { enabled: !p.enabled } }) });
     p.enabled = !p.enabled;
+    toast(t('cfgSaved'), 'ok');
+  } catch (e) { toast(t('srcSaveFail', { m: e.message }), 'err'); }
+  finally { busy.value = false; }
+}
+
+// 刮削源"整个插件开关"：一键启用/停用全部刮削源（auto 兜底源与未配 Key 的源除外）
+const scrapeAllOn = computed(() => {
+  const list = groups.value.scrape.filter(p => p.name !== 'scrape.auto' && (!p.needsKey || p.keyConfigured));
+  return list.length > 0 && list.every(p => p.enabled);
+});
+async function toggleAllScrape() {
+  const target = !scrapeAllOn.value;
+  const body = {};
+  for (const p of groups.value.scrape) {
+    if (p.name === 'scrape.auto' || (p.needsKey && !p.keyConfigured)) continue;
+    body[p.name] = { enabled: target };
+  }
+  if (!Object.keys(body).length) return;
+  busy.value = true;
+  try {
+    await api('/api/plugins', { method: 'POST', body: JSON.stringify(body) });
+    await loadPlugins();
     toast(t('srcSaved'), 'ok');
   } catch (e) { toast(t('srcSaveFail', { m: e.message }), 'err'); }
   finally { busy.value = false; }
@@ -69,9 +84,16 @@ async function savePluginConfig(p) {
     await api('/api/plugins', { method: 'POST', body: JSON.stringify({ [p.name]: { config: { ...p.config } } }) });
     toast(t('cfgSaved'), 'ok');
     if (p.name === 'tool.ffmpeg') { loadFFmpeg(); }
+    await loadPlugins(); // 刷新 keyConfigured，保存 Key 后开关立即可用，无需刷新页面
   } catch (e) { msg.value = t('cfgSaveFail', { m: e.message }); }
   finally { busy.value = false; }
 }
+
+// FFmpeg 绝对路径回填：配置了路径显示配置值，否则显示探测到的路径（留空 = 自动探测）
+const ffPath = computed({
+  get: () => { const fp = ffPlugin(); return (fp && fp.config && fp.config.path) || ffStatus.value.path || ''; },
+  set: v => { const fp = ffPlugin(); if (fp) { fp.config = fp.config || {}; fp.config.path = v; } },
+});
 
 async function deletePlugin(p) {
   // 二次点击确认：第一次点击进入确认态，4 秒内再点一次才执行删除（无原生弹窗，兼容移动端）
@@ -86,6 +108,7 @@ async function deletePlugin(p) {
     await api('/api/plugins/' + encodeURIComponent(p.name), { method: 'DELETE' });
     toast(t('pluginDeleted', { label: p.label }), 'ok');
     await loadPlugins();
+    window.dispatchEvent(new CustomEvent('plugins-changed')); // 主界面动态插件 tab 实时刷新
   } catch (e) { toast(t('pluginDeleteFail', { m: e.message }), 'err'); }
   finally { busy.value = false; }
 }
@@ -112,6 +135,45 @@ async function installFFmpeg() {
   } finally { ffInstalling.value = false; }
 }
 
+// 卸载 FFmpeg：停用工具插件并清空配置（容器内安装的会顺带移除包）
+async function uninstallFFmpeg() {
+  ffInstalling.value = true;
+  msg.value = '';
+  try {
+    await api('/api/ffmpeg/uninstall', { method: 'POST', body: '{}' });
+    toast(t('ffUninstallOk'), 'ok');
+    await loadFFmpeg();
+    await loadPlugins();
+  } catch (e) {
+    toast(t('ffUninstallFail', { m: e.message }), 'err');
+  } finally { ffInstalling.value = false; }
+}
+
+// 导入第三方 ZIP 插件包：直接把 zip 传给后端，导入即解压注册即用
+async function importZip(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  if (!file) return;
+  if (!/\.zip$/i.test(file.name)) { toast(t('extImportZipOnly'), 'err'); return; }
+  if (file.size > 256 * 1024 * 1024) { toast(t('extTooBig'), 'err'); return; }
+  msg.value = '';
+  busy.value = true;
+  try {
+    const buf = await file.arrayBuffer();
+    await api('/api/plugins/import', {
+      method: 'POST',
+      body: new Uint8Array(buf),
+      headers: { 'X-File-Name': file.name, 'Content-Type': 'application/octet-stream' },
+    });
+    toast(t('extImportOk', { name: file.name }), 'ok');
+    await loadPlugins();
+    window.dispatchEvent(new CustomEvent('plugins-changed')); // 主界面动态插件 tab 实时刷新
+  } catch (e) {
+    toast(t('extImportFail', { m: e.message }), 'err');
+    msg.value = e.message;
+  } finally { busy.value = false; }
+}
+
 onMounted(() => { loadPlugins(); loadFFmpeg(); });
 </script>
 
@@ -119,16 +181,36 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
   <div class="page-wrap">
     <h1 class="pg-title">{{ t('plugins') }}</h1>
 
-    <!-- 插件类型卡片：一个类型一张卡片 -->
-    <div class="card" v-for="gm in groupMeta" :key="gm.kind" v-show="groups[gm.kind].length">
+    <!-- 插件类型卡片：一个类型一张卡片；第三方插件组始终显示（提供导入入口） -->
+    <div class="card" v-for="gm in groupMeta" :key="gm.kind" v-show="gm.kind === 'third' || groups[gm.kind].length">
       <div class="card-head" :class="{ open: openGroups[gm.kind] }" @click="toggleGroup(gm.kind)">
         <span class="card-title">{{ t(gm.key) }}</span>
+        <!-- 刮削源卡片头：整个插件开关（一键全部启用/停用，auto 与未配 Key 源除外） -->
+        <span v-if="gm.kind === 'scrape'" class="all-switch" :title="t('allSwitchTitle')" @click.stop>
+          <label class="switch" :class="{ on: scrapeAllOn }">
+            <input type="checkbox" :checked="scrapeAllOn" :disabled="busy" @change="toggleAllScrape" />
+            <span class="slider"></span>
+          </label>
+        </span>
         <span class="muted small">{{ t(gm.hint) }}</span>
-        <span class="muted small cnt">（{{ groups[gm.kind].length }}）</span>
         <span class="chev">{{ openGroups[gm.kind] ? '▲' : '▼' }}</span>
       </div>
 
       <div v-if="openGroups[gm.kind]" class="card-body">
+        <!-- 第三方插件组：导入 ZIP 插件包入口 -->
+        <div v-if="gm.kind === 'third'" class="ext-import" style="padding:8px 0 10px">
+          <label class="sm secondary btn-upload" :class="{ disabled: busy }">
+            {{ busy ? t('extImporting') : t('extImportZip') }}
+            <input type="file" accept=".zip,application/zip" :disabled="busy" @change="importZip" style="display:none" />
+          </label>
+          <span class="muted small" style="margin-left:10px">{{ t('extImportHint') }}</span>
+        </div>
+        <p v-if="gm.kind === 'third' && !groups.third.length" class="muted small" style="padding:10px 2px">{{ t('extEmpty') }}</p>
+        <!-- 第三方插件：插件开发说明（折叠展示） -->
+        <details v-if="gm.kind === 'third'" class="dev-guide" style="margin-top:8px">
+          <summary class="muted small" style="cursor:pointer;user-select:none">{{ t('extDevGuide') }}</summary>
+          <pre class="muted" style="font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin:8px 0 2px">{{ t('extDevGuideText') }}</pre>
+        </details>
         <div class="pitem" v-for="p in groups[gm.kind]" :key="p.name">
           <div class="prow">
             <span class="plabel">
@@ -140,7 +222,7 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
             </span>
             <span class="pacts">
               <label class="switch" :class="{ on: p.enabled }">
-                <input type="checkbox" :checked="p.enabled" :disabled="busy || p.builtin" @change="togglePlugin(p)" />
+                <input type="checkbox" :checked="p.enabled" :disabled="busy || (p.needsKey && !p.keyConfigured) || p.name === 'scrape.auto'" @change="togglePlugin(p)" />
                 <span class="slider"></span>
               </label>
               <button v-if="!p.builtin" class="sm ghost danger" :class="{ confirm: confirmDel === p.name }" @click="deletePlugin(p)">{{ confirmDel === p.name ? t('pluginDeleteAsk') : t('pluginDelete') }}</button>
@@ -149,15 +231,7 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 
           <!-- 直接展开：状态 / 配置 -->
           <div class="pdetail">
-            <p v-if="p.hint" class="muted small" style="margin:6px 0">{{ p.hint }}</p>
-
-            <!-- 需 Key 源：未配置时引导去设置页填写 -->
-            <div v-if="p.needsKey && !p.keyConfigured" class="key-tip">
-              → {{ t('keyGoSetting') }}「{{ t(keyLabel(p)) }}」
-            </div>
-            <div v-else-if="p.needsKey && !p.enabled" class="key-tip dim">
-              {{ t('keyReadyToEnable') }}
-            </div>
+            <p v-if="p.hint" class="muted small" style="margin:6px 0">{{ t(p.hint) }}</p>
 
             <!-- FFmpeg 实时状态 -->
             <div v-if="p.name === 'tool.ffmpeg'" class="ff-status" :class="{ ok: ffStatus.available }" style="margin:8px 0 2px">
@@ -170,11 +244,13 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
             <div v-if="p.fields && p.fields.length" class="pfields">
               <div class="field" v-for="f in p.fields" :key="f.key" style="margin-top:6px">
                 <label>{{ t(f.label) }}</label>
-                <input :type="f.type === 'password' ? 'password' : 'text'" v-model="(p.config || {})[f.key]" :placeholder="t(f.placeholder || '')" />
+                <input v-if="p.name === 'tool.ffmpeg' && f.key === 'path'" type="text" v-model="ffPath" :placeholder="t(f.placeholder || '')" />
+                <input v-else :type="f.type === 'password' ? 'password' : 'text'" v-model="(p.config || {})[f.key]" :placeholder="t(f.placeholder || '')" />
               </div>
               <div class="row" style="margin-top:8px">
                 <button class="sm" :disabled="busy" @click="savePluginConfig(p)">{{ t('saveCfg') }}</button>
-                <button v-if="p.installable" class="sm secondary" :disabled="ffInstalling" @click="installFFmpeg">{{ ffInstalling ? t('ffInstalling') : t('ffInstall') }}</button>
+                <button v-if="p.installable && !ffStatus.available" class="sm secondary" :disabled="ffInstalling" @click="installFFmpeg">{{ ffInstalling ? t('ffInstalling') : t('ffInstall') }}</button>
+                <button v-if="p.installable && ffStatus.available" class="sm secondary danger" :disabled="ffInstalling" @click="uninstallFFmpeg">{{ ffInstalling ? t('ffInstalling') : t('ffUninstall') }}</button>
                 <button v-if="p.name === 'tool.ffmpeg'" class="sm secondary" @click="probeFFmpeg">{{ t('ffProbe') }}</button>
               </div>
             </div>
@@ -202,7 +278,7 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .card-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; }
 .card-head .card-title { font-weight: 600; font-size: 15px; flex: none; }
 .card-head .muted { flex: 1; min-width: 0; }
-.card-head .cnt { flex: none; }
+.card-head .all-switch { flex: none; }
 .card-head .chev { flex: none; font-size: 12px; opacity: .7; }
 .card-body { padding: 4px 14px 14px; border-top: 1px solid var(--line, rgba(128,128,128,.15)); }
 .plist { display: flex; flex-direction: column; gap: 8px; }
@@ -215,8 +291,6 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .ext { background: rgba(61,126,230,.18); color: #3d7ee6; }
 .key { background: rgba(230,148,61,.22); color: #e6943d; }
 .key.ok { background: rgba(48,164,108,.2); color: #30a46c; }
-.key-tip { margin-top: 6px; font-size: 12px; color: #e6943d; }
-.key-tip.dim { color: rgba(128,128,128,.7); }
 .pdetail { border-top: 1px dashed var(--line, rgba(128,128,128,.2)); margin-top: 8px; padding-top: 8px; }
 .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }
@@ -229,4 +303,6 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .ff-status.ok .dot { background: #30a46c; }
 button.danger { color: #e34d59; }
 button.danger.confirm { background: #e34d59; color: #fff; }
+.btn-upload { display: inline-block; padding: 6px 12px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line, rgba(128,128,128,.35)); background: var(--panel2, rgba(128,128,128,.12)); color: var(--text); font-size: 13px; }
+.btn-upload.disabled { opacity: .5; pointer-events: none; }
 </style>

@@ -147,7 +147,7 @@ const fieldNamesMap = {
   composer: 'composer', lyricist: 'lyricist', albumType: 'albumtype', language: 'language',
   discNumber: 'discnumber', discTotal: 'disctotal', trackTotal: 'tracktotal', comment: 'comment',
   trackGain: 'trackgain', albumGain: 'albumgain', trackPeak: 'trackpeak', albumPeak: 'albumpeak',
-  lrcFile: 'lrcfile', fileName: 'filename',
+  fileName: 'filename',
   bitrate: 'bitrate', sampleRate: 'samplerate', bitDepth: 'bitdepth', channels: 'channels',
   duration: 'duration', fileSize: 'filesize',
 }

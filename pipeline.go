@@ -72,6 +72,7 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 		job.Stage = ""
 		job.StageLabel = ""
 		job.mu.Unlock()
+		logJobDone(job) // 一键刮削完成后写入操作日志（按曲目聚合）
 	}()
 
 	stages := []struct {
