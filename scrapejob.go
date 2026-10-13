@@ -506,6 +506,8 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.
 		logJobDone(job) // 批量刮削完成后写入操作日志
 	}()
 	multi := len(ids) > 1
+	// 专辑级封面缓存：同一专辑的多首歌曲共享封面，避免逐首重复搜索/下载
+	coverCache := map[string][]byte{}
 	for _, id := range ids {
 		if jobCanceled(job) {
 			return
@@ -531,7 +533,7 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.
 		job.Current = t.FileName
 		job.mu.Unlock()
 
-		msg, ok := scrapeOneTrack(t, ms, source, fields, skipFilled, store)
+		msg, ok := scrapeOneTrack(t, ms, source, fields, skipFilled, store, coverCache)
 		skip := strings.Contains(msg, "智能跳过")
 		// 完成后把最新曲目快照加入增量队列（前端据此实时更新列表，不整表刷新）
 		job.mu.Lock()
@@ -555,7 +557,7 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.
 // hardware); if nothing needs filling, the track is skipped without searching.
 // 操作项（文件名/LRC/音频属性）不依赖源搜索，勾选后始终执行。
 // Returns (message, ok).
-func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, fields ScrapeFields, skipFilled bool, store *store) (string, bool) {
+func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, fields ScrapeFields, skipFilled bool, store *store, coverCache map[string][]byte) (string, bool) {
 	needOp := fields.FileName ||
 		fields.Bitrate || fields.SampleRate || fields.BitDepth ||
 		fields.Channels || fields.Duration || fields.FileSize
@@ -574,6 +576,8 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	tags := map[string][]string{}
 	var sr scrape.SearchResult
 	query := ""
+	var title string // 函数级：封面纯标题兜底用（effectiveSearchTerms 的标题）
+	var coverErrMsg string // 封面失败原因（写入结果消息便于排查）
 	if hasSearch {
 		// 搜索关键词：优先真实标签；标签为空/“Unknown”/乱码时回退文件名解析
 		// （如 `Unknown - 蓝色蝴蝶.mp3` → 用“蓝色蝴蝶”去刮削）。
@@ -738,14 +742,41 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 		}
 	}
 	if fields.Cover {
-		// 封面降级：当前源没有海报 → 自动匹配下一条源补一张
-		img, err := ms.FetchCover(sr)
-		if err != nil || len(img) == 0 {
-			img, _ = ms.FetchCoverFallback(query, sr.Source)
+		// 封面降级：当前源没有海报 → 自动匹配下一条源补一张。
+		// 专辑级缓存：同专辑后续曲目直接复用已取到的封面（key 见 coverKey）。
+		var img []byte
+		key := ""
+		if coverCache != nil {
+			key = coverKey(sr)
+			if key != "" {
+				if b, ok := coverCache[key]; ok {
+					img = b
+				}
+			}
+		}
+		if len(img) == 0 {
+			// 封面降级：当前源无海报 → 自动匹配下一条源补一张；
+			// 完整 query 全链失败再用纯歌名兜底一遍（iTunes/MusicBrainz 更易命中）。
+			// 错误进入 coverErr 上报给结果消息，便于排查源/下载失败原因。
+			var coverErr error
+			img, coverErr = ms.FetchCover(sr)
+			if len(img) == 0 {
+				img, coverErr = ms.FetchCoverFallback(query, sr.Source, strings.TrimSpace(title))
+			}
+			if len(img) > 0 && key != "" && coverCache != nil {
+				coverCache[key] = img
+			}
+			if len(img) == 0 && coverErr != nil {
+				coverErrMsg = "海报失败: " + coverErr.Error()
+			}
 		}
 		if len(img) > 0 {
-			taglibx.WriteCover(t.Path, img)
-			coverWritten = true
+			if err := taglibx.WriteCover(t.Path, img); err == nil {
+				t.HasCover = true // 同步内存状态，列表“海报”筛选/统计立即生效
+				coverWritten = true
+			} else {
+				coverErrMsg = "海报写入失败: " + err.Error()
+			}
 		}
 	}
 	// 只报告实际执行的动作（搜索失败/无属性值时不再误报"文件名"）
@@ -772,11 +803,31 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	if len(wrote) == 0 {
 		return "无可用数据，跳过", true
 	}
+	// 写过标签/封面且未重命名时，重新探测文件并把最新状态（含 hasCover）
+	// 同步回内存与 SQLite——重命名路径已由 renameFileToArtistTitle 内部刷新。
+	if newPath == "" {
+		refreshTrack(store, t.Path)
+	}
 	msg := "刮削完成"
 	if len(wrote) > 0 {
 		msg += ": " + strings.Join(wrote, "+")
 	}
+	if coverErrMsg != "" {
+		msg += "；" + coverErrMsg
+	}
 	return msg, true
+}
+
+// coverKey 生成专辑级封面缓存 key：优先源专辑 ID（同专辑曲目同 key），
+// 否则用源+专辑名。搜索无结果时为空串（不缓存）。
+func coverKey(sr scrape.SearchResult) string {
+	if sr.AlbumID != "" {
+		return sr.Source + "|" + sr.AlbumID
+	}
+	if sr.Album != "" {
+		return sr.Source + "|album|" + sr.Album
+	}
+	return ""
 }
 
 // fileNameNeedsRename 报告文件名是否不是「艺术家 - 标题」格式（标签可用时）。

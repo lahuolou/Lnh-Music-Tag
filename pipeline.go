@@ -300,6 +300,8 @@ func stageFixArtist(s *store) stageFunc {
 // 缺艺术家）先走音频识别（指纹 → AcoustID → 写标签 → 重命名），再刮削兜底。
 func stageScrape(s *store, ms *scrape.MultiSource, cfg *cstore.Config) stageFunc {
 	fields := allScrapeFields()
+	// 一键刮削全程共享的专辑级封面缓存（同专辑曲目复用封面）
+	coverCache := map[string][]byte{}
 	return func(t *model.Track) (*model.Track, bool, bool, string) {
 		// 存疑自动识别：配了 AcoustID Key 才启用（识别含库内指纹回退，
 		// 不额外消耗在线额度；未命中时继续刮削兜底）
@@ -311,7 +313,7 @@ func stageScrape(s *store, ms *scrape.MultiSource, cfg *cstore.Config) stageFunc
 				}
 			}
 		}
-		msg, ok := scrapeOneTrack(t, ms, "auto", fields, true, s)
+		msg, ok := scrapeOneTrack(t, ms, "auto", fields, true, s, coverCache)
 		skip := strings.Contains(msg, "跳过")
 		return t, ok, skip, msg
 	}

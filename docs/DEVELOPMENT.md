@@ -1,6 +1,6 @@
 # LNH-MusicTag 开发文档
 
-> 版本：v1.4.8 · 仓库：github.com/lahuolou/lnh-musictag · 协议：MIT
+> 版本：v1.4.9 · 仓库：github.com/lahuolou/lnh-musictag · 协议：MIT
 > 本文面向开发者：介绍项目架构、模块职责、数据模型、API、插件扩展点、音频识别与一键刮削流水线、发布流程。
 
 ---
@@ -591,5 +591,6 @@ docker build -t lnh-musictag .
 
 - 密码 bcrypt 哈希；会话 Cookie HttpOnly+SameSite。
 - 所有 SQL 参数化；文件路径严格校验；标签文本 XSS 净化。
+- CSP：`default-src 'self'`；`script-src 'self' 'unsafe-inline'`（第三方插件 panel 内联脚本所需）；`frame-ancestors 'self'`（仅放行同源 iframe 嵌入）。
 - 更新检查、刮削、识别等出站请求均带超时与 UA，避免滥用第三方接口。
 - 建议部署时：容器内仅挂载音乐目录与配置卷；公网访问时置于反向代理后并启用 HTTPS。

@@ -2,6 +2,7 @@ package scrape
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 )
 
@@ -233,31 +235,40 @@ func contains(list []string, s string) bool {
 // first and then every other enabled source until one returns cover bytes. It
 // returns the first non-empty cover image. Used by the one-key pipeline so a
 // source without a poster automatically falls back to the next source.
-func (m *MultiSource) FetchCoverFallback(query, prefer string) ([]byte, error) {
-	var lastErr error
-	for _, n := range m.coverOrder(prefer) {
-		s, ok := m.byName[n]
-		if !ok || !m.IsEnabled(n) {
-			continue
-		}
-		res, err := s.Search(m.client, query, 1)
-		if err != nil || len(res) == 0 {
+// When the full query (title+artist) fails everywhere, a second pass retries
+// with titleOnly (pure song title), which hits iTunes/MusicBrainz more often.
+func (m *MultiSource) FetchCoverFallback(query, prefer, titleOnly string) ([]byte, error) {
+	queries := []string{query}
+	if titleOnly != "" && titleOnly != query {
+		queries = append(queries, titleOnly)
+	}
+	for _, q := range queries {
+		var lastErr error
+		for _, n := range m.coverOrder(prefer) {
+			s, ok := m.byName[n]
+			if !ok || !m.IsEnabled(n) {
+				continue
+			}
+			res, err := s.Search(m.client, q, 1)
+			if err != nil || len(res) == 0 {
+				if err != nil {
+					lastErr = err
+				}
+				continue
+			}
+			img, err := m.FetchCover(res[0])
 			if err != nil {
 				lastErr = err
+				continue
 			}
-			continue
+			if len(img) > 0 {
+				return img, nil
+			}
 		}
-		img, err := m.FetchCover(res[0])
-		if err != nil {
-			lastErr = err
-			continue
+		if lastErr != nil {
+			// 第一轮完整 query 失败才进入纯标题第二轮；错误不阻断继续尝试
+			_ = lastErr
 		}
-		if len(img) > 0 {
-			return img, nil
-		}
-	}
-	if lastErr != nil {
-		return nil, lastErr
 	}
 	return nil, nil
 }
@@ -305,6 +316,8 @@ func (m *MultiSource) Enrich(sr *SearchResult) {
 }
 
 // FetchCover fetches cover art bytes for a result according to its source.
+// 下载带源相关防盗链头（国内源 CDN 常见 Referer 校验），并对响应做图片校验
+// （拦截 200 HTML 错误页/坏链接），失败自动重试一次。
 func (m *MultiSource) FetchCover(sr SearchResult) ([]byte, error) {
 	if sr.Source == "musicbrainz" && sr.ReleaseMBID != "" {
 		return m.client.FetchCover(sr.ReleaseMBID)
@@ -313,9 +326,53 @@ func (m *MultiSource) FetchCover(sr SearchResult) ([]byte, error) {
 		return m.client.neteaseAlbumCover(sr.AlbumID)
 	}
 	if sr.CoverURL != "" {
-		return m.client.getBytes(sr.CoverURL, nil)
+		h := map[string]string{}
+		switch sr.Source {
+		case "qq", "kugou", "kuwo", "netease", "migu":
+			h["Referer"] = "https://y.qq.com/"
+		}
+		return m.client.fetchImage(sr.CoverURL, h)
 	}
 	return nil, nil
+}
+
+// fetchImage downloads bytes with a retry and validates that the response is
+// actually an image (Content-Type image/* 或长度足够且非 HTML 错误页)。
+func (c *Client) fetchImage(u string, headers map[string]string) ([]byte, error) {
+	var last error
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequest(http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", userAgent)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			last = err
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		body, rerr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if rerr != nil {
+			last = rerr
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			last = fmt.Errorf("status %d", resp.StatusCode)
+			continue
+		}
+		ct := strings.ToLower(resp.Header.Get("Content-Type"))
+		if len(body) < 200 || strings.Contains(ct, "text/html") {
+			last = errors.New("not an image response")
+			continue
+		}
+		return body, nil
+	}
+	return nil, last
 }
 
 // neteaseAlbumCover resolves cover art via the NetEase album detail endpoint
@@ -348,7 +405,7 @@ func (c *Client) neteaseAlbumCover(albumID string) ([]byte, error) {
 	if o.Album.PicURL == "" {
 		return nil, nil
 	}
-	return c.getBytes(o.Album.PicURL+"?param=300y300", map[string]string{"Referer": "https://music.163.com/"})
+	return c.fetchImage(o.Album.PicURL+"?param=300y300", map[string]string{"Referer": "https://music.163.com/"})
 }
 
 // splitNames splits a combined artist/author string on ";", "、" and "/",

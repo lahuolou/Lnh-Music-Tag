@@ -22,7 +22,7 @@ func securityHeaders(next http.Handler) http.Handler {
 			"default-src 'self'; "+
 				"img-src 'self' data: https:; "+
 				"style-src 'self' 'unsafe-inline'; "+
-				"script-src 'self'; "+
+				"script-src 'self' 'unsafe-inline'; "+
 				"connect-src 'self'; "+
 				"frame-ancestors 'self'")
 		next.ServeHTTP(w, r)
