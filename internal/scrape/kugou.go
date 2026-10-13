@@ -22,12 +22,12 @@ func (kugouSource) Search(c *Client, query string, limit int) ([]SearchResult, e
 		Status int `json:"status"`
 		Data   struct {
 			Lists []struct {
-				FileHash  string `json:"FileHash"`
-				SongName  string `json:"SongName"`
+				FileHash   string `json:"FileHash"`
+				SongName   string `json:"SongName"`
 				SingerName string `json:"SingerName"`
-				AlbumName string `json:"AlbumName"`
-				Duration  int    `json:"Duration"`
-				AlbumID   string `json:"AlbumID"`
+				AlbumName  string `json:"AlbumName"`
+				Duration   int    `json:"Duration"`
+				AlbumID    string `json:"AlbumID"`
 			} `json:"lists"`
 		} `json:"data"`
 	}

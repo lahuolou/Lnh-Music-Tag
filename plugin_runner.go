@@ -35,7 +35,7 @@ type pluginZipDecl struct {
 	Version string            `json:"version,omitempty"`
 	Hint    string            `json:"hint,omitempty"`
 	Fields  []PluginField     `json:"fields,omitempty"`
-	Entries map[string]string `json:"entries"` // 平台 -> 相对入口（bin/xxx）
+	Entries map[string]string `json:"entries"`         // 平台 -> 相对入口（bin/xxx）
 	Panel   string            `json:"panel,omitempty"` // Web 面板入口（zip 内相对路径，如 ui/index.html）
 }
 
@@ -153,16 +153,12 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 		rc.Close()
 	}
 	// 5. 校验当前平台 entry 存在
-	entry, ok := decl.Entries[runtime.GOOS]
-	if !ok {
-		// 没有当前平台入口：仍允许导入（其他平台可用），本平台调用时报错
-		entry = ""
-	} else {
-		ep := filepath.Join(cleanDest, filepath.FromSlash(entry))
+	if rel, ok := decl.Entries[runtime.GOOS]; ok && rel != "" {
+		ep := filepath.Join(cleanDest, filepath.FromSlash(rel))
 		fi, err := os.Stat(ep)
 		if err != nil || fi.IsDir() {
 			os.RemoveAll(cleanDest)
-			return nil, errors.New("插件入口文件不存在: " + entry)
+			return nil, errors.New("插件入口文件不存在: " + rel)
 		}
 	}
 	// 5b. 校验 Web 面板入口存在（panel 可选；声明了就必须有文件）
@@ -190,8 +186,6 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 		Config:  map[string]string{},
 	}
 	registerPlugin(p, nil)
-	// 确保当前平台 entry 记录在内存（供 runPluginEntry 直接使用）
-	_ = entry
 	savePluginsToDB(cfg)
 	return p, nil
 }
@@ -248,8 +242,8 @@ func runPluginEntry(p *Plugin, op string, args map[string]any) (map[string]any, 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pluginRunTimeout)
 	defer cancel()
-	// 固定参数，无 shell，不拼接用户输入（防注入）
-	cmd := execCommandContext(ctx, bin, "run", "--input", inPath, "--output", outPath)
+	// exec.Command 直接执行二进制，不经过 shell，固定参数、无用户输入拼接（防注入）
+	cmd := exec.CommandContext(ctx, bin, "run", "--input", inPath, "--output", outPath)
 	if err := cmd.Run(); err != nil {
 		return nil, errors.New("插件执行失败: " + err.Error())
 	}
@@ -273,9 +267,4 @@ func deletePluginZip(p *Plugin) {
 	if p != nil && p.ZipDir != "" {
 		_ = os.RemoveAll(p.ZipDir)
 	}
-}
-
-// execCommandContext 固定参数直接执行插件二进制（不经过 shell，防注入）。
-func execCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, name, args...)
 }

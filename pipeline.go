@@ -1,5 +1,7 @@
 // 一键刮削流水线（pipeline）：
-//   扫描文件 → 乱码修复 → 繁体转简体 → 文件名补艺术家 → 刮削元素
+//
+//	扫描文件 → 乱码修复 → 繁体转简体 → 文件名补艺术家 → 刮削元素
+//
 // 每个阶段是独立小函数（stageFixEncoding / stageScript / stageFixArtist /
 // stageScrape），后续要新增步骤只需在 pipelineStages 里加一个函数。
 // 任务在后台运行，逐曲目×逐阶段推进统一进度，前端通过
@@ -75,20 +77,19 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 		logJobDone(job) // 一键刮削完成后写入操作日志（按曲目聚合）
 	}()
 
-	stages := []struct {
+	// pipelineStage 流水线的一个阶段（key/label 用于前端阶段显示）。
+	type pipelineStage struct {
 		key, label string
 		fn         stageFunc
-	}{
+	}
+	stages := []pipelineStage{
 		{"fixEnc", "乱码修复", stageFixEncoding(s)},
 		{"script", "繁体转简体", stageScript(s)},
 		{"artist", "文件名补艺术家", stageFixArtist(s)},
 		{"scrape", "刮削元素", stageScrape(s, ms, cfg)},
 	}
 	if dedup {
-		stages = append([]struct {
-			key, label string
-			fn         stageFunc
-		}{{"dedup", "自动去重", stageDedup(s)}}, stages...)
+		stages = append([]pipelineStage{{"dedup", "自动去重", stageDedup(s)}}, stages...)
 	}
 
 	for si, st := range stages {

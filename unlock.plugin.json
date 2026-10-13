@@ -1,8 +1,0 @@
-{
-  "name": "tool.unlock",
-  "label": "音乐解锁",
-  "kind": "tool",
-  "version": "1.0.0",
-  "hint": "解锁网易云(NCM/UC)、QQ音乐(QMC/MFLAC/MGG/缓存/TM)、酷狗(KGM/VPR)、酷我(KWM)、虾米(XM)、咪咕(MG3D)、喜马拉雅(X2M/X3M)等加密音乐格式。执行逻辑已随主程序内置，导入本声明后启用即可使用 /api/unlock 接口。",
-  "fields": []
-}

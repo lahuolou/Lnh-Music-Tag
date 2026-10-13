@@ -281,7 +281,6 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .card-head .all-switch { flex: none; }
 .card-head .chev { flex: none; font-size: 12px; opacity: .7; }
 .card-body { padding: 4px 14px 14px; border-top: 1px solid var(--line, rgba(128,128,128,.15)); }
-.plist { display: flex; flex-direction: column; gap: 8px; }
 .pitem { padding: 10px; border-radius: 8px; background: var(--bg2, rgba(128,128,128,.08)); }
 .prow { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .plabel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

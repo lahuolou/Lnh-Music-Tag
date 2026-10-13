@@ -41,11 +41,13 @@ func (spotifySource) Search(c *Client, query string, limit int) ([]SearchResult,
 					Name string `json:"name"`
 				} `json:"artists"`
 				Album struct {
-					Name      string `json:"name"`
-					Images    []struct{ URL string `json:"url"` } `json:"images"`
-					Release   string `json:"release_date"`
-					TotalTracks int `json:"total_tracks"`
-					TrackNumber int `json:"track_number"`
+					Name   string `json:"name"`
+					Images []struct {
+						URL string `json:"url"`
+					} `json:"images"`
+					Release     string `json:"release_date"`
+					TotalTracks int    `json:"total_tracks"`
+					TrackNumber int    `json:"track_number"`
 				} `json:"album"`
 			} `json:"items"`
 		} `json:"tracks"`

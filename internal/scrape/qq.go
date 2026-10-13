@@ -109,10 +109,10 @@ func qqLegacy(c *Client, query string, limit int) ([]SearchResult, error) {
 		Data struct {
 			Song struct {
 				List []struct {
-					SongMid   string `json:"songmid"`
-					Name      string `json:"songname"`
-					Interval  int    `json:"interval"`
-					Singer    []struct {
+					SongMid  string `json:"songmid"`
+					Name     string `json:"songname"`
+					Interval int    `json:"interval"`
+					Singer   []struct {
 						Name string `json:"name"`
 					} `json:"singer"`
 					Albumname string `json:"albumname"`

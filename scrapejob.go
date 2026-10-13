@@ -576,7 +576,7 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	tags := map[string][]string{}
 	var sr scrape.SearchResult
 	query := ""
-	var title string // 函数级：封面纯标题兜底用（effectiveSearchTerms 的标题）
+	var title string       // 函数级：封面纯标题兜底用（effectiveSearchTerms 的标题）
 	var coverErrMsg string // 封面失败原因（写入结果消息便于排查）
 	if hasSearch {
 		// 搜索关键词：优先真实标签；标签为空/“Unknown”/乱码时回退文件名解析

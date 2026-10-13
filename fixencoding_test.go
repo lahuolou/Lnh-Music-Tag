@@ -67,10 +67,10 @@ func TestFixMojibakeDoubleCorrupt(t *testing.T) {
 func TestLooksGarbled(t *testing.T) {
 	cases := map[string]bool{
 		"姒荤◈锇ㄣ储锟◈妞圭粮簆◈控权塲ジ锟◈濮栴◈锟斤拷妤f控铍勤": true, // 用户实拍：含 ◈/ㄣ/锟斤拷
-		"蓝色蝴蝶":    false,
-		"周杰伦 七里香": false,
+		"蓝色蝴蝶":        false,
+		"周杰伦 七里香":     false,
 		"hello world": false,
-		"��测试":     true, // U+FFFD
+		"��测试":        true, // U+FFFD
 	}
 	for in, want := range cases {
 		if got := looksGarbled(in); got != want {
@@ -81,11 +81,11 @@ func TestLooksGarbled(t *testing.T) {
 
 func TestParseFileNameArtistTitle(t *testing.T) {
 	cases := map[string][2]string{
-		"Unknown - 蓝色蝴蝶.mp3":      {"Unknown", "蓝色蝴蝶"},
-		"陈慧娴 - 傻女.flac":          {"陈慧娴", "傻女"},
-		"发如雪.mp3":               {"", "发如雪"},
-		"周杰伦 - 七里香 - live.mp3":   {"周杰伦", "七里香 - live"},
-		"廣島之戀 - 演唱會.flac":       {"廣島之戀", "演唱會"},
+		"Unknown - 蓝色蝴蝶.mp3":   {"Unknown", "蓝色蝴蝶"},
+		"陈慧娴 - 傻女.flac":        {"陈慧娴", "傻女"},
+		"发如雪.mp3":              {"", "发如雪"},
+		"周杰伦 - 七里香 - live.mp3": {"周杰伦", "七里香 - live"},
+		"廣島之戀 - 演唱會.flac":      {"廣島之戀", "演唱會"},
 	}
 	for in, want := range cases {
 		a, tt := parseFileNameArtistTitle(in)
@@ -100,9 +100,9 @@ func TestEffectiveSearchTerms(t *testing.T) {
 		return &model.Track{Tags: map[string]string{"TITLE": title, "ARTIST": artist}, FileName: fn}
 	}
 	cases := []struct {
-		in       *model.Track
-		wantT    string
-		wantA    string
+		in    *model.Track
+		wantT string
+		wantA string
 	}{
 		{mk("蓝色蝴蝶", "Unknown", "Unknown - 蓝色蝴蝶.mp3"), "蓝色蝴蝶", ""},
 		{mk("", "", "陈慧娴 - 傻女.flac"), "傻女", "陈慧娴"},

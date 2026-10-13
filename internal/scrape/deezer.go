@@ -24,9 +24,9 @@ func (deezerSource) Search(c *Client, query string, limit int) ([]SearchResult, 
 				Name string `json:"name"`
 			} `json:"artist"`
 			Album struct {
-				Title  string `json:"title"`
-				Cover  string `json:"cover_medium"`
-				Date   string `json:"release_date"`
+				Title string `json:"title"`
+				Cover string `json:"cover_medium"`
+				Date  string `json:"release_date"`
 			} `json:"album"`
 			Duration int `json:"duration"`
 		} `json:"data"`

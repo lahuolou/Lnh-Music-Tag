@@ -134,21 +134,21 @@ func WriteCover(path string, imageBytes []byte) error {
 
 // Useful tag key aliases re-exported for convenience.
 const (
-	Title        = taglib.Title
-	Artist       = taglib.Artist
-	Album        = taglib.Album
-	AlbumArtist  = taglib.AlbumArtist
-	Genre        = taglib.Genre
-	Date         = taglib.Date
-	TrackNumber  = taglib.TrackNumber
-	DiscNumber   = taglib.DiscNumber
-	Lyrics       = taglib.Lyrics
-	Comment      = taglib.Comment
-	Composer     = taglib.Composer
-	Lyricist     = taglib.Lyricist
-	Language     = taglib.Language
-	ReleaseType  = taglib.ReleaseType // 专辑类型（album/single/ep/compilation…）
-	Length       = taglib.Length      // 时长（属性值写入标签）
+	Title       = taglib.Title
+	Artist      = taglib.Artist
+	Album       = taglib.Album
+	AlbumArtist = taglib.AlbumArtist
+	Genre       = taglib.Genre
+	Date        = taglib.Date
+	TrackNumber = taglib.TrackNumber
+	DiscNumber  = taglib.DiscNumber
+	Lyrics      = taglib.Lyrics
+	Comment     = taglib.Comment
+	Composer    = taglib.Composer
+	Lyricist    = taglib.Lyricist
+	Language    = taglib.Language
+	ReleaseType = taglib.ReleaseType // 专辑类型（album/single/ep/compilation…）
+	Length      = taglib.Length      // 时长（属性值写入标签）
 
 	// 增益/峰值与总数：TagLib 无内置常量，使用跨格式通用自定义键
 	// （FLAC/Vorbis 写为 VorbisComment，MP3 写为 TXXX，MP4 写为 iTunes 原子）。

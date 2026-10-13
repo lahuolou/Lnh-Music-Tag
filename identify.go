@@ -38,7 +38,7 @@ var identifyExts = map[string]bool{
 
 // identifyNeedsTranscode 报告该格式能否直接送入 fpcalc。
 // Chromaprint 原生支持 MP3 / FLAC / WAV / OGG（Vorbis/Opus）；其余格式
-//（含 DSD）需先经 FFmpeg 转为 WAV 再指纹。
+// （含 DSD）需先经 FFmpeg 转为 WAV 再指纹。
 func identifyNeedsTranscode(ext string) bool {
 	switch strings.ToLower(ext) {
 	case ".mp3", ".flac", ".wav", ".ogg", ".opus":
@@ -260,6 +260,7 @@ func identifyHandler(js *jobStore, s *store, ms *scrape.MultiSource, cfg *cstore
 //  1. AcoustID 指纹查询（3 QPS）→ 命中后 MusicBrainz Recording 补全（1 QPS）
 //     → 写标签 → 重命名；
 //  2. AcoustID 未配置 Key 或未命中 → 回退库内已标注曲目指纹匹配。
+//
 // fpComp 为 AcoustID 需要的压缩指纹；fpRaw 为库内匹配用的 raw 指纹。
 func identifyTrack(s *store, ms *scrape.MultiSource, t *model.Track, fpComp, fpRaw string, base map[string]string) identifyResult {
 	// 主路径：AcoustID → MusicBrainz

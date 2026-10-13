@@ -70,7 +70,9 @@ func cleanTarget(path string) (string, string) {
 // 内容不同按“同名不同版本”提示去重页手动选择，绝不默认删除。
 func renameCleanHandler(js *jobStore, s *store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ IDs []string `json:"ids"` }
+		var req struct {
+			IDs []string `json:"ids"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

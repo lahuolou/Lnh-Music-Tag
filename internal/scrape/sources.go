@@ -16,19 +16,19 @@ import (
 
 // SearchResult is the unified metadata hit returned by any scrape source.
 type SearchResult struct {
-	Source       string   `json:"source"`
-	SourceID     string   `json:"sourceId"`
-	ReleaseMBID  string   `json:"releaseMBID,omitempty"`
-	AlbumID      string   `json:"albumID,omitempty"`
-	Title        string   `json:"title"`
-	Artists      []string `json:"artists"`
-	Album        string   `json:"album"`
-	AlbumArtist  []string `json:"albumArtist,omitempty"`
-	Genre        []string `json:"genre,omitempty"`
-	Date         string   `json:"date"`         // year (YYYY) or full date
-	TrackNumber  int      `json:"trackNumber,omitempty"`
-	Duration     int      `json:"duration"` // seconds
-	CoverURL     string   `json:"coverURL,omitempty"`
+	Source      string   `json:"source"`
+	SourceID    string   `json:"sourceId"`
+	ReleaseMBID string   `json:"releaseMBID,omitempty"`
+	AlbumID     string   `json:"albumID,omitempty"`
+	Title       string   `json:"title"`
+	Artists     []string `json:"artists"`
+	Album       string   `json:"album"`
+	AlbumArtist []string `json:"albumArtist,omitempty"`
+	Genre       []string `json:"genre,omitempty"`
+	Date        string   `json:"date"` // year (YYYY) or full date
+	TrackNumber int      `json:"trackNumber,omitempty"`
+	Duration    int      `json:"duration"` // seconds
+	CoverURL    string   `json:"coverURL,omitempty"`
 	// 扩展元素（MusicBrainz 提供；其他源暂留空）
 	Composer    []string `json:"composer,omitempty"`
 	Lyricist    []string `json:"lyricist,omitempty"`

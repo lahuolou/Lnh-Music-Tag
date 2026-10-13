@@ -10,23 +10,23 @@ var AudioExts = map[string]bool{
 
 // Track is a scanned audio file with its tags, audio properties and dedup info.
 type Track struct {
-	ID         string            `json:"id"`       // stable id: sha256[:16]
-	Path       string            `json:"path"`     // absolute path on server
-	FileName   string            `json:"fileName"` // base name
-	Ext        string            `json:"ext"`
-	Size       int64             `json:"size"`
-	SHA256     string            `json:"sha256"`  // full file hash (dedup strategy 1)
-	Duration   float64           `json:"duration"` // seconds
-	Bitrate    uint              `json:"bitrate"` // kbit/s
-	SampleRate uint              `json:"sampleRate"`
-	BitDepth   uint              `json:"bitDepth"` // bits per sample（无损；有损为 0）
-	Channels   uint              `json:"channels"`
-	HasCover   bool              `json:"hasCover"`
-	HasLrcFile bool              `json:"hasLrcFile"` // 同目录存在外挂 .lrc 歌词文件
-	HasTrad    bool              `json:"hasTrad"`   // 文本标签含繁体字（OpenCC 检测）
-	Garbled    bool              `json:"garbled"`   // 文本标签疑似乱码（GBK/UTF-8 错乱），扫描时判定
-	NeedsIdentify bool           `json:"needsIdentify"` // 标签与文件名均无有效信息，需按音频内容识别
-	Tags       map[string]string `json:"tags"`      // flattened: first value per standardized key
+	ID            string            `json:"id"`       // stable id: sha256[:16]
+	Path          string            `json:"path"`     // absolute path on server
+	FileName      string            `json:"fileName"` // base name
+	Ext           string            `json:"ext"`
+	Size          int64             `json:"size"`
+	SHA256        string            `json:"sha256"`   // full file hash (dedup strategy 1)
+	Duration      float64           `json:"duration"` // seconds
+	Bitrate       uint              `json:"bitrate"`  // kbit/s
+	SampleRate    uint              `json:"sampleRate"`
+	BitDepth      uint              `json:"bitDepth"` // bits per sample（无损；有损为 0）
+	Channels      uint              `json:"channels"`
+	HasCover      bool              `json:"hasCover"`
+	HasLrcFile    bool              `json:"hasLrcFile"`    // 同目录存在外挂 .lrc 歌词文件
+	HasTrad       bool              `json:"hasTrad"`       // 文本标签含繁体字（OpenCC 检测）
+	Garbled       bool              `json:"garbled"`       // 文本标签疑似乱码（GBK/UTF-8 错乱），扫描时判定
+	NeedsIdentify bool              `json:"needsIdentify"` // 标签与文件名均无有效信息，需按音频内容识别
+	Tags          map[string]string `json:"tags"`          // flattened: first value per standardized key
 }
 
 // DuplicateGroup groups tracks that share the same dedup key (sha256 or fingerprint).

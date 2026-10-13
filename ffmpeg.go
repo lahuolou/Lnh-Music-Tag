@@ -1,7 +1,7 @@
 // FFmpeg 插件化：不再把 ffmpeg 当作硬依赖捆绑。
-//  - 路径可配置：设置页指定绝对路径，优先于 PATH 探测；
-//  - 可选安装：容器内（需 root）可一键安装（apk/apt/yum）；
-//  - 未就绪时格式转换明确报错并引导去设置页配置。
+//   - 路径可配置：设置页指定绝对路径，优先于 PATH 探测；
+//   - 可选安装：容器内（需 root）可一键安装（apk/apt/yum）；
+//   - 未就绪时格式转换明确报错并引导去设置页配置。
 package main
 
 import (
@@ -13,7 +13,7 @@ import (
 )
 
 // ffmpegBin 返回可用的 ffmpeg 可执行文件路径：优先插件配置
-//（tool.ffmpeg.config.path），其次设置库旧键 ffmpeg_path，最后 PATH 探测。
+// （tool.ffmpeg.config.path），其次设置库旧键 ffmpeg_path，最后 PATH 探测。
 // 未找到返回空串。
 func ffmpegBin(cfg *cstore.Config) string {
 	if p := getPluginConfig("tool.ffmpeg")["path"]; p != "" {

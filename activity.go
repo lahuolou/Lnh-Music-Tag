@@ -18,9 +18,9 @@ type activityLog struct {
 	Time   string `json:"time"`
 	Action string `json:"action"` // i18n 键：act_scan / act_scrape / act_onekey / act_fixenc / act_script / act_convert / act_identify / act_renameclean / act_dedup / act_del / act_save / act_scrapeone / act_cover
 	OK     bool   `json:"ok"`
-	Count  int    `json:"count"` // 成功/处理数量
-	Fail   int    `json:"fail"`  // 失败数量
-	Skip   int    `json:"skip"`  // 跳过数量
+	Count  int    `json:"count"`  // 成功/处理数量
+	Fail   int    `json:"fail"`   // 失败数量
+	Skip   int    `json:"skip"`   // 跳过数量
 	Detail string `json:"detail"` // 自由文本补充，原样显示
 }
 
@@ -140,7 +140,9 @@ func logsHandler(db *sql.DB) http.HandlerFunc {
 // logsDeleteHandler 删除指定 id 的日志（勾选后批量删除）。
 func logsDeleteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ IDs []int64 `json:"ids"` }
+		var req struct {
+			IDs []int64 `json:"ids"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

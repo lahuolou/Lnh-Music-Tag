@@ -65,7 +65,7 @@ func csrfGuard(next http.Handler) http.Handler {
 
 type loginGuard struct {
 	mu     sync.Mutex
-	fails  map[string]int  // key -> 连续失败次数
+	fails  map[string]int       // key -> 连续失败次数
 	locked map[string]time.Time // key -> 锁定时长
 }
 

@@ -32,7 +32,7 @@ import (
 // AppVersion 当前版本号（与 GitHub Release tag 比较，用于“新版本提示”）。
 // 每次发布新版本时同步 bump（发布流程约束：推送前 bump 版本并打对应 Release tag，
 // 否则项目内“检查更新”会因 current==latest 而检测不到新版本）。
-const AppVersion = "1.4.9"
+const AppVersion = "1.4.10"
 
 //go:embed web/dist
 var webFS embed.FS
@@ -98,7 +98,6 @@ func (s *store) byPathID(path string) string {
 // with the light read). Hashing is I/O heavy, so it runs on a small worker
 // pool and each file is hashed at most once per process.
 func (s *store) ensureHashes(tracks []*model.Track) {
-	type job struct{ t *model.Track }
 	var jobs []*model.Track
 	s.mu.RLock()
 	for _, t := range tracks {
@@ -178,7 +177,8 @@ func (s *store) removeByPath(p string) {
 }
 
 // scanState holds live progress of an asynchronous directory scan.
-type scanState struct {	mu      sync.Mutex
+type scanState struct {
+	mu      sync.Mutex
 	Running bool   `json:"running"`
 	Paused  bool   `json:"paused"`
 	Dir     string `json:"dir"`
@@ -313,8 +313,8 @@ func main() {
 	pm.HandleFunc("POST /api/scrape/onekey", oneKeyScrapeHandler(jobs, store, ms, cfg))
 	pm.HandleFunc("GET /api/scrape/jobs/{id}", jobProgressHandler(jobs))
 	pm.HandleFunc("POST /api/jobs/{id}/cancel", cancelJobHandler(jobs)) // 取消批量/工具任务
-	pm.HandleFunc("GET /api/jobs/{id}", jobProgressHandler(jobs)) // 通用后台任务进度（转换/识别/乱码/简繁）
-	pm.HandleFunc("GET /api/jobs", activeJobsHandler(jobs))        // 进行中的任务列表（刷新/换设备后恢复进度）
+	pm.HandleFunc("GET /api/jobs/{id}", jobProgressHandler(jobs))       // 通用后台任务进度（转换/识别/乱码/简繁）
+	pm.HandleFunc("GET /api/jobs", activeJobsHandler(jobs))             // 进行中的任务列表（刷新/换设备后恢复进度）
 	pm.HandleFunc("GET /api/scrape/sources", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ms.Sources())
 	})
@@ -369,7 +369,9 @@ func main() {
 
 	// --- Scan (asynchronous, progressive) ---
 	pm.HandleFunc("POST /api/scan", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Dir string `json:"dir"` }
+		var req struct {
+			Dir string `json:"dir"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -580,7 +582,12 @@ func main() {
 		if !renamed {
 			refreshTrack(store, t.Path)
 		}
-		addLog("act_save", true, 1, 0, 0, t.FileName+(func() string { if renamed { return " → " + newName }; return "" })())
+		addLog("act_save", true, 1, 0, 0, t.FileName+(func() string {
+			if renamed {
+				return " → " + newName
+			}
+			return ""
+		})())
 		writeJSON(w, http.StatusOK, map[string]any{"ok": "written", "renamed": renamed, "name": newName})
 	})
 
@@ -987,7 +994,9 @@ func recalcFlags(s *store) {
 // actKey 是操作日志的 action 键（act_dedup / act_del）。
 func deleteTracksHandler(s *store, actKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ IDs []string `json:"ids"` }
+		var req struct {
+			IDs []string `json:"ids"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

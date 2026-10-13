@@ -28,7 +28,7 @@ const (
 //   - AcoustID 免费层：3 请求/秒（桶容量 1，保持稳定间隔）
 //   - MusicBrainz：1 请求/秒/IP（硬性上限）
 var (
-	acoustidLimit = rate.Limit(3)
+	acoustidLimit  = rate.Limit(3)
 	musicbrainzQPS = rate.Limit(1)
 )
 
@@ -69,13 +69,13 @@ func (c *Client) musicbrainzLimiter() *rate.Limiter {
 
 // RecordingResult is a single search hit.
 type RecordingResult struct {
-	MBID       string    `json:"mbid"`
-	Title      string    `json:"title"`
-	Artists    []string  `json:"artists"`
-	Duration   int       `json:"duration"` // ms, 0 if unknown
-	Releases   []Release `json:"releases"`
-	Score      int       `json:"score"`
-	FirstDate  string    `json:"firstDate"`
+	MBID      string    `json:"mbid"`
+	Title     string    `json:"title"`
+	Artists   []string  `json:"artists"`
+	Duration  int       `json:"duration"` // ms, 0 if unknown
+	Releases  []Release `json:"releases"`
+	Score     int       `json:"score"`
+	FirstDate string    `json:"firstDate"`
 }
 
 // Release is a release associated with a recording.
@@ -98,15 +98,15 @@ func (c *Client) SearchRecordings(query string, limit int) ([]RecordingResult, e
 	}
 	var resp struct {
 		Recordings []struct {
-			ID      string `json:"id"`
-			Title   string `json:"title"`
-			Score   int    `json:"score"`
-			Length  int    `json:"length"`
+			ID           string `json:"id"`
+			Title        string `json:"title"`
+			Score        int    `json:"score"`
+			Length       int    `json:"length"`
 			ArtistCredit []struct {
 				Name string `json:"name"`
 			} `json:"artist-credit"`
 			FirstReleaseDate string `json:"first-release-date"`
-			Releases []struct {
+			Releases         []struct {
 				ID    string `json:"id"`
 				Title string `json:"title"`
 				Date  string `json:"date"`
@@ -163,8 +163,8 @@ type ReleaseDetail struct {
 	Date    string
 	Tracks  []ReleaseTrack
 	// 扩展元素
-	Language  string
-	AlbumType string
+	Language   string
+	AlbumType  string
 	TotalDiscs int
 }
 
@@ -198,7 +198,7 @@ func (c *Client) ReleaseDetail(mbid string) (*ReleaseDetail, error) {
 		Media []struct {
 			Position   int `json:"position"`
 			TrackCount int `json:"track-count"`
-			Tracks []struct {
+			Tracks     []struct {
 				Title  string `json:"title"`
 				Number string `json:"number"`
 			} `json:"tracks"`
@@ -249,8 +249,8 @@ func (c *Client) LookupByFingerprint(fp string, durationSec int) (RecordingResul
 		return RecordingResult{}, err
 	}
 	var resp struct {
-		Status  string `json:"status"`
-		Error   struct {
+		Status string `json:"status"`
+		Error  struct {
 			Message string `json:"message"`
 		} `json:"error"`
 		Results []struct {
@@ -264,7 +264,7 @@ func (c *Client) LookupByFingerprint(fp string, durationSec int) (RecordingResul
 				} `json:"artists"`
 				ReleaseGroups []struct {
 					FirstReleaseDate string `json:"first-release-date"`
-					Title           string `json:"title"`
+					Title            string `json:"title"`
 				} `json:"releasegroups"`
 			} `json:"recordings"`
 		} `json:"results"`
@@ -319,9 +319,9 @@ type RecordingDetail struct {
 	Genres      []string
 	TrackNumber string
 	// 扩展元素（MusicBrainz Release/ReleaseGroup 提供）
-	Language   string
-	AlbumType  string
-	DiscNumber int
+	Language    string
+	AlbumType   string
+	DiscNumber  int
 	TotalTracks int
 	TotalDiscs  int
 }
@@ -344,8 +344,8 @@ func (c *Client) LookupRecording(mbid string) (*RecordingDetail, error) {
 		return nil, err
 	}
 	var resp struct {
-		ID       string `json:"id"`
-		Title    string `json:"title"`
+		ID           string `json:"id"`
+		Title        string `json:"title"`
 		ArtistCredit []struct {
 			Name string `json:"name"`
 		} `json:"artist-credit"`
@@ -358,9 +358,9 @@ func (c *Client) LookupRecording(mbid string) (*RecordingDetail, error) {
 			PrimaryType      string `json:"primary-type"`
 		} `json:"release-groups"`
 		Releases []struct {
-			Title    string `json:"title"`
-			Date     string `json:"date"`
-			Language string `json:"language"`
+			Title        string `json:"title"`
+			Date         string `json:"date"`
+			Language     string `json:"language"`
 			ArtistCredit []struct {
 				Name string `json:"name"`
 			} `json:"artist-credit"`

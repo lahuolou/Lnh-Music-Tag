@@ -1,8 +1,8 @@
 // 通用插件框架：统一管理「刮削源 / 工具 / 下载 / 服务协议」四类插件。
-//  - 插件声明：名称、展示名、类型、配置字段、是否内置、是否可安装；
-//  - 启停与配置：通过 /api/plugins 统一读写，持久化到 SQLite（plugins 键）；
-//  - 扩展点：后续音源、下载器、自动换源策略、Subsonic 等协议插件都按
-//    同一套注册表接入，前端设置页按类型自动渲染，无需改页面。
+//   - 插件声明：名称、展示名、类型、配置字段、是否内置、是否可安装；
+//   - 启停与配置：通过 /api/plugins 统一读写，持久化到 SQLite（plugins 键）；
+//   - 扩展点：后续音源、下载器、自动换源策略、Subsonic 等协议插件都按
+//     同一套注册表接入，前端设置页按类型自动渲染，无需改页面。
 package main
 
 import (
@@ -34,19 +34,19 @@ type PluginField struct {
 
 // Plugin 插件描述（返回给前端的快照）。
 type Plugin struct {
-	Name       string            `json:"name"`   // 唯一标识，如 scrape.qq / tool.ffmpeg
-	Label      string            `json:"label"`  // 展示名
-	Kind       PluginKind        `json:"kind"`
-	Enabled    bool              `json:"enabled"`
-	Builtin    bool              `json:"builtin"`    // 内置不可删除；auto 等不可停用
-	Installable bool             `json:"installable"` // 支持一键安装（容器内执行）
-	NeedsKey   bool              `json:"needsKey"`    // 依赖外部 API Key（默认关闭，配置后开启）
-	KeyField   string            `json:"keyField,omitempty"`   // 对应设置库 Key 键名
-	KeyConfigured bool           `json:"keyConfigured"` // 当前 Key 是否已配置（快照时由 API 层计算）
-	Version    string            `json:"version,omitempty"`
-	Hint       string            `json:"hint,omitempty"`
-	Fields     []PluginField     `json:"fields,omitempty"`
-	Config     map[string]string `json:"config"` // 始终输出（可能为空 {}），避免前端渲染崩溃
+	Name          string            `json:"name"`  // 唯一标识，如 scrape.qq / tool.ffmpeg
+	Label         string            `json:"label"` // 展示名
+	Kind          PluginKind        `json:"kind"`
+	Enabled       bool              `json:"enabled"`
+	Builtin       bool              `json:"builtin"`            // 内置不可删除；auto 等不可停用
+	Installable   bool              `json:"installable"`        // 支持一键安装（容器内执行）
+	NeedsKey      bool              `json:"needsKey"`           // 依赖外部 API Key（默认关闭，配置后开启）
+	KeyField      string            `json:"keyField,omitempty"` // 对应设置库 Key 键名
+	KeyConfigured bool              `json:"keyConfigured"`      // 当前 Key 是否已配置（快照时由 API 层计算）
+	Version       string            `json:"version,omitempty"`
+	Hint          string            `json:"hint,omitempty"`
+	Fields        []PluginField     `json:"fields,omitempty"`
+	Config        map[string]string `json:"config"` // 始终输出（可能为空 {}），避免前端渲染崩溃
 	// —— ZIP 插件包字段（第三方上传导入，解压即用）——
 	ZipDir  string            `json:"-"`                 // 解压目录（绝对路径，仅宿主内部使用）
 	Entries map[string]string `json:"entries,omitempty"` // 平台(linux/windows/darwin) -> zip 内相对入口

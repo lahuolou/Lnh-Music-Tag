@@ -17,9 +17,9 @@ func TestRenameCleanFile(t *testing.T) {
 	}
 
 	cases := []struct {
-		name   string
-		magic  []byte
-		want   string // expected final base name; "" means unchanged
+		name  string
+		magic []byte
+		want  string // expected final base name; "" means unchanged
 	}{
 		// 发如雪.mp3.flac but actually FLAC -> 发如雪.flac
 		{"发如雪.mp3.flac", []byte("fLaC"), "发如雪.flac"},

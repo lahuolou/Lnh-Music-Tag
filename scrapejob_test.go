@@ -32,6 +32,14 @@ func TestApplySkipFilled(t *testing.T) {
 		taglibx.Title: "x", taglibx.Artist: "x", taglibx.Album: "x",
 		taglibx.AlbumArtist: "x", taglibx.Genre: "x", taglibx.Date: "2020",
 		taglibx.TrackNumber: "1",
+		taglibx.Composer:    "x", taglibx.Lyricist: "x", taglibx.ReleaseType: "x",
+		taglibx.Language: "x", taglibx.Comment: "x", taglibx.DiscNumber: "1",
+		taglibx.DiscTotal: "1", taglibx.TrackTotal: "1",
+		taglibx.ReplayGainTrackGain: "1", taglibx.ReplayGainAlbumGain: "1",
+		taglibx.ReplayGainTrackPeak: "1", taglibx.ReplayGainAlbumPeak: "1",
+		taglibx.Bitrate: "320", taglibx.SampleRate: "44100",
+		taglibx.BitDepth: "16", taglibx.Channels: "2",
+		taglibx.Length: "300", taglibx.FileSize: "12345",
 	}}
 	full.HasCover = true
 	// all metadata filled + cover -> nothing to do

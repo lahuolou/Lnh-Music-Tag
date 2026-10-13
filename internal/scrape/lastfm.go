@@ -27,12 +27,12 @@ func (lastfmSource) Search(c *Client, query string, limit int) ([]SearchResult, 
 		Results struct {
 			TrackMatches struct {
 				Track []struct {
-					Name       string `json:"name"`
-					Artist     string `json:"artist"`
-					Album      string `json:"album"`
-					URL        string `json:"url"`
-					Duration   string `json:"duration"`
-					Listeners  string `json:"listeners"`
+					Name      string `json:"name"`
+					Artist    string `json:"artist"`
+					Album     string `json:"album"`
+					URL       string `json:"url"`
+					Duration  string `json:"duration"`
+					Listeners string `json:"listeners"`
 				} `json:"track"`
 			} `json:"trackmatches"`
 		} `json:"results"`

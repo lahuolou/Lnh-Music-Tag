@@ -81,11 +81,11 @@ func rareHanCount(s string) int {
 // 用于捕获"全 CJK 型误读"——它们没有可还原的编码链（信息已丢失），只能靠
 // 检测筛出、再走刮削/识别补全。
 // 注意：
-//  - ≥3 而不是 ≥2——GB2312 常用区之外还有大量"繁体常用字"（陳慧嫻/龍/鳳
-//    等），阈值过低会把正常繁体标签误判成乱码（真实库验证过）。
-//  - 严格 >50% 而不是 ≥50%——正常歌名可能恰好一半含生僻（如"陳志朋 - 红蜻蜓
-//    .flac"：紅/蜻/蜓 3 个生僻对 6 个汉字恰 50%），≥50% 会把正常曲目误标
-//    乱码；而信息丢失型乱码（"浜洪潛鋆澞"）生僻占比普遍 60% 以上。
+//   - ≥3 而不是 ≥2——GB2312 常用区之外还有大量"繁体常用字"（陳慧嫻/龍/鳳
+//     等），阈值过低会把正常繁体标签误判成乱码（真实库验证过）。
+//   - 严格 >50% 而不是 ≥50%——正常歌名可能恰好一半含生僻（如"陳志朋 - 红蜻蜓
+//     .flac"：紅/蜻/蜓 3 个生僻对 6 个汉字恰 50%），≥50% 会把正常曲目误标
+//     乱码；而信息丢失型乱码（"浜洪潛鋆澞"）生僻占比普遍 60% 以上。
 func rareHanSignal(s string) bool {
 	cjk, rare := 0, 0
 	for _, r := range s {
@@ -386,7 +386,9 @@ func repairTrackText(t *model.Track) (changed map[string]string, m map[string][]
 // Runs as a background job for live progress.
 func fixEncodingHandler(js *jobStore, s *store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ IDs []string `json:"ids"` }
+		var req struct {
+			IDs []string `json:"ids"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

@@ -66,9 +66,9 @@ func syncClientKeys(cfg *cstore.Config, ms *scrape.MultiSource) {
 }
 
 // registerBuiltinPlugins 注册内置插件：
-//  - scrape.*：现有刮削/音源（auto 内置不可停用；需 Key 的源默认关闭）
-//  - tool.ffmpeg：FFmpeg 工具（可配置路径、可一键安装）
-//  download / protocol 类型预留：后续插件直接在此追加注册。
+//   - scrape.*：现有刮削/音源（auto 内置不可停用；需 Key 的源默认关闭）
+//   - tool.ffmpeg：FFmpeg 工具（可配置路径、可一键安装）
+//     download / protocol 类型预留：后续插件直接在此追加注册。
 func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 	for _, s := range ms.Sources() {
 		name := "scrape." + s.Name
@@ -81,14 +81,14 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 			ms.SetEnabled(s.Name, false)
 		}
 		registerPlugin(&Plugin{
-			Name:      name,
-			Label:     s.Label,
-			Kind:      PluginScrape,
-			Enabled:   enabled,
-			Builtin:   builtin,
-			NeedsKey:  keyField != "",
-			KeyField:  keyField,
-			Fields:    keyedSourceFields[s.Name], // 需 Key 源内嵌 Key 输入框（插件页直接配置）
+			Name:     name,
+			Label:    s.Label,
+			Kind:     PluginScrape,
+			Enabled:  enabled,
+			Builtin:  builtin,
+			NeedsKey: keyField != "",
+			KeyField: keyField,
+			Fields:   keyedSourceFields[s.Name], // 需 Key 源内嵌 Key 输入框（插件页直接配置）
 		}, func(n string, on bool, _ map[string]string) {
 			ms.SetEnabled(n[len("scrape."):], on)
 		})
@@ -109,14 +109,14 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 	// AcoustID 插件：AcoustID API Key 配置（可选）。配好 Key 后，
 	// 存疑曲目（Unknown/乱码/缺艺术家）自动走音频识别回退。
 	registerPlugin(&Plugin{
-		Name:      "tool.acoustid",
-		Label:     "AcoustID",
-		Kind:      PluginTool,
-		Enabled:   true,
-		Builtin:   true,
-		Hint:      "acoustidHint",
-		KeyField:  "acoustid_key",
-		Fields:    []PluginField{{Key: "acoustid_key", Label: "fAcoustid", Type: "password"}},
+		Name:     "tool.acoustid",
+		Label:    "AcoustID",
+		Kind:     PluginTool,
+		Enabled:  true,
+		Builtin:  true,
+		Hint:     "acoustidHint",
+		KeyField: "acoustid_key",
+		Fields:   []PluginField{{Key: "acoustid_key", Label: "fAcoustid", Type: "password"}},
 	}, nil)
 	// 预留类型注册示例（后续实现时在此补充）：
 	//   registerPlugin(&Plugin{Name:"download.example", Label:"…", Kind:PluginDownload,...})
@@ -163,6 +163,7 @@ type pluginImportDecl struct {
 // 支持两种形态：
 //  1. ZIP 插件包（推荐）：包内 plugin.json + 可执行入口，导入即解压即用；
 //  2. JSON 声明：单对象 / {"plugins":[...]} / 裸数组。
+//
 // 校验：name 非空且不得与已注册插件冲突（防止覆盖内置/重复导入）、
 // kind 必须合法。导入成功即注册并持久化（重启后仍在插件列表）。
 func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc {
