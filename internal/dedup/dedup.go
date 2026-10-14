@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"LNH-musictag/internal/model"
+	"lnh-musictag/internal/model"
 )
 
 // formatTier ranks containers by lossless/quality potential (higher = better).

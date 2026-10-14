@@ -7,7 +7,7 @@ const src = computed(() => '/api/plugins/' + encodeURIComponent(props.plugin.nam
 </script>
 
 <template>
-  <iframe class="ext-frame" :src="src" frameborder="0" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+  <iframe class="ext-frame" :src="src" frameborder="0" sandbox="allow-scripts allow-same-origin"></iframe>
 </template>
 
 <style scoped>

@@ -3,7 +3,7 @@ package dedup
 import (
 	"testing"
 
-	"LNH-musictag/internal/model"
+	"lnh-musictag/internal/model"
 )
 
 func TestGroupBySameName(t *testing.T) {

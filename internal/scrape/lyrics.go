@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // FetchLyrics returns the lyrics text for a result. Strategy:
@@ -25,8 +26,15 @@ func (m *MultiSource) FetchLyrics(sr SearchResult) (string, error) {
 	}
 	if sr.Title != "" {
 		q := strings.TrimSpace(sr.Title + " " + strings.Join(sr.Artists, " "))
+		// QQ 搜索兜底（快；网易挂起/无版权时改走 QQ 歌词接口）
+		if qres, err := (qqSource{}).Search(m.client, q, 1); err == nil && len(qres) > 0 && qres[0].SourceID != "" {
+			if l, err2 := qqLyric(m.client, qres[0].SourceID); err2 == nil && l != "" {
+				return l, nil
+			}
+		}
+		// 网易搜索兜底（中文歌命中率高；接口偶发挂起，短超时快速让位）
 		res, err := neteaseSource{}.Search(m.client, q, 1)
-		if err == nil && len(res) > 0 && res[0].SourceID != "" {
+		if err == nil && len(res) > 0 && res[0].SourceID != "" && res[0].SourceID != sr.SourceID {
 			if l, err2 := neteaseLyric(m.client, res[0].SourceID); err2 == nil && l != "" {
 				return l, nil
 			}
@@ -40,36 +48,47 @@ func (m *MultiSource) FetchLyrics(sr SearchResult) (string, error) {
 
 // neteaseLyric fetches LRC lyrics by NetEase song id. NetEase returns a block
 // (code -462) when Accept: application/json is sent, so use a plain request.
+// 网易接口偶发限流：请求挂起不响应或返回空。用独立 3s 短超时 + 2 次重试，
+// 失败快速让位给后续兜底（共享 client 的 10s 会让失败路径拖慢整条流水线）。
 func neteaseLyric(c *Client, songID string) (string, error) {
-	u := "https://music.163.com/api/song/lyric?id=" + url.PathEscape(songID) + "&lv=1&kv=1&tv=-1"
-	req, err := http.NewRequest(http.MethodGet, u, nil)
-	if err != nil {
-		return "", err
+	hc := &http.Client{Timeout: 3 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(300 * time.Millisecond)
+		}
+		u := "https://music.163.com/api/song/lyric?id=" + url.PathEscape(songID) + "&lv=1&kv=1&tv=-1"
+		req, err := http.NewRequest(http.MethodGet, u, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", userAgent)
+		req.Header.Set("Referer", "https://music.163.com/")
+		resp, err := hc.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var o struct {
+			Code int `json:"code"`
+			Lrc  struct {
+				Lyric string `json:"lyric"`
+			} `json:"lrc"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&o)
+		resp.Body.Close()
+		if decodeErr != nil {
+			lastErr = decodeErr
+			continue
+		}
+		l := strings.TrimSpace(o.Lrc.Lyric)
+		if o.Code != 200 || l == "" {
+			lastErr = fmt.Errorf("netease lyric not available (code %d)", o.Code)
+			continue
+		}
+		return l, nil
 	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Referer", "https://music.163.com/")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
-	}
-	var o struct {
-		Code int `json:"code"`
-		Lrc  struct {
-			Lyric string `json:"lyric"`
-		} `json:"lrc"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&o); err != nil {
-		return "", err
-	}
-	l := strings.TrimSpace(o.Lrc.Lyric)
-	if o.Code != 200 || l == "" {
-		return "", fmt.Errorf("netease lyric not available")
-	}
-	return l, nil
+	return "", lastErr
 }
 
 // qqLyric fetches lyrics by QQ song mid. The lyric may be base64-encoded.

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	cstore "LNH-musictag/internal/store"
+	cstore "lnh-musictag/internal/store"
 )
 
 // convertCodecs maps target extension -> ffmpeg audio codec args.
@@ -38,7 +38,7 @@ func convertHandler(js *jobStore, s *store, cfg *cstore.Config) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		bin := ffmpegBin(cfg)
 		if bin == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "未检测到 FFmpeg，请到「设置 → FFmpeg」配置路径或一键安装后再试"})
+			writeErr(w, http.StatusBadRequest, "未检测到 FFmpeg，请到「设置 → FFmpeg」配置路径或一键安装后再试")
 			return
 		}
 		var req struct {
@@ -50,7 +50,7 @@ func convertHandler(js *jobStore, s *store, cfg *cstore.Config) http.HandlerFunc
 			RemoveSource bool     `json:"removeSource"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		inSet := map[string]bool{}
@@ -68,7 +68,7 @@ func convertHandler(js *jobStore, s *store, cfg *cstore.Config) http.HandlerFunc
 		switch br {
 		case "", "64k", "128k", "192k", "256k", "320k":
 		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid bitrate"})
+			writeErr(w, http.StatusBadRequest, "invalid bitrate")
 			return
 		}
 		sr := strings.ToLower(strings.TrimSpace(req.SampleRate))
@@ -78,12 +78,12 @@ func convertHandler(js *jobStore, s *store, cfg *cstore.Config) http.HandlerFunc
 		switch sr {
 		case "", "44100", "48000", "88200", "96000":
 		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid sample rate"})
+			writeErr(w, http.StatusBadRequest, "invalid sample rate")
 			return
 		}
 		list := resolveTracks(s, req.IDs)
 		if len(list) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请至少勾选一首曲目"})
+			writeErr(w, http.StatusBadRequest, "请至少勾选一首曲目")
 			return
 		}
 		target0 := strings.ToLower(strings.TrimSpace(req.Target))
@@ -112,8 +112,25 @@ func convertHandler(js *jobStore, s *store, cfg *cstore.Config) http.HandlerFunc
 			dir := filepath.Dir(t.Path)
 			base := stripAudioExt(filepath.Base(t.Path))
 			dst := filepath.Join(dir, base+"."+target)
-			if err := ffmpegConvert(bin, t.Path, dst, codec, br, sr, losslessCodecs[target]); err != nil {
+			// 同格式重编码（dst == 源路径）时 ffmpeg 拒绝读写同一文件，
+			// 先转临时文件再原子替换。
+			tmp := dst
+			if same {
+				f, terr := os.CreateTemp(dir, ".lnh-conv-*")
+				if terr != nil {
+					return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: terr.Error()}
+				}
+				tmp = f.Name()
+				f.Close()
+				defer os.Remove(tmp)
+			}
+			if err := ffmpegConvert(bin, t.Path, tmp, codec, br, sr, losslessCodecs[target]); err != nil {
 				return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: err.Error()}
+			}
+			if tmp != dst {
+				if err := os.Rename(tmp, dst); err != nil {
+					return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "替换文件失败: " + err.Error()}
+				}
 			}
 			// 重新登记：删除原文件则替换曲目，否则新增一首
 			if req.RemoveSource && !same {

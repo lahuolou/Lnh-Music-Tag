@@ -86,7 +86,7 @@ async function delAllChecked() {
 </script>
 
 <template>
-  <button class="ghost sm" :disabled="busy()" @click="loadDups">{{ t('dupRecheck') }}</button>
+  <button class="ghost sm" :disabled="busy()" @click="loadDups(true)">{{ t('dupRecheck') }}</button>
   <div class="muted" style="margin-top:8px;font-size:12px;line-height:1.7">
     {{ t('dupHint') }}<br />
     {{ t('dupGuide') }}

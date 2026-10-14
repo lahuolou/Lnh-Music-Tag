@@ -52,7 +52,9 @@ type Client struct {
 }
 
 func NewClient() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 20 * time.Second}}
+	// 10s：正常刮削/识别请求足够；网易/QQ 等接口偶发挂起时快速失败走兜底，
+	// 避免单个失败请求拖慢整条批量流水线（原 20s 会让兜底链最长 60s+）。
+	return &Client{HTTP: &http.Client{Timeout: 10 * time.Second}}
 }
 
 // acoustidLimiter 返回 AcoustID 3 QPS 令牌桶（懒初始化）。

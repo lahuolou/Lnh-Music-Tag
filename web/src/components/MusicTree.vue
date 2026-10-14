@@ -42,7 +42,9 @@ const filtered = computed(() => {
   }
   if (filter.value === 'garbled') list = list.filter(isGarbled);
   else if (filter.value === 'trad') list = list.filter(isTrad);
-  else if (filter.value === 'nolyric') list = list.filter(t => !(t.tags.LYRICS || '').trim() && !t.hasLrcFile);
+  else if (filter.value === 'lyric') list = list.filter(t => t.hasLyrics || t.hasLrcFile);
+  else if (filter.value === 'nolyric') list = list.filter(t => !t.hasLyrics && !t.hasLrcFile);
+  else if (filter.value === 'cover') list = list.filter(t => t.hasCover);
   else if (filter.value === 'nocover') list = list.filter(t => !t.hasCover);
   else if (filter.value === 'noartist') list = list.filter(t => !(t.tags.ARTIST || '').trim());
   else if (filter.value === 'needsid') list = list.filter(t => t.needsIdentify);
@@ -52,8 +54,10 @@ const filterOpts = [
   { id: 'all', label: () => t('filterAll') },
   { id: 'garbled', label: () => t('filterMoji') },
   { id: 'trad', label: () => t('filterTrad') },
-  { id: 'nolyric', label: () => t('bLyrics') },
-  { id: 'nocover', label: () => t('bCover') },
+  { id: 'lyric', label: () => t('filterLyric') },
+  { id: 'nolyric', label: () => t('filterNoLyric') },
+  { id: 'cover', label: () => t('filterCover') },
+  { id: 'nocover', label: () => t('filterNoCover') },
   { id: 'noartist', label: () => t('filterNoArtist') },
   { id: 'needsid', label: () => t('filterNeedIdentify') }
 ];
@@ -129,8 +133,18 @@ function onScroll(e) {
 }
 
 function coverUrl(id) { return '/api/tracks/' + encodeURIComponent(id) + '/cover'; }
-function hasLyrics(t) { return !!(t.tags.LYRICS || '').trim(); }
-function hasLrc(t) { return /\[\d{1,2}:\d{2}/.test(t.tags.LYRICS || ''); }
+// 封面加载失败重试（列表大并发时偶发连接中断）：最多重试 2 次，带时间戳绕过缓存。
+function retryCover(e, item) {
+  const img = e.target;
+  if (!img) return;
+  const n = +(img.dataset.r || 0) + 1;
+  img.dataset.r = n;
+  if (n > 2) return;
+  img.src = coverUrl(item.id) + '?t=' + Date.now();
+}
+// 列表瘦身：歌词正文不下发，以内嵌标志判断（含时间戳细分无法在列表层判断）。
+function hasLyrics(t) { return !!t.hasLyrics; }
+function hasLrc(t) { return t.hasLyrics; }
 function lrcMark(it) {
   const a = hasLrc(it), b = !!it.hasLrcFile;
   return a && b ? t('lyrBoth') : a ? t('lyrEmbed') : b ? t('lyrLrc') : t('lyrNone');
@@ -297,7 +311,7 @@ onBeforeUnmount(stopPoll);
           <tr v-for="item in shown" :key="item.id" :class="{ on: state.selected.has(item.id) }" @click="openTrack(item)">
             <td><input type="checkbox" class="tchk" :checked="state.selected.has(item.id)" @click.stop @change="toggleSel(item, $event)" /></td>
             <td @click.stop>
-              <img v-if="item.hasCover" class="cov" :src="coverUrl(item.id)" loading="lazy" @click.stop="openTrack(item)" />
+              <img v-if="item.hasCover" class="cov" :src="coverUrl(item.id)" loading="lazy" @error="retryCover($event, item)" @click.stop="openTrack(item)" />
               <span v-else class="covph">♪</span>
             </td>
             <td :title="item.tags.TITLE ? item.tags.TITLE : baseName(item)">{{ displayTitle(item) }}</td>

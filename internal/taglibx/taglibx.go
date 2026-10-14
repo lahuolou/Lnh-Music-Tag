@@ -14,7 +14,7 @@ import (
 
 	"go.senan.xyz/taglib"
 
-	"LNH-musictag/internal/model"
+	"lnh-musictag/internal/model"
 )
 
 // ReadTrack reads tags, audio properties and cover presence for a single file
@@ -82,6 +82,7 @@ func trackFrom(path string, st os.FileInfo, tags map[string][]string, props tagl
 		HasLrcFile: LrcPath(path) != "",
 		Tags:       flatten(tags),
 	}
+	tr.HasLyrics = strings.TrimSpace(tr.Tags["LYRICS"]) != ""
 	tr.ID = pathID(path)
 	return tr
 }

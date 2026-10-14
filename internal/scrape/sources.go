@@ -189,20 +189,62 @@ func (m *MultiSource) Search(name, query string, limit int) ([]SearchResult, err
 	return []SearchResult{}, nil
 }
 
-// SearchWithFallback searches the named source first; when it fails or returns
-// no result, it automatically falls back through the remaining enabled sources
-// in language-preference order ("auto" chain). This powers the one-key pipeline:
-// a source with no hit → the next source is tried automatically.
+// SearchWithFallback 并发查询全部启用源：指定源（非 auto 时优先）+ 语言优先
+// 链其余源同时发请求，合并所有命中返回。调用方的 pickBest 可跨源比较挑全局
+// 最佳匹配（原实现串行，第一个有命中的源就停，其余源的结果全部浪费；且单个
+// 源挂起/限流时整条链等待）。批量刮削、歌词、海报查询均受益。
 func (m *MultiSource) SearchWithFallback(name, query string, limit int) ([]SearchResult, error) {
-	if name == "" || name == "auto" {
-		return m.Search("auto", query, limit)
+	order := []string{}
+	if name != "" && name != "auto" && m.IsEnabled(name) {
+		order = append(order, name)
 	}
-	if s, ok := m.byName[name]; ok && m.IsEnabled(name) {
-		if res, err := s.Search(m.client, query, limit); err == nil && len(res) > 0 {
-			return res, nil
+	var rest []string
+	if hasCJK(query) {
+		rest = append(domesticOrder, internationalOrder...)
+	} else {
+		rest = append(internationalOrder, domesticOrder...)
+	}
+	for _, n := range rest {
+		if !contains(order, n) {
+			order = append(order, n)
 		}
 	}
-	return m.Search("auto", query, limit)
+	type srcRes struct {
+		results []SearchResult
+		err     error
+	}
+	ch := make(chan srcRes, len(order))
+	var wg sync.WaitGroup
+	for _, n := range order {
+		s, ok := m.byName[n]
+		if !ok || !m.IsEnabled(n) {
+			continue
+		}
+		wg.Add(1)
+		go func(s Source) {
+			defer wg.Done()
+			r, err := s.Search(m.client, query, limit)
+			ch <- srcRes{r, err}
+		}(s)
+	}
+	wg.Wait()
+	close(ch)
+	var out []SearchResult
+	var lastErr error
+	for r := range ch {
+		if r.err != nil {
+			lastErr = r.err
+			continue
+		}
+		out = append(out, r.results...)
+	}
+	if len(out) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, nil
+	}
+	return out, nil
 }
 
 // coverOrder builds the source order used to look for a cover: the source that

@@ -14,8 +14,8 @@ import (
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 
-	"LNH-musictag/internal/model"
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/model"
+	"lnh-musictag/internal/taglibx"
 )
 
 // textFields 是需要承载人读文本、参与乱码修复 / 简繁转换的标签字段。
@@ -390,12 +390,12 @@ func fixEncodingHandler(js *jobStore, s *store) http.HandlerFunc {
 			IDs []string `json:"ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		list := resolveTracks(s, req.IDs)
 		if len(list) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请至少勾选一首曲目"})
+			writeErr(w, http.StatusBadRequest, "请至少勾选一首曲目")
 			return
 		}
 		job := js.runProgressJob("fixEnc", len(list), func(j *scrapeJob, i int) scrapeResult {

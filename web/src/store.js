@@ -5,8 +5,7 @@ import { t } from './i18n.js'
 export const state = reactive({
   authed: false,
   user: '',
-  view: 'home', // home=公开首页（搜索占位，无需登录）；app=后台（登录后）
-  route: location.hash.slice(1) || '/',
+  view: 'home', // home=公开首页（无需登录）；app=后台（登录后）
   activeTab: 'list',
   tracks: [],
   selected: new Set(),
@@ -25,15 +24,13 @@ export const state = reactive({
   toast: { msg: '', type: '', show: false, _tm: null }
 })
 
-export function go(p) { location.hash = p }
+export function cur() { return state.tracks.find(t => t.id === state.currentId) || null }
 
 // 是否有后台任务在跑（批量/一键刮削 或 音频识别/乱码/简繁/格式转换）。
 // 任务进行中时，前端一律禁用会改库/改文件的操作按钮，避免并发冲突。
 export function busy() {
   return state.batchBusy || !!(state.toolJob && state.toolJob.status === 'running');
 }
-
-export function cur() { return state.tracks.find(t => t.id === state.currentId) || null }
 
 // 新版本检查（三态：有新版 / 已是最新 / 查询失败）。
 // - force=true（手动“检查更新”）：调 /api/version/check 强制后端实时重查；
@@ -117,10 +114,10 @@ export async function startBatchPoll(jobId) {
       mergeTracks(job.updated || []);
       if (job.status === 'done') {
         stopBatchPoll();
-        const rs = job.results || [];
-        const ok = rs.filter(r => r.ok).length;
-        const fail = rs.filter(r => !r.ok && !r.skip).length;
-        const skip = rs.filter(r => r.skip).length;
+        const sm = job.summary || {};
+        const ok = sm.ok || 0;
+        const fail = sm.fail || 0;
+        const skip = sm.skip || 0;
         toast(t('batchFinish', { ok, fail, skip, t: job.total }), fail === 0 ? 'ok' : 'err');
         state.selected.clear();
         state.batchJob = null;
@@ -158,9 +155,11 @@ let _toolTimer = null;
 export async function startToolJob(jobId, total, kind = 'tool') {
   stopToolJob();
   state.toolJob = { id: jobId, kind, total, done: 0, current: '', status: 'running', ok: 0, fail: 0, skip: 0, errors: [], finished: false };
+  let failCount = 0;
   const poll = async () => {
     try {
       const j = await api('/api/jobs/' + encodeURIComponent(jobId));
+      failCount = 0;
       const tj = state.toolJob;
       if (!tj) return;
       tj.done = j.done;
@@ -169,16 +168,25 @@ export async function startToolJob(jobId, total, kind = 'tool') {
         stopToolJob();
         tj.status = 'done';
         tj.finished = true;
-        tj.skip = (j.results || []).filter(r => r.skip).length;
-        tj.ok = (j.results || []).filter(r => r.ok).length;
-        tj.fail = (j.results || []).filter(r => !r.ok && !r.skip).length;
-        tj.errors = (j.results || []).filter(r => !r.ok && !r.skip && r.message);
+        const sm = j.summary || {};
+        tj.skip = sm.skip || 0;
+        tj.ok = sm.ok || 0;
+        tj.fail = sm.fail || 0;
+        tj.errors = (j.results || []).filter(r => !r.skip && r.message);
       } else if (j.status === 'cancelled') {
         stopToolJob();
         tj.status = 'cancelled';
         tj.finished = true;
       }
-    } catch (e) { /* 瞬时网络抖动忽略，下一轮再试 */ }
+    } catch (e) {
+      // 连续 15 次（约 12 秒）查询失败：判定任务丢失，结束轮询并标记 failed，
+      // 避免前端进度与按钮永久卡在“运行中”。
+      if (++failCount >= 15) {
+        stopToolJob();
+        const tj = state.toolJob;
+        if (tj) { tj.status = 'failed'; tj.finished = true; }
+      }
+    }
   };
   await poll();
   if (state.toolJob && !state.toolJob.finished) _toolTimer = setInterval(poll, 800);
@@ -229,9 +237,11 @@ export async function refresh() {
   await loadDups();
 }
 
-export async function loadDups() {
+// loadDups 拉取去重分组。log=true 时后端记录“重复检测”操作日志（仅用户主动
+// “重新检测”传入；列表刷新/任务完成后的自动同步不写日志，避免刷屏）。
+export async function loadDups(log = false) {
   try {
-    state.dupGroups = (await api('/api/duplicates')) || [];
+    state.dupGroups = (await api('/api/duplicates' + (log ? '?log=1' : ''))) || [];
   } catch (e) { /* dedup is best-effort */ }
 }
 
@@ -239,6 +249,5 @@ export async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
   state.authed = false;
   state.view = 'home'; // 退出回到公开首页
-  state.route = '/';
   location.hash = '/';
 }

@@ -21,11 +21,11 @@ import (
 	"strings"
 	"sync"
 
-	"LNH-musictag/internal/finger"
-	"LNH-musictag/internal/model"
-	"LNH-musictag/internal/scrape"
-	cstore "LNH-musictag/internal/store"
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/finger"
+	"lnh-musictag/internal/model"
+	"lnh-musictag/internal/scrape"
+	cstore "lnh-musictag/internal/store"
+	"lnh-musictag/internal/taglibx"
 )
 
 // identifyExts 是内容识别支持的音频格式（文档 14 种 + 兼容已有 .mpc/.mka）。
@@ -202,12 +202,12 @@ func identifyHandler(js *jobStore, s *store, ms *scrape.MultiSource, cfg *cstore
 			IDs []string `json:"ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		fp := &finger.Fpcalc{Bin: "fpcalc"}
 		if !fp.Available() {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "音频识别引擎不可用：容器内需安装 chromaprint（fpcalc），请更新镜像"})
+			writeErr(w, http.StatusBadRequest, "音频识别引擎不可用：容器内需安装 chromaprint（fpcalc），请更新镜像")
 			return
 		}
 		ffBin := ffmpegBin(cfg)

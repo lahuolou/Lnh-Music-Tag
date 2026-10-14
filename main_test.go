@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"LNH-musictag/internal/model"
+	"lnh-musictag/internal/model"
 )
 
 // TestStoreScanOrder 验证 /api/tracks 按扫描（插入）顺序稳定返回：

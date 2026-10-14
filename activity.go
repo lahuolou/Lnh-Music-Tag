@@ -144,11 +144,11 @@ func logsDeleteHandler(db *sql.DB) http.HandlerFunc {
 			IDs []int64 `json:"ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if len(req.IDs) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请选择要删除的日志"})
+			writeErr(w, http.StatusBadRequest, "请选择要删除的日志")
 			return
 		}
 		removed := 0
@@ -169,7 +169,7 @@ func logsDeleteHandler(db *sql.DB) http.HandlerFunc {
 func logsClearHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, err := db.Exec(`DELETE FROM activity_logs`); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "已清空日志"})

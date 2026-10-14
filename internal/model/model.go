@@ -23,6 +23,7 @@ type Track struct {
 	Channels      uint              `json:"channels"`
 	HasCover      bool              `json:"hasCover"`
 	HasLrcFile    bool              `json:"hasLrcFile"`    // 同目录存在外挂 .lrc 歌词文件
+	HasLyrics     bool              `json:"hasLyrics"`     // 内嵌歌词非空（列表瘦身：歌词正文不下发，仅标志）
 	HasTrad       bool              `json:"hasTrad"`       // 文本标签含繁体字（OpenCC 检测）
 	Garbled       bool              `json:"garbled"`       // 文本标签疑似乱码（GBK/UTF-8 错乱），扫描时判定
 	NeedsIdentify bool              `json:"needsIdentify"` // 标签与文件名均无有效信息，需按音频内容识别

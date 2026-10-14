@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	cstore "LNH-musictag/internal/store"
+	cstore "lnh-musictag/internal/store"
 )
 
 const (
@@ -112,6 +112,9 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	if err := os.MkdirAll(cleanDest, 0o755); err != nil {
 		return nil, err
 	}
+	// 总解压字节上限（防 zip bomb：压缩包很小但解压量巨大）
+	const maxExtractTotal = 512 << 20
+	var extracted int64
 	for _, f := range zr.File {
 		name := strings.TrimPrefix(f.Name, "./")
 		// zip-slip 防护：目标必须仍在 cleanDest 内
@@ -120,6 +123,12 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			filepath.Clean(target) != cleanDest {
 			os.RemoveAll(cleanDest)
 			return nil, errors.New("插件包包含非法路径: " + f.Name)
+		}
+		mode := f.Mode()
+		// 拒绝符号链接与设备等非普通文件条目（防符号链接逃逸/异常文件）
+		if mode&os.ModeSymlink != 0 || mode&os.ModeDevice != 0 || mode&os.ModeNamedPipe != 0 {
+			os.RemoveAll(cleanDest)
+			return nil, errors.New("插件包包含不支持的文件类型: " + f.Name)
 		}
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
@@ -143,14 +152,18 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			os.RemoveAll(cleanDest)
 			return nil, err
 		}
-		if _, err := io.Copy(out, io.LimitReader(rc, pluginZipMaxSize)); err != nil {
-			out.Close()
-			rc.Close()
+		n, err := io.Copy(out, io.LimitReader(rc, pluginZipMaxSize))
+		out.Close()
+		rc.Close()
+		if err != nil {
 			os.RemoveAll(cleanDest)
 			return nil, err
 		}
-		out.Close()
-		rc.Close()
+		extracted += n
+		if extracted > maxExtractTotal {
+			os.RemoveAll(cleanDest)
+			return nil, errors.New("插件包解压总量超过 512MiB 上限（疑似压缩炸弹）")
+		}
 	}
 	// 5. 校验当前平台 entry 存在
 	if rel, ok := decl.Entries[runtime.GOOS]; ok && rel != "" {

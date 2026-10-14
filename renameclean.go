@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"LNH-musictag/internal/audiofmt"
+	"lnh-musictag/internal/audiofmt"
 )
 
 // sameFileContent 比较两个文件是否内容相同（先比大小，再比 SHA256）。
@@ -74,12 +74,12 @@ func renameCleanHandler(js *jobStore, s *store) http.HandlerFunc {
 			IDs []string `json:"ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		list := resolveTracks(s, req.IDs)
 		if len(list) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请至少勾选一首曲目"})
+			writeErr(w, http.StatusBadRequest, "请至少勾选一首曲目")
 			return
 		}
 		job := js.runProgressJob("renameClean", len(list), func(j *scrapeJob, i int) scrapeResult {

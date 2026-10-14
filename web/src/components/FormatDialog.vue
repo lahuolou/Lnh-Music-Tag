@@ -51,17 +51,20 @@ async function run() {
     });
     await startToolJob(r.jobId, r.total);
     // 等待后台任务完成（进度在批量页全局可见）
+    const t0 = Date.now();
     const iv = setInterval(() => {
       const tj = state.toolJob;
       if (tj && tj.finished) {
         clearInterval(iv);
-        toast(t('fmtDone', { ok: tj.ok, t: tj.total }), tj.ok === tj.total ? 'ok' : 'err');
+        if (tj.status === 'failed') { toast(t('fmtFail', { m: t('jobLost') }), 'err'); }
+        else { toast(t('fmtDone', { ok: tj.ok, t: tj.total }), tj.ok === tj.total ? 'ok' : 'err'); }
         state.selected.clear();
         busy.value = false;
         refresh();
         emit('close');
-      } else if (!tj) {
+      } else if (!tj || Date.now() - t0 > 120000) { // 任务丢失或 2 分钟未完成：解锁避免卡死
         clearInterval(iv);
+        busy.value = false;
       }
     }, 500);
   } catch (e) { toast(t('fmtFail', { m: e.message }), 'err'); busy.value = false; }

@@ -35,18 +35,20 @@ async function doLogin() {
       <div class="login-brand">🎵</div>
       <h2>LNH-MusicTag</h2>
       <p class="login-sub">{{ t('loginSub') }}</p>
-      <div class="field">
-        <label>{{ t('username') }}</label>
-        <input type="text" v-model="user" autocomplete="username" @keydown.enter="doLogin" />
-      </div>
-      <div class="field">
-        <label>{{ t('password') }}</label>
-        <div class="pw-row">
-          <input :type="showPw ? 'text' : 'password'" v-model="pass" autocomplete="current-password" @keydown.enter="doLogin" />
-          <button class="ghost sm" type="button" @click="showPw = !showPw" title="show/hide">👁</button>
+      <form class="login-form" @submit.prevent="doLogin">
+        <div class="field">
+          <label>{{ t('username') }}</label>
+          <input type="text" v-model="user" autocomplete="username" />
         </div>
-      </div>
-      <button class="login-btn" :disabled="busy" @click="doLogin">{{ busy ? t('loggingIn') : t('loginBtn') }}</button>
+        <div class="field">
+          <label>{{ t('password') }}</label>
+          <div class="pw-row">
+            <input :type="showPw ? 'text' : 'password'" v-model="pass" autocomplete="current-password" />
+            <button class="ghost sm" type="button" @click="showPw = !showPw" title="show/hide">👁</button>
+          </div>
+        </div>
+        <button class="login-btn" type="submit" :disabled="busy">{{ busy ? t('loggingIn') : t('loginBtn') }}</button>
+      </form>
       <div class="loading login-msg">{{ msg }}</div>
     </div>
   </div>

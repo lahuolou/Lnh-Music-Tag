@@ -12,8 +12,8 @@ const msg = ref('')
 const ffStatus = ref({ available: false, path: '', version: '' })
 const ffInstalling = ref(false)
 
-// 每类卡片独立展开状态（默认：刮削源、工具组、第三方插件组展开，便于管理）
-const openGroups = ref({ scrape: true, tool: true, third: true })
+// 每类卡片独立展开状态（默认：刮削源折叠，工具组、第三方插件组展开）
+const openGroups = ref({ scrape: false, tool: true, third: true })
 const confirmDel = ref('') // 二次点击确认态：记录待删除插件名
 
 const groupMeta = [
@@ -47,32 +47,11 @@ function toggleGroup(kind) { openGroups.value[kind] = !openGroups.value[kind]; }
 
 async function togglePlugin(p) {
   busy.value = true;
+  const target = !p.enabled;
   try {
-    await api('/api/plugins', { method: 'POST', body: JSON.stringify({ [p.name]: { enabled: !p.enabled } }) });
-    p.enabled = !p.enabled;
+    await api('/api/plugins', { method: 'POST', body: JSON.stringify({ [p.name]: { enabled: target } }) });
+    p.enabled = target; // 仅成功后提交 UI 状态，失败保持原状
     toast(t('cfgSaved'), 'ok');
-  } catch (e) { toast(t('srcSaveFail', { m: e.message }), 'err'); }
-  finally { busy.value = false; }
-}
-
-// 刮削源"整个插件开关"：一键启用/停用全部刮削源（auto 兜底源与未配 Key 的源除外）
-const scrapeAllOn = computed(() => {
-  const list = groups.value.scrape.filter(p => p.name !== 'scrape.auto' && (!p.needsKey || p.keyConfigured));
-  return list.length > 0 && list.every(p => p.enabled);
-});
-async function toggleAllScrape() {
-  const target = !scrapeAllOn.value;
-  const body = {};
-  for (const p of groups.value.scrape) {
-    if (p.name === 'scrape.auto' || (p.needsKey && !p.keyConfigured)) continue;
-    body[p.name] = { enabled: target };
-  }
-  if (!Object.keys(body).length) return;
-  busy.value = true;
-  try {
-    await api('/api/plugins', { method: 'POST', body: JSON.stringify(body) });
-    await loadPlugins();
-    toast(t('srcSaved'), 'ok');
   } catch (e) { toast(t('srcSaveFail', { m: e.message }), 'err'); }
   finally { busy.value = false; }
 }
@@ -185,13 +164,6 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
     <div class="card" v-for="gm in groupMeta" :key="gm.kind" v-show="gm.kind === 'third' || groups[gm.kind].length">
       <div class="card-head" :class="{ open: openGroups[gm.kind] }" @click="toggleGroup(gm.kind)">
         <span class="card-title">{{ t(gm.key) }}</span>
-        <!-- 刮削源卡片头：整个插件开关（一键全部启用/停用，auto 与未配 Key 源除外） -->
-        <span v-if="gm.kind === 'scrape'" class="all-switch" :title="t('allSwitchTitle')" @click.stop>
-          <label class="switch" :class="{ on: scrapeAllOn }">
-            <input type="checkbox" :checked="scrapeAllOn" :disabled="busy" @change="toggleAllScrape" />
-            <span class="slider"></span>
-          </label>
-        </span>
         <span class="muted small">{{ t(gm.hint) }}</span>
         <span class="chev">{{ openGroups[gm.kind] ? '▲' : '▼' }}</span>
       </div>
@@ -278,7 +250,6 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .card-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; }
 .card-head .card-title { font-weight: 600; font-size: 15px; flex: none; }
 .card-head .muted { flex: 1; min-width: 0; }
-.card-head .all-switch { flex: none; }
 .card-head .chev { flex: none; font-size: 12px; opacity: .7; }
 .card-body { padding: 4px 14px 14px; border-top: 1px solid var(--line, rgba(128,128,128,.15)); }
 .pitem { padding: 10px; border-radius: 8px; background: var(--bg2, rgba(128,128,128,.08)); }

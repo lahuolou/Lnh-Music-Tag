@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"LNH-musictag/internal/audiofmt"
-	"LNH-musictag/internal/model"
+	"lnh-musictag/internal/audiofmt"
+	"lnh-musictag/internal/model"
+	cstore "lnh-musictag/internal/store"
 )
 
 func decodeBase64Raw(s string) ([]byte, error) {
@@ -20,6 +22,110 @@ func decodeBase64Raw(s string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid base64: %w", err)
 	}
 	return b, nil
+}
+
+// stripListLyrics 批量剥离歌词正文（列表接口用）。
+func stripListLyrics(list []*model.Track) []*model.Track {
+	out := make([]*model.Track, len(list))
+	for i, t := range list {
+		out[i] = stripLyrics(t)
+	}
+	return out
+}
+
+// stripLyrics returns a shallow copy of t whose Tags omit the LYRICS body
+// (列表/任务增量只下发育词标志 hasLyrics，正文由单曲接口按需取，避免
+// 588 首 × 几 KB 歌词撑爆轮询与首载响应)。
+func stripLyrics(t *model.Track) *model.Track {
+	if t == nil {
+		return nil
+	}
+	cp := *t
+	if len(t.Tags) > 0 {
+		tags := make(map[string]string, len(t.Tags))
+		for k, v := range t.Tags {
+			if k == "LYRICS" {
+				continue
+			}
+			tags[k] = v
+		}
+		cp.Tags = tags
+	}
+	return &cp
+}
+
+// writeErr 统一错误响应结构：{ok:false, error:msg}（前端 api.js 读 data.error）。
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]any{"ok": false, "error": msg})
+}
+
+// moveToTrash 将文件移入配置目录 trash/（先尝试同卷 rename；跨卷时复制后删除源），
+// 返回回收站中的目标路径。去重/删除统一走回收站而非永久删除，便于人工恢复。
+func moveToTrash(cfg *cstore.Config, path string) (string, error) {
+	if cfg == nil || cfg.Dir() == "" {
+		return "", errors.New("未配置回收站目录")
+	}
+	trash := filepath.Join(cfg.Dir(), "trash")
+	if err := os.MkdirAll(trash, 0o700); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(trash, filepath.Base(path))
+	if fileExists(dst) { // 重名加时间戳后缀，避免覆盖
+		dst = filepath.Join(trash, fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(path)))
+	}
+	// 同卷才尝试 rename（Windows 的 os.Rename 跨卷必返回 EXDEV，无需白等重试）。
+	// 跨卷直接走下方 copy+remove。
+	if filepath.VolumeName(path) == filepath.VolumeName(trash) {
+		// Windows 文件系统瞬时锁（刚读完的副本/Defender 扫描/句柄延迟释放）：
+		// 短等后重试 rename，多数占用是瞬时的，重试即可成功，避免整首误报失败。
+		// 窗口 8s：588 首库 ensureHashes 刚读完所有文件，Defender 对队列内
+		// 大文件的实时扫描可能持续数秒。
+		var renameErr error
+		for attempt := 0; attempt < 8; attempt++ {
+			time.Sleep(1 * time.Second)
+			if err := os.Rename(path, dst); err == nil {
+				return dst, nil
+			} else {
+				renameErr = err
+			}
+		}
+		_ = renameErr // 忽略最终失败，走下方跨卷兜底（copy+remove 同样带重试）
+	}
+	// 跨卷：复制到回收站后删除源文件。注意 copy 完成后必须
+	// 立即关闭源句柄再删除——Windows 上未释放的读句柄（尤其无 DELETE
+	// 共享）会直接阻塞 os.Remove，defer Close 太晚。
+	in, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		in.Close()
+		return "", err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		in.Close()
+		os.Remove(dst)
+		return "", err
+	}
+	out.Close()
+	in.Close() // 关键：删除源文件前释放读句柄
+	// 删除源文件同样带瞬时锁重试（8s 窗口）：copy 刚读完源文件，Defender
+	// 实时扫描会短暂以无 DELETE 共享的句柄占用源文件，删除需等扫描完成。
+	var rmErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		if attempt > 0 {
+			time.Sleep(1 * time.Second)
+		}
+		if err := os.Remove(path); err == nil {
+			return dst, nil
+		} else {
+			rmErr = err
+		}
+	}
+	os.Remove(dst)
+	return "", rmErr
 }
 
 // getenvDefault returns the env value or a fallback when unset/empty.

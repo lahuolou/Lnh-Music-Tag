@@ -1,11 +1,72 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"testing"
+	"time"
 
-	"LNH-musictag/internal/model"
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/model"
+	"lnh-musictag/internal/taglibx"
 )
+
+func TestJobSnapshotRestoreAndDuration(t *testing.T) {
+	// 使用临时文件库而非 :memory:：jobStore 的多连接（restore/autoPersist/get）
+	// 在 :memory: 下各自独立导致跨连接不可见，文件库与生产行为一致。
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	js := newJobStore(db)
+	j := js.create(3, "fixEnc")
+	// 快照应带创建/更新时间
+	p := j.snapshot()
+	if p.CreatedAt == "" || p.UpdatedAt == "" {
+		t.Fatalf("snapshot should carry created/updated, got %+v", p)
+	}
+	if p.CreatedAt != p.UpdatedAt {
+		t.Fatalf("fresh task created == updated, got %q vs %q", p.CreatedAt, p.UpdatedAt)
+	}
+	// 重启恢复：新 jobStore 从库回填 CreatedAt，进度响应含 duration
+	js2 := newJobStore(db)
+	restored := js2.get(j.ID)
+	if restored == nil {
+		t.Fatal("restored job missing")
+	}
+	if restored.CreatedAt.IsZero() {
+		t.Fatal("restore should backfill CreatedAt from DB")
+	}
+	h := jobProgressHandler(js2)
+	req := httptest.NewRequest(http.MethodGet, "/api/jobs/"+j.ID, nil)
+	req.SetPathValue("id", j.ID)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("progress status = %d", rec.Code)
+	}
+	var out scrapeJob
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.CreatedAt.IsZero() {
+		t.Fatal("progress should carry createdAt")
+	}
+	if out.Duration <= 0 {
+		t.Fatalf("progress should carry duration>0, got %d", out.Duration)
+	}
+	// 30 天前的终态任务应被保留策略清理（restore 末尾 DELETE）
+	db.Exec(`UPDATE jobs SET status='done', updated_at=? WHERE id=?`,
+		time.Now().AddDate(0, 0, -31).Format(time.RFC3339), j.ID)
+	newJobStore(db)
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM jobs WHERE id=?`, j.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("30-day-old finished job should be pruned, n=%d err=%v", n, err)
+	}
+}
 
 func TestFieldsFromList(t *testing.T) {
 	f := fieldsFromList([]string{"cover", "歌名", "流派"}, false, false)

@@ -1,4 +1,4 @@
-module LNH-musictag
+module lnh-musictag
 
 go 1.27.0
 

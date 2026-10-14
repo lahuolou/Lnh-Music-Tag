@@ -86,7 +86,7 @@ func (u *updateChecker) forceCheck() map[string]any {
 
 func (u *updateChecker) toMapLocked() map[string]any {
 	return map[string]any{
-		"current": AppVersion,
+		"current": AppVersion(),
 		"latest":  u.latest,
 		"url":     u.url,
 		"status":  u.status,
@@ -110,7 +110,7 @@ func fetchGitHubLatest(repo string) (latest, html string, ok bool) {
 	if err != nil {
 		return "", "", false
 	}
-	req.Header.Set("User-Agent", "LNH-MusicTag/"+AppVersion)
+	req.Header.Set("User-Agent", "LNH-MusicTag/"+AppVersion())
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -147,7 +147,7 @@ func fetchVersionFile(repo string) (latest string, ok bool) {
 		if err != nil {
 			continue
 		}
-		req.Header.Set("User-Agent", "LNH-MusicTag/"+AppVersion)
+		req.Header.Set("User-Agent", "LNH-MusicTag/"+AppVersion())
 		resp, err := client.Do(req)
 		if err != nil {
 			continue

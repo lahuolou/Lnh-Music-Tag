@@ -12,21 +12,38 @@ import (
 // securityHeaders sets hardened HTTP response headers for every response.
 // 注：frame-ancestors 放行同源（'self'）——第三方插件的 Web 面板以 iframe
 // 嵌入宿主页面，必须允许同源框架嵌入；跨站嵌入仍被禁止。
+// CSP 策略：宿主页面保持严格 script-src 'self'；仅第三方插件面板路由
+// （/api/plugins/{name}/panel[/...]）放宽为 'unsafe-inline'，兼容面板内联
+// 脚本/事件（第三方插件兼容例外，详见开发文档「安全说明」）。
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-XSS-Protection", "1; mode=block")
+		scriptSrc := "script-src 'self'"
+		if isPluginPanelPath(r.URL.Path) {
+			scriptSrc = "script-src 'self' 'unsafe-inline'"
+		}
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"img-src 'self' data: https:; "+
 				"style-src 'self' 'unsafe-inline'; "+
-				"script-src 'self' 'unsafe-inline'; "+
+				scriptSrc+"; "+
 				"connect-src 'self'; "+
 				"frame-ancestors 'self'")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isPluginPanelPath 报告请求路径是否为第三方插件面板（入口或面板子资源）。
+func isPluginPanelPath(p string) bool {
+	rest, ok := strings.CutPrefix(p, "/api/plugins/")
+	if !ok {
+		return false
+	}
+	seg := strings.SplitN(rest, "/", 3)
+	return len(seg) >= 2 && seg[0] != "" && seg[1] == "panel"
 }
 
 // limitBody caps request bodies (e.g. batch IDs, tags, settings) to 8 MiB and
@@ -52,7 +69,7 @@ func csrfGuard(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			if !strings.HasPrefix(r.URL.Path, "/api/login") {
 				if r.Header.Get(csrfHeader) != csrfValue {
-					writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden: missing CSRF header"})
+					writeErr(w, http.StatusForbidden, "forbidden: missing CSRF header")
 					return
 				}
 			}

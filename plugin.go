@@ -10,8 +10,8 @@ import (
 	"os"
 	"sync"
 
-	"LNH-musictag/internal/scrape"
-	cstore "LNH-musictag/internal/store"
+	"lnh-musictag/internal/scrape"
+	cstore "lnh-musictag/internal/store"
 )
 
 // PluginKind 插件类型。

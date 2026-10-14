@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"LNH-musictag/internal/scrape"
-	cstore "LNH-musictag/internal/store"
+	"lnh-musictag/internal/scrape"
+	cstore "lnh-musictag/internal/store"
 )
 
 // keyedSources 需要 API Key 的刮削源：源名 -> 设置库 Key 键名。
@@ -170,7 +170,7 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			writeErr(w, http.StatusBadRequest, "invalid body: " + err.Error())
 			return
 		}
 		// ZIP 插件包：魔数 PK\x03\x04
@@ -181,7 +181,7 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 			}
 			p, err := importPluginZip(cfg, configDir, body, zipName)
 			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			addLog("act_plugin_import", true, 1, 0, 0, "导入插件 "+p.Label+"（"+p.Name+"）")
@@ -205,7 +205,7 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 			}
 		}
 		if len(decls) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件声明为空或格式不正确"})
+			writeErr(w, http.StatusBadRequest, "插件声明为空或格式不正确")
 			return
 		}
 		existing := map[string]bool{}
@@ -215,18 +215,18 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 		imported := []Plugin{}
 		for _, d := range decls {
 			if d.Name == "" || d.Label == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件 name/label 不能为空: " + d.Name})
+				writeErr(w, http.StatusBadRequest, "插件 name/label 不能为空: " + d.Name)
 				return
 			}
 			kind := PluginKind(d.Kind)
 			switch kind {
 			case PluginScrape, PluginTool, PluginDownload, PluginProtocol:
 			default:
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "非法插件类型 kind: " + d.Kind + "（可选 scrape/tool/download/protocol）"})
+				writeErr(w, http.StatusBadRequest, "非法插件类型 kind: " + d.Kind + "（可选 scrape/tool/download/protocol）")
 				return
 			}
 			if existing[d.Name] {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件已存在（内置或已导入）: " + d.Name})
+				writeErr(w, http.StatusBadRequest, "插件已存在（内置或已导入）: " + d.Name)
 				return
 			}
 			registerPlugin(&Plugin{
@@ -253,18 +253,18 @@ func pluginsDeleteHandler(cfg *cstore.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if name == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing plugin name"})
+			writeErr(w, http.StatusBadRequest, "missing plugin name")
 			return
 		}
 		reg.mu.RLock()
 		p := reg.plugins[name]
 		reg.mu.RUnlock()
 		if p == nil || p.Builtin {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件不存在或是内置插件，无法删除: " + name})
+			writeErr(w, http.StatusBadRequest, "插件不存在或是内置插件，无法删除: " + name)
 			return
 		}
 		if !unregisterPlugin(name) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件不存在或是内置插件，无法删除: " + name})
+			writeErr(w, http.StatusBadRequest, "插件不存在或是内置插件，无法删除: " + name)
 			return
 		}
 		savePluginsToDB(cfg)
@@ -284,34 +284,34 @@ func pluginsRunHandler() http.HandlerFunc {
 		p := reg.plugins[name]
 		reg.mu.RUnlock()
 		if p == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "插件不存在: " + name})
+			writeErr(w, http.StatusNotFound, "插件不存在: " + name)
 			return
 		}
 		if p.ZipDir == "" || len(p.Entries) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "插件无可执行入口（内置插件不支持直接调用）: " + name})
+			writeErr(w, http.StatusBadRequest, "插件无可执行入口（内置插件不支持直接调用）: " + name)
 			return
 		}
 		var args map[string]any
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if len(bytes.TrimSpace(body)) > 0 {
 			if err := json.Unmarshal(body, &args); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+				writeErr(w, http.StatusBadRequest, "invalid body: " + err.Error())
 				return
 			}
 		}
 		op, _ := args["op"].(string)
 		if op == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少 op 字段"})
+			writeErr(w, http.StatusBadRequest, "缺少 op 字段")
 			return
 		}
 		delete(args, "op")
 		res, err := runPluginEntry(p, op, args)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "detail": res})
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error(), "detail": res})
 			return
 		}
 		writeJSON(w, http.StatusOK, res)
@@ -328,7 +328,7 @@ func pluginsUpdateHandler(cfg *cstore.Config, ms *scrape.MultiSource) http.Handl
 			Config  map[string]string `json:"config"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			writeErr(w, http.StatusBadRequest, "invalid body: " + err.Error())
 			return
 		}
 		byName := map[string]*Plugin{}
@@ -340,7 +340,7 @@ func pluginsUpdateHandler(cfg *cstore.Config, ms *scrape.MultiSource) http.Handl
 		for name, upd := range req {
 			p, ok := byName[name]
 			if !ok {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown plugin: " + name})
+				writeErr(w, http.StatusBadRequest, "unknown plugin: " + name)
 				return
 			}
 			enabled := p.Enabled
@@ -526,18 +526,18 @@ func fsScanDirHandler() http.HandlerFunc {
 			Exts []string `json:"exts"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body: " + err.Error()})
+			writeErr(w, http.StatusBadRequest, "invalid body: " + err.Error())
 			return
 		}
 		dir := strings.TrimSpace(req.Dir)
 		if dir == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少目录"})
+			writeErr(w, http.StatusBadRequest, "缺少目录")
 			return
 		}
 		dir = filepath.Clean(dir)
 		st, err := os.Stat(dir)
 		if err != nil || !st.IsDir() {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不可访问: " + dir})
+			writeErr(w, http.StatusBadRequest, "目录不可访问: " + dir)
 			return
 		}
 		extSet := map[string]bool{}
@@ -572,7 +572,7 @@ func fsScanDirHandler() http.HandlerFunc {
 			return nil
 		})
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"files": files, "total": len(files)})

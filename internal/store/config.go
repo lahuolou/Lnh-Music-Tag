@@ -15,10 +15,14 @@ import (
 // Config is a tiny key/value settings store backed by SQLite. Values are also
 // cached in memory for cheap reads. It is safe for concurrent use.
 type Config struct {
+	dir   string
 	db    *sql.DB
 	mu    sync.RWMutex
 	cache map[string]string
 }
+
+// Dir returns the configuration directory ("" when none was given).
+func (c *Config) Dir() string { return c.dir }
 
 // OpenConfig opens (creating if needed) the SQLite settings DB inside dir and
 // loads all rows into memory.
@@ -41,7 +45,7 @@ func OpenConfig(dir string) (*Config, error) {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
 		return nil, err
 	}
-	c := &Config{db: db, cache: map[string]string{}}
+	c := &Config{dir: dir, db: db, cache: map[string]string{}}
 	if err := c.reload(); err != nil {
 		return nil, err
 	}

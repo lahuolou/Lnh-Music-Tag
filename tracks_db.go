@@ -9,7 +9,7 @@ import (
 	"log"
 	"time"
 
-	"LNH-musictag/internal/model"
+	"lnh-musictag/internal/model"
 )
 
 // ensureTracksTable creates the tracks table if missing.

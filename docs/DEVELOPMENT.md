@@ -1,501 +1,269 @@
 # LNH-MusicTag 开发文档
 
-> 版本：v1.4.9 · 仓库：github.com/lahuolou/lnh-musictag · 协议：MIT
-> 本文面向开发者：介绍项目架构、模块职责、数据模型、API、插件扩展点、音频识别与一键刮削流水线、发布流程。
-
----
-
-## 1. 项目概述
-
-LNH-MusicTag 是一个**自托管音乐库标签管理工具**：扫描本地音乐目录，读写音频标签（标题/艺术家/专辑/封面/歌词等），多源刮削补全元数据，智能去重，并支持格式转换、乱码修复、简繁体转换、音频内容识别等功能。只提供 Web 后台（账号/密码/API Key 均存本地数据库）。
-
-核心设计目标：
-
-- **单二进制交付**：Go 后端通过 `go:embed` 内嵌 Vue3 构建产物，运行只有一个可执行文件。
-- **无 CGo**：标签读写采用 go-taglib（WASM 封装 TagLib），SQLite 采用 modernc.org/sqlite（纯 Go），全静态编译。
-- **插件化扩展**：刮削源 / 工具 / 下载器 / 服务协议统一走插件注册表，新能力无需改页面。
-- **后台化任务**：扫描、批量刮削、识别、转换、修复等全部异步执行，进度可视、成功/失败/跳过统计、可取消、刷新/换设备可恢复。
-- **一条流水线**：识别、一键刮削、乱码修复、简繁转换共用同一套异步任务框架与公共实现，避免重复代码。
-
-### 1.1 技术栈
-
-| 层 | 技术 | 说明 |
-|----|------|------|
-| 后端 | Go 1.27（标准库 net/http + ServeMux 路由） | 无第三方 Web 框架 |
-| 标签读写 | github.com/sentriz/go-taglib（WASM） | 免 CGo，支持多值标签 |
-| 音频指纹 | chromaprint（fpcalc 子进程）+ AcoustID API | 音频内容识别 |
-| 元数据补全 | MusicBrainz Web Service v2 | Recording ID → 完整元数据 |
-| 简繁转换 | OpenCC（zhscript 封装） | 简繁互转 |
-| 存储 | modernc.org/sqlite（纯 Go SQLite） | 配置 + 曲目统一入库 |
-| 前端 | Vue 3 + Vite | 无 UI 框架，自绘样式 |
-| 部署 | Docker 多阶段构建 → ghcr.io 镜像 | CI 自动构建推送 |
-| 更新检查 | GitHub API + jsDelivr CDN + raw 文件 | 三源容错 |
-
-### 1.2 版本规划
-
-- 版本号语义化递增：v1.4.1 → v1.4.2 → … → v1.4.50 → **v1.5.0** → v1.5.1 …
-- 每次发布必须：递增 `main.go` 的 `AppVersion`、更新根目录 `VERSION` 文件、创建对应 GitHub Release tag（tag 名带 `v` 前缀）。
-- 更新检查依据 `VERSION` 文件与 Release tag，语义化逐段比较（`1.4.50 → 1.5.0` 正确判新）。
-- **版本不同步递增会导致项目检测不到更新**——这是登录后"检查更新"误报"已是最新"的最常见原因。
-
----
-
-## 2. 系统架构
-
-```
-浏览器 (Vue3 SPA)
-   │  HTTP /api/*  (Cookie 会话 + CSRF + 限流)
-   ▼
-Go 后端 (单二进制，端口 10248)
-   ├── 会话鉴权 auth.go          ── 登录/登出/改密/会话 Cookie
-   ├── 安全防护 security.go      ── CSRF / XSS / SQL 注入防护 / 输入净化
-   ├── 插件框架 plugin.go        ── 刮削源/工具/下载/协议 统一注册表
-   ├── 刮削引擎 internal/scrape  ── 各源实现 + MultiSource 调度（语言优先）
-   ├── 标签读写 internal/taglibx ── go-taglib 封装
-   ├── 任务引擎 scrapejob.go     ── 批量任务（进度/恢复/结果统计/取消）
-   ├── 工具链 convert.go / fixencoding.go / zhscript.go / identify.go
-   ├── 流水线 pipeline.go        ── 一键刮削（可选去重 → 修复 → 转换 → 刮削）
-   ├── 曲目存储 tracks_db.go     ── SQLite 持久化（重启不丢、增量落库）
-   ├── 更新检查 version.go       ── 多源最新版本查询 + 三态结果
-   └── 静态资源 static.go        ── index.html no-cache / 哈希资源 immutable
-           │
-           ├── SQLite (lnh.db)   ── settings 表（账号/Key/选项/插件配置）
-           │                        tracks 表（曲目 JSON）
-           └── 音乐目录 (/music) ── 读写标签/封面/歌词文件
-```
-
-### 2.1 请求链路
-
-1. 公开首页 `/`：无需登录（品牌 + 介绍 + 搜索占位），登录入口弹层。
-2. 登录后进入后台：顶栏（曲目数/列表/首页/齿轮菜单），合并页布局（左侧列表 + 右侧编辑/批量/去重）。
-3. 所有 `/api/*` 除 `login` 外均要求会话 Cookie，经 `csrfGuard` + `limitBody` 中间件。
-4. 前端 `api.js` 统一封装 fetch，自动带 `X-Requested-With: LNH-MusicTag` 头（CSRF 校验需要）。
-
----
-
-## 3. 目录结构
-
-```
-项目根
-├── main.go              程序入口：路由注册、中间件、静态资源、服务启动、store
-├── auth.go              会话与账号：登录/登出/改密/随机初始密码/会话 Cookie
-├── security.go          安全：CSRF、XSS 净化、SQL 注入防护、敏感键校验
-├── plugin.go            插件框架：注册表/快照/启停/配置持久化
-├── plugins_api.go       插件注册与 API：刮削源注册、GET/POST /api/plugins
-├── version.go           更新检查：多源查询、三态结果、语义化版本比较
-├── static.go            静态缓存策略：index.html no-cache、assets immutable
-├── scrapejob.go         批量任务引擎：进度、恢复、成功/失败/跳过统计、取消
-├── pipeline.go          一键刮削流水线：自动去重(可选)→乱码修复→繁转简→补艺术家→刮削
-├── identify.go          音频内容识别：14 格式扫描→转码→指纹→AcoustID→MB→写标签→重命名
-├── fixencoding.go       乱码修复（GBK/UTF-8 错乱检测与重写；与流水线共用 repairTrackText）
-├── zhscript.go          简繁体转换（OpenCC；识别/修复结果统一转简体）
-├── convert.go           格式转换（ffmpeg 转码）
-├── ffmpeg.go            FFmpeg 插件化：路径探测、状态、一键安装
-├── renameclean.go       修正文件后缀（探测真实格式后重命名，如 .mp3.flac → .flac）
-├── activity.go          操作日志（日志页：记录刮削/转换/修复等动作，可删除）
-├── helpers.go           通用工具：writeJSON、路径安全、标签标准化等
-├── tracks_db.go         曲目 SQLite 持久化：落库/加载/外部删除清理
-├── *.go *_test.go       测试
-├── internal/
-│   ├── store/config.go  SQLite 键值配置存储（settings 表）
-│   ├── model/model.go   数据模型：Track、DuplicateGroup、音频扩展名
-│   ├── taglibx/         go-taglib 标签读写封装
-│   ├── dedup/           去重策略（哈希/格式/标签）
-│   ├── finger/          Chromaprint 指纹封装（含 AcoustID 用压缩指纹）
-│   ├── audiofmt/        音频格式探测
-│   └── scrape/          刮削源：sources.go + 各源实现（含 MusicBrainz 客户端）
-├── web/
-│   ├── package.json / vite 配置
-│   └── src/
-│       ├── main.js      入口
-│       ├── App.vue      根组件：首页/后台切换、顶栏、齿轮菜单、全局弹窗
-│       ├── store.js     全局状态（reactive）+ 任务轮询 + 更新检查
-│       ├── api.js       fetch 封装
-│       ├── i18n.js      中英双语字典
-│       ├── style.css    全局样式（明暗主题变量）
-│       ├── views/       Home（公开首页）/ Login / Settings / Plugin
-│       └── components/  MusicTree（左列表）/ EditPanel / BatchPanel /
-│                         DedupPanel / FormatDialog / Toast / UpdateModal / AboutModal
-├── Dockerfile          多阶段：Vue 构建 → Go 静态编译 → alpine 运行
-├── docker-compose.yml  推荐部署（端口/卷/环境变量/FFmpeg 开关）
-├── entrypoint.sh       LNH_INSTALL_FFMPEG=true 时启动前自动安装 ffmpeg
-├── VERSION             当前版本号（更新检查用）
-└── README.md           使用说明（中英双语）
-```
-
----
-
-## 4. 数据模型
-
-### 4.1 settings 表（SQLite 键值）
-
-| 键 | 说明 |
-|----|------|
-| `admin_user` / `admin_pass` | 后台账号 / 密码（bcrypt 哈希） |
-| `session_secret` | 会话签名密钥（首启生成） |
-| `acoustid_key` 等 | 各 API Key（Last.fm / Spotify ID+Secret / Discogs / Jamendo / AcoustID） |
-| `ffmpeg_path` | 旧键：FFmpeg 路径（兼容迁移） |
-| `plugins` | 插件启停与配置 JSON（全量持久化） |
-| `sources_enabled` | 旧键：刮削源开关（兼容迁移） |
-
-### 4.2 tracks 表
-
-| 列 | 说明 |
-|----|------|
-| `id` | 稳定 ID = SHA256[:16] |
-| `path` | 服务器绝对路径 |
-| `data` | Track 完整 JSON |
-| `seq` | 扫描顺序（重启后按序恢复，保持"先扫先排"） |
-
-启动时加载全部曲目（文件已外部删除的自动丢弃），扫描/编辑/重命名/删除均同步落库。
-
-### 4.3 Track 结构（model）
-
-```go
-type Track struct {
-    ID, Path, FileName, Ext string
-    Size int64
-    SHA256 string          // 去重策略1：内容哈希
-    Duration float64        // 秒
-    Bitrate, SampleRate, Channels uint
-    HasCover, HasLrcFile bool
-    HasTrad bool            // 标签含繁体（OpenCC 检测，供"繁体"筛选）
-    Garbled bool            // 标签疑似乱码（GBK/UTF-8 错乱）
-    NeedsIdentify bool      // 无文件名与标签信息 → 需音频内容识别
-    Tags map[string]string  // 扁平化标签（标准键）
-}
-```
-
----
-
-## 5. 音频内容识别流水线（identify.go）
-
-按"扫描 → 分流 → 指纹 → AcoustID → MusicBrainz → 写标签 → 重命名"流水线实现，对标 AcoustID + MusicBrainz 官方方案：
-
-```
-音频文件
-   │  14 种格式：.mp3 .m4a .aac .flac .alac .wav .aiff .ogg
-   │              .opus .wma .ape .wv .dsf .dff（兼容 .mpc/.mka）
-   ▼
-格式分流（identifyNeedsTranscode）
-   ├── 免转码族：.mp3 .flac .wav .ogg .opus → 直接指纹
-   └── 其他（含 DSD .dsf/.dff）→ FFmpeg 转 WAV（16bit/44.1kHz/双声道）再指纹
-   ▼
-指纹生成（internal/finger）
-   └── fpcalc -json → Chromaprint 压缩指纹 + 时长（AcoustID 需要压缩指纹而非 raw）
-   ▼
-AcoustID 查询（3 QPS 限速，acOnce）
-   └── /v2/lookup?client=KEY&meta=recordings+releasegroups+compress
-       → MusicBrainz Recording ID + 基础元数据（score 置信度）
-   ▼
-MusicBrainz 补全（1 QPS 限速，mbOnce）
-   └── LookupRecording(mbid, artists, releases, release-groups, tags)
-       → 标题/艺术家/专辑/年代/流派完整元数据
-   ▼
-写标签 + 重命名（finalizeIdentify 公共收尾）
-   ├── 标题/艺术家/专辑/流派自动转简体（AcoustID 与库内回退两路径都转）
-   ├── taglibx 写标签 → 抓歌词 → refreshTrack 落库
-   └── 重命名"艺术家 - 标题.后缀"（不覆盖已存在目标）
-```
-
-关键行为：
-
-- **未配 AcoustID Key / 未命中**：回退**库内指纹匹配**（指纹余弦相似度阈值 0.85），与已标注曲目比对补全。
-- **指纹库异步构建**：`POST /api/identify` 立即返回 `{jobId, total}`；任务首步先构建指纹库（`Current="构建指纹库…"`），随后逐曲目识别。
-- **识别判定**：`filenameNoInfo`（文件名空/Unknown/乱码/纯数字如 track01）+ `needsIdentify`（文件名无信息且 TITLE 空或等于去后缀 basename）。
-- **格式探测**：`.mp3.flac` 这类多后缀文件先探测真实编码格式再重命名正确后缀。
-
----
-
-## 6. 一键刮削流水线（pipeline.go）
-
-一键刮削把日常整理步骤串成一条流水线，逐曲目 × 阶段执行，**每个（曲目 × 阶段）占一个进度点**（进度按曲目计数，不再出现 4 倍进度）：
-
-```
-阶段 0（可选）自动去重 ── 勾选才执行，默认不勾选
-   按三种口径合并分组（与去重页一致）：
-   ① 艺术家+标题一致（同人同歌不同格式/版本）
-   ② 同名多格式（广岛之恋.mp3 + 广岛之恋.flac）
-   ③ SHA256 内容一致（完全相同副本）
-   每组保留音质最好的一首（无损优先；hash 组保留第一首），
-   其余删除文件并从列表移除。任一组的 keep 优先于其他组的删除
-   （同一曲目同时出现在多组时不会被误删）。
-阶段 1 乱码修复 ── stageFixEncoding，与 /api/fix-encoding 共用 repairTrackText
-阶段 2 繁体转简体 ── stageScript，OpenCC t2s
-阶段 3 文件名补艺术家 ── stageFixArtist（文件名不含艺术家时补）
-阶段 4 刮削元素 ── stageScrape（歌名+海报+歌词；源没搜到海报自动匹配下一条源）
-```
-
-- 每阶段从 store 取**最新状态**（前一阶段可能重写标签/重命名/删除）。
-- `Stage` / `StageLabel`（"刮削元素（3/4）"）单独显示当前阶段，前端实时更新列表不整表刷新。
-- **取消**：`POST /api/jobs/{id}/cancel` → 任务在下一步前停止，状态 `cancelled`。
-- 曲目被去重阶段删除后，其余阶段对该曲目直接计完成（done 仍能到 total）。
-
----
-
-## 7. 后端模块详解
-
-### 7.1 入口与路由（main.go）
-
-- `AppVersion` 常量 = 当前版本号（发布时必须递增）。
-- 路由：公开 `POST /api/login`、`POST /api/logout`、`GET /api/me`；其余全部挂 `pm`（plugins mux），统一套 `requireAuth → csrfGuard → limitBody`。
-- 静态资源：`go:embed` 内嵌 `web/dist`，`/api/*` 优先于静态。
-- 完整路由表见第 10 节。
-
-### 7.2 会话鉴权（auth.go）
-
-- 登录成功 → 生成签名会话 Cookie（HttpOnly + SameSite），密钥 `session_secret` 首启随机生成。
-- 首次启动无密码 → 自动生成随机初始密码并打印到容器日志；登录后在「设置」页修改（写库）。
-- 调试默认账号 admin/admin（仅测试库，`LNH_CONFIG_DIR` 播种）。
-
-### 7.3 安全防护（security.go）
-
-| 威胁 | 防护 |
-|------|------|
-| CSRF | 自定义头 `X-Requested-With` 校验 + Cookie SameSite |
-| XSS | 前端 Vue 默认转义；后端对写入标签做 `<` `>` `&` `"` `'` 净化 |
-| SQL 注入 | 全部参数化查询（database/sql 占位符） |
-| 路径穿越 | 所有文件操作先 `filepath.Clean` 并校验在音乐目录内 |
-| 拖库 | 密码 bcrypt 哈希存储；会话密钥随机；API Key 不在前端明文回显 |
-| 请求放大 | `limitBody` 限制请求体大小；爬取外部 API 均带超时与限流 |
-
-### 7.4 标签读写（internal/taglibx）
-
-- 封装 go-taglib（TagLib 的 WASM 移植，无 CGo）。
-- 标准化标签键：`title / artist / album / albumartist / genre / year / track / lyrics / comment`。
-- 支持多艺术家（`/` 与 `_` 拆分）、多值读取、封面（APIC）与歌词（USLT）写入。
-- 写操作统一走 `refreshTrack`：更新内存 + 落库（并保持列表按扫描顺序）。
-
-### 7.5 扫描（main.go /api/scan）
-
-- 异步增量扫描：按目录遍历音频扩展名，边扫边推（`/api/scan/status` 轮询），不等待全部完成。
-- 每个文件：读标签 → 探测格式（时长/码率/采样率）→ 计算 SHA256 → 检测乱码/繁体/待识别标记 → 落库。
-- 文件名解析（当标签缺失时）：`艺术家 - 标题.后缀` 拆分；多后缀先按音频格式探测。
-- 暂停/继续：`POST /api/scan/pause`。排序：扫描中按扫描顺序（seq），完成后可点表头排序。
-
-### 7.6 刮削引擎（internal/scrape）
-
-- `MultiSource`：按源注册表调度，`auto` 自动按语言优选（中文 → 国内源，外文 → 国际源）；也可手动指定源。
-- 源清单（全部插件化）：网易云 / QQ / 酷狗 / 酷我 / 咪咕 / B站 / 汽水 / 波点 / 5sing / MusicBrainz / iTunes / ListenBrainz / Deezer / Last.fm / Spotify / Discogs / Jamendo。
-- 每个源实现统一 `Source` 接口：`Search(query) → SearchLyrics(title, artist)`。
-- 刮削字段：标题/艺术家/专辑/专辑艺术家/流派/年代/曲目号/歌词/封面，逐字段可选、智能跳过已有标签。
-- 批量任务 `/api/scrape/batch`：后台执行，进度 + 成功/失败/跳过统计，刷新/换设备可恢复。
-
-### 7.7 批量任务引擎（scrapejob.go）
-
-统一任务模型（批量刮削 / 一键刮削 / 格式转换 / 乱码修复 / 简繁转换 / 音频识别 / 修正后缀共用）：
-
-- 内存任务表（`jobs`），`GET /api/jobs/{id}` 查询进度（status/done/total/current/results/ok/fail/skip/stage/stageLabel）；`GET /api/jobs` 列出进行中任务。
-- 前端启动任务后存 `jobId`，登录/刷新后 `resumeJobs()` 重新挂载轮询——**后台任务跨设备持续执行**。
-- 结果统计：成功 / 失败 / 跳过 / 总数，任务结束汇总显示（toast + 任务面板）。
-- **取消**：`POST /api/jobs/{id}/cancel`（所有批量任务通用）。
-
-### 7.9 批量刮削字段模型（29 项）与存疑自动识别
-
-**字段模型（scrapejob.go）**：`ScrapeFields` 覆盖 28 个可勾选字段，按常用度排序（海报 → 核心标签 → 操作项 → 扩展标签 → 音频属性；前端展示与后端解析共用 `fieldNames()`）：
-
-- 海报
-- 核心标签：歌名 / 艺术家 / 专辑 / 专辑艺术家 / 风格 / 年代 / 曲目号 / 歌词（内置方式：抓歌词写内嵌标签，兼容旧 LRC 别名）
-- 操作项：文件名（按「艺术家 - 标题.后缀」重命名）
-- 扩展标签：作曲家 / 作词家 / 专辑类型 / 语言 / 简介（描述并入 COMMENT）/ 光盘编号 / 总光盘数 / 总音轨数 / 曲目增益 / 专辑增益 / 曲目峰值 / 专辑峰值
-- 音频属性（写标签自定义键，无需源搜索）：比特率 / 采样率 / 位深度 / 声道 / 时长 / 文件大小
-
-前端提供**全选/反选**（批量刮削元素区第一位）与**智能跳过**开关（置顶，文案精简为"智能跳过"）。曲目列表页展示与批量刮削元素**相同的全部字段列**（29 列含勾选，窄屏自动隐藏低优先级列并支持横向滚动）；**一键刮削**与批量刮削使用同一完整字段集 `allScrapeFields()`（含海报/歌词/文件名重命名）。属性与操作项**不依赖源搜索**：勾选后即使搜索无结果也会执行（属性写本地探测值、文件名重命名）。封面降级：当前源无海报自动匹配下一条源（`FetchCoverFallback`）。
-
-`fieldsFromList()` 支持全部中文别名（歌名/标题、流派/风格、年代/年份、海报/封面、简介/描述、歌词(LRC文件)/lrc 等）。属性与操作项**不依赖源搜索**：勾选后即使搜索无结果也会执行（属性写本地探测值、LRC 写盘、文件名重命名）；搜索失败且无操作项才报错。封面降级：当前源无海报自动匹配下一条源（`FetchCoverFallback`）。
-
-**智能跳过（applySkipFilled）**：乱码文本与 "Unknown/未知" 占位视为"未填充"（`tagNeedsFill`），刮削阶段会修正而不是跳过；LRC 已存在、文件名已规范则跳过对应操作。
-
-**存疑自动识别**：批量刮削（`runBatch`）与一键刮削（`stageScrape`）在**配置了 AcoustID Key** 时，对存疑曲目（`trackIsDoubtful`：文件名艺术家为 Unknown/未知/track01、标签艺术家空/乱码/占位、或无有效标题）先执行音频识别：
-
-```
-存疑曲目 → fpcalc 指纹 → AcoustID 查询(3QPS) → MusicBrainz Recording 补全(1QPS)
-        → 写标签（统一转简体）→ 抓歌词 → 按「艺术家 - 标题.后缀」重命名
-        → 识别产生新 ID 后，后续刮削基于新曲目继续
-```
-
-未配 Key 或 AcoustID 未命中 → 回退**库内指纹匹配**（相似度 ≥0.85，不消耗在线额度）；仍无结果则继续刮削兜底（按文件名解析的标题搜索）。消息只报告实际执行的动作（搜索失败/无属性值时不再误报"文件名+LRC"）。
-
-### 7.8 工具链
-
-| 模块 | 功能 | 说明 |
-|------|------|------|
-| convert.go | 格式转换 | 调 ffmpeg 转码（插件化定位），输出同目录不删源文件 |
-| fixencoding.go | 乱码修复 | 检测 GBK/UTF-8 错乱（mojibake），重写正确编码；与流水线共用 `repairTrackText` |
-| zhscript.go | 简繁体转换 | OpenCC：默认繁体→简体，可切换方向 |
-| identify.go | 音频内容识别 | 见第 5 节完整流水线 |
-| renameclean.go | 修正文件后缀 | 探测真实格式后重命名正确后缀（发如雪.mp3.flac → 发如雪.flac） |
-| activity.go | 操作日志 | 记录"何时刮削了多少首/转换了多少首/是否成功"，日志页可删除/清空 |
-
----
-
-## 8. 插件框架（核心扩展点）
-
-### 8.1 插件模型
-
-```go
-type Plugin struct {
-    Name        string            // 唯一标识：scrape.qq / tool.ffmpeg / download.* / protocol.*
-    Label       string
-    Kind        PluginKind        // scrape | tool | download | protocol
-    Enabled     bool
-    Builtin     bool              // 内置不可停用（auto）
-    Installable bool              // 支持一键安装
-    NeedsKey    bool              // 依赖外部 API Key（默认关闭）
-    KeyField    string            // 对应 settings 库 Key 键名
-    KeyConfigured bool            // 快照时计算
-    Fields      []PluginField     // 前端渲染表单
-    Config      map[string]string // 始终序列化（至少 {}）
-}
-```
-
-- `plugin.go`：注册表（`registerPlugin` / `pluginsSnapshot` / `applyPluginState` / `loadPluginsFromDB` / `savePluginsToDB`）。
-- `plugins_api.go`：启动时注册全部刮削源 + FFmpeg；`GET /api/plugins`（快照）、`POST /api/plugins`（启停/配置更新）。
-- 免 Key 刮削源在 `loadPluginsFromDB` 中**强制开启**；需 Key 源默认关闭，配置 Key 后自动变为可开启。
-- 持久化：全量写入 `settings.plugins` 键（JSON），并同步兼容旧键。
-
-### 8.2 新增一个插件
-
-```go
-// 在 plugins_api.go 的初始化函数中加入：
-registerPlugin(&Plugin{
-    Name:   "download.example",
-    Label:  "示例下载器",
-    Kind:   PluginDownload,     // 或 PluginProtocol（Subsonic 等）
-    Fields: []PluginField{{Key: "url", Label: "fUrl", Type: "text"}},
-}, func(name string, enabled bool, cfg map[string]string) {
-    // 启停/配置变更时的生效回调
-})
-```
-
-注册后前端无需改动自动渲染：开关 + 表单 + Key 徽标。下载 / 协议类型当前为预留扩展位（音源、下载器、自动换源、Subsonic 等插件后续接入）。
-
-### 8.3 FFmpeg 插件化
-
-- 镜像默认**不装** ffmpeg；`LNH_INSTALL_FFMPEG=true`（compose）时 `entrypoint.sh` 启动前 `apk add ffmpeg`。
-- 三种启用方式：① compose 开关自动安装；② 插件页「一键安装」；③ 插件页填宿主 ffmpeg 绝对路径。
-- `GET /api/ffmpeg/status`：探测路径与版本；`POST /api/ffmpeg/install`：容器内安装。
-
----
-
-## 9. 前端详解（Vue3）
-
-### 9.1 状态与路由（store.js）
-
-- `state`（reactive）：authed / view（home|app）/ activeTab（list|edit|batch|dedup）/ tracks / selected / scanStatus / batchJob / toolJob / version 等。
-- 无 vue-router：`activeTab` + `view` 组合控制页面。
-- 任务轮询：`resumeJobs()` 在登录/刷新后按 `jobId` 重新挂载进度轮询。
-- `checkVersion(force)`：force（手动）→ `/api/version/check` 实时重查；自动 → `/api/version` 读缓存。
-
-### 9.2 页面结构
-
-| 视图 | 说明 |
-|------|------|
-| `views/Home.vue` | 公开首页：品牌 + 介绍 + 搜索区（默认隐藏，未接入）+ 登录入口 |
-| `views/Login.vue` | 登录弹层（账号默认留空） |
-| `App.vue` | 后台框架：顶栏 + 齿轮菜单（主题 / 语言切换（中文显"切换EN"、英文显"Switch CN"）/ 插件 / 日志 / 更新 / 关于 / 设置 / 退出，点一下展开再点收起） |
-| `components/MusicTree.vue` | 左侧列表：表头冻结；筛选（全部/乱码/繁体/歌词/海报/无艺术家/待识别）；输入即搜歌名 |
-| `components/EditPanel.vue` | 右侧编辑：载入原标签 + 文件名回填、保存后按"艺术家-标题"重命名、刮削/歌词/封面 |
-| `components/BatchPanel.vue` | 批量：一键刮削（含**自动去重复选框，默认不勾选**）+ 补全字段勾选 + 智能跳过；音频识别 / 格式转换 / 乱码修复 / 简繁转换 / 修正后缀 |
-| `components/DedupPanel.vue` | 去重：哈希 / 格式 / 标签分组；勾选后批量删除 |
-| `views/Settings.vue` | 设置：改密 + 数据库配置（API Key） |
-| `views/Plugin.vue` | 插件页：插件开关 + Key 徽标 + FFmpeg 状态/路径/安装 |
-| 弹窗组件 | `FormatDialog`（转换）、`UpdateModal`（更新提醒）、`AboutModal`（关于卡片）、`Toast` |
-
-### 9.3 国际化与样式
-
-- `i18n.js`：`lang`（zh/en）+ `t(key)` 字典查找；所有用户可见文案走 i18n，新增文案需补中英两处。
-- `style.css`：CSS 变量主题（`data-theme="dark|light"`），默认跟随系统；移动端适配（列表单列、横屏不溢出）。
-
----
-
-## 10. API 参考
-
-> 除标注外均需登录会话。请求头 `X-Requested-With: LNH-MusicTag`（CSRF）。
-
-### 10.1 会话
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/login` | 登录（body: user/pass），下发会话 Cookie |
-| POST | `/api/logout` | 登出 |
-| GET | `/api/me` | 当前会话用户（刷新恢复登录态用） |
-| POST | `/api/change-password` | 修改密码 |
-
-### 10.2 扫描与曲目
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/scan` | 开始扫描（body: dir） |
-| POST | `/api/scan/pause` | 暂停/继续 |
-| GET | `/api/scan/status` | 扫描进度（running/paused/added/total/done/skipped） |
-| GET | `/api/tracks` | 曲目列表（按 seq） |
-| POST | `/api/tracks/delete` | 批量删除选中文件（body: {ids} → {failed,removed}） |
-| POST | `/api/tracks/{id}/tags` | 写标签（含重命名联动） |
-| GET | `/api/tracks/{id}/cover` | 取内嵌封面 |
-| POST | `/api/tracks/{id}/cover` | 写封面 |
-| GET | `/api/tracks/{id}/lrcfile` | 外挂歌词文件 |
-
-### 10.3 刮削
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/scrape/sources` | 源列表与开关 |
-| GET | `/api/scrape/search` | 指定源搜索（query + source） |
-| POST | `/api/tracks/{id}/scrape` | 单曲刮削（source + 字段勾选） |
-| POST | `/api/scrape/batch` | 批量刮削（ids + source + 字段），返回 jobId |
-| POST | `/api/scrape/onekey` | 一键刮削（body: {ids, dedup}；dedup=true 先自动去重），返回 jobId |
-| GET | `/api/lyrics` | 歌词搜索/获取 |
-
-### 10.4 批量任务
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/jobs/{id}` | 任务进度（status/done/total/current/results/ok/fail/skip/stage/stageLabel） |
-| GET | `/api/jobs` | 进行中任务列表（刷新/换设备恢复） |
-| POST | `/api/jobs/{id}/cancel` | 取消任务（置 cancelled） |
-| POST | `/api/convert` | 格式转换（target/bitrate/sampleRate/removeSource） |
-| POST | `/api/fix-encoding` | 乱码修复（body: {ids}） |
-| POST | `/api/convert-script` | 简繁转换（body: {ids, to: simp/trad}） |
-| POST | `/api/identify` | 音频内容识别（异步构建指纹库后逐曲目识别） |
-| POST | `/api/rename-clean` | 修正文件后缀（探测真实格式重命名） |
-| POST | `/api/set-chorus` | 艺术家 ≥3 时改"合唱" |
-
-### 10.5 去重
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/duplicates` | 重复分组（hash/format/tags；format/tags 组含 keepId 音质最佳） |
-| POST | `/api/duplicates/remove` | 删除组内选中文件 |
-
-### 10.6 设置 / 插件 / 日志
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/settings` | 设置（Key 脱敏返回） |
-| POST | `/api/settings` | 保存设置/Key |
-| GET | `/api/plugins` | 插件快照（含 config 恒非空、KeyConfigured） |
-| POST | `/api/plugins` | 更新启停/配置（body: {name: {enabled?, config?}}） |
-| GET | `/api/ffmpeg/status` | FFmpeg 路径与版本 |
-| POST | `/api/ffmpeg/install` | 容器内一键安装 |
-| GET | `/api/logs` | 操作日志列表 |
-| POST | `/api/logs/delete` | 删除指定日志 |
-| POST | `/api/logs/clear` | 清空日志 |
-
-### 10.7 更新检查
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/version` | 缓存快照（current/latest/url/status） |
-| GET | `/api/version/check` | 强制实时重查（手动检查用） |
-
-响应 `status`：`ok` / `fail`（全部源失败）/ `unknown`（未检查）。前端据此区分"有新版 / 已是最新 / 检查失败"。
-
----
-
-## 11. 部署
-
-### 11.1 docker compose（推荐）
+版本：v1.5.0 ｜ 仓库：github.com/lahuolou/lnh-musictag ｜ 许可证：MIT
+
+本文档与当前代码同步维护，覆盖架构、业务流程、数据模型、插件机制、API、部署、开发测试发布流程与安全运维。用于开发交接、日常维护、功能扩展与发布排错。
+
+## 1. 项目概览与核心能力
+
+LNH-MusicTag 是一款自托管音乐库标签管理工具。系统扫描本地音乐目录，读取和修改音频标签，通过多个在线数据源补全元数据，并提供去重、格式转换、乱码修复、简繁转换、音频内容识别等能力。
+
+| 设计目标 | 实现方式 | 开发者需要关注 |
+| --- | --- | --- |
+| 单二进制交付 | Go 后端通过 go:embed 内嵌 Vue 3 构建产物 | 前端变更后需重新构建 web/dist，再编译后端 |
+| 无 CGo | go-taglib（WASM 封装 TagLib）；modernc.org/sqlite | 构建与部署尽量保持纯 Go 链路 |
+| 插件化 | 刮削源、工具、下载器、服务协议统一注册 | 新插件优先遵守注册表和统一配置模型 |
+| 后台任务 | 扫描、刮削、识别、转换、修复均异步执行 | 任务需要进度、结果统计、取消和刷新后恢复轮询 |
+| 统一流水线 | 多个操作复用任务框架与公共实现 | 公共逻辑优先复用，避免同类功能行为不一致 |
+| **多源并发** | 任何需要数据源的环节并发查询全部启用源，合并后挑最佳 | 新源只需实现 Source 接口，自动进入并发调度 |
+
+### 1.1 核心功能清单
+
+- 音乐目录扫描：读取标签、探测音频属性、计算 SHA256，并将曲目索引持久化。
+- 标签管理：编辑面板按配置渲染 **29 个元素**（17 可编辑 + 12 只读展示）；显示字段在「设置」页勾选并持久化，默认 12 个常用项。
+- **多源并发刮削**：按语言偏好并发查询全部启用源，合并结果后跨源挑最佳匹配（标题相似度 + 专辑完整性）再写入标签；批量/一键/歌词/海报/编辑面板搜索共用。
+- 歌词多级兜底：网易云（短超时+重试）→ QQ → lrclib，不依赖搜索命中。
+- 音频识别：Chromaprint 指纹 → AcoustID 查询 → MusicBrainz 补全；未命中时可尝试库内指纹匹配。
+- 一键整理：可选去重（进回收站，跨卷已修复），然后依次修复乱码、繁转简、补艺术家、执行刮削。
+- 文件处理：格式转换、文件后缀修正、简繁转换、乱码修复。
+- 任务与日志：异步进度、成功/失败/跳过统计、取消任务、操作日志（含删除/清空）；任务详情接口瘦身（只回失败项 + 计数）。
+- 插件生态：内置刮削源插件组与工具插件组（FFmpeg），支持导入解耦设计的第三方 ZIP 插件并动态挂载 Web 面板。
+- 部署与更新：Docker Compose、FFmpeg 可选安装/卸载、多个更新源容错、单一版本源与 CI 校验。
+
+## 2. 技术架构与模块边界
+
+系统采用浏览器 SPA + Go HTTP 服务 + SQLite + 音乐文件目录的结构。服务默认监听 10248 端口。
+
+| 层次 | 技术/组件 | 主要职责 |
+| --- | --- | --- |
+| 前端 | Vue 3、Vite、原生 CSS | 页面、交互、任务轮询、国际化与主题 |
+| HTTP 入口 | net/http、ServeMux（Go 1.22+ 路径参数） | 路由注册、中间件、静态资源托管 |
+| 身份与安全 | auth.go、security.go | 登录会话、CSRF 校验、请求体限制、登录限流 |
+| 业务层 | 扫描、刮削、任务、识别、转换等 Go 模块 | 编排具体操作并统一返回任务状态 |
+| 扩展层 | plugin.go、plugins_api.go、plugin_runner.go、internal/scrape | 插件注册、启停、配置持久化、多源调度、ZIP 安全导入 |
+| 存储层 | SQLite、internal/store、tracks_db.go | 应用设置、曲目索引与任务数据持久化 |
+| 文件层 | 音乐目录、taglibx、FFmpeg | 标签、封面、歌词、转码与文件重命名 |
+
+### 2.1 关键模块索引
+
+| 模块/路径 | 职责 |
+| --- | --- |
+| main.go | 程序入口、路由、中间件、静态资源、AppVersion（embed VERSION）、/api/settings 编辑字段配置（editFields） |
+| auth.go / security.go | 会话鉴权、CSRF、请求体限制、登录失败限流 |
+| plugin.go / plugins_api.go / plugin_runner.go | 插件注册表、插件 API、启停和配置、ZIP 导入解压与安全校验、面板静态路由 |
+| scrapejob.go | 统一异步任务、进度、结果统计、取消、任务持久化与保留策略；一键刮削阶段编排；pickBest 跨源最佳匹配 |
+| pipeline.go | 一键刮削的阶段编排 |
+| identify.go | 音频指纹识别与元数据补全 |
+| tracks_db.go / internal/store/config.go | 曲目与配置数据持久化 |
+| internal/taglibx | 音频标签、封面与歌词读写封装 |
+| internal/dedup / internal/finger / internal/audiofmt | 去重、音频指纹与格式探测 |
+| internal/scrape | 刮削源接口、17 个数据源实现、**SearchWithFallback 并发合并**、歌词多级兜底、MusicBrainz 客户端 |
+| convert.go / ffmpeg.go / renameclean.go | 格式转换、FFmpeg 探测/安装/卸载与文件后缀修正 |
+| fixencoding.go / zhscript.go | 乱码修复与简繁体转换 |
+| activity.go / version.go / static.go | 操作日志、版本检查、静态资源缓存策略 |
+| web/src | Vue 页面、全局状态、API 封装、国际化和组件；**web/src/fields.js：29 元素字段定义与默认勾选** |
+
+### 2.2 请求与鉴权约定
+
+- 登录、登出与当前会话接口为公开路由；其余业务 API 需要登录会话。
+- 前端通过 web/src/api.js 统一封装 fetch，并发送 `X-Requested-With: LNH-MusicTag` 请求头。
+- 业务请求统一经过鉴权、CSRF 校验和请求体大小限制等中间件。公开例外：
+  - `/api/login` 豁免 CSRF（无会话可劫持）；
+  - `/api/plugins/import` 豁免 8MiB 请求体上限（插件包上限 256MiB）；
+  - 第三方插件面板路由 `/api/plugins/{name}/panel` 额外放宽 `script-src 'unsafe-inline'`（仅该路由，详见第 9 章）。
+- 错误响应统一为 `{"ok": false, "error": "..."}`；成功响应为对应业务 JSON（部分接口含 `ok: true`）。前端 api.js 读取 `data.error` 抛出异常。
+- 前端没有使用 vue-router；页面由 view 与 activeTab 状态组合控制。
+
+## 3. 关键业务流程
+
+### 3.1 扫描流程
+
+1. 遍历配置的音乐目录，识别支持的音频扩展名。
+2. 读取现有标签，并探测时长、码率、采样率、声道等属性。
+3. 计算 SHA256，检测疑似乱码、繁体标签和待识别曲目。
+4. 解析缺失标签的文件名（例如"艺术家 - 标题"）。
+5. 以增量方式写入 SQLite，扫描进度通过 `/api/scan/status` 查询。
+6. 扫描顺序由 seq 记录，列表可在扫描完成后按列排序。
+
+### 3.2 音频内容识别流程
+
+音频文件 → 格式分流 → 必要时转 WAV → fpcalc/Chromaprint 指纹 → AcoustID → MusicBrainz → 写标签、抓歌词、刷新索引并按"艺术家 - 标题"重命名。
+
+| 步骤 | 说明 |
+| --- | --- |
+| 格式处理 | 支持 14 种免转码格式（identifyExts），兼容已有 .mpc/.mka；其他格式可经 FFmpeg 转成 16-bit/44.1 kHz/双声道 WAV。 |
+| 指纹生成 | fpcalc -json；发送给 AcoustID 的应为压缩指纹；指纹库异步构建并持久化，增量更新。 |
+| 在线查询 | AcoustID 限速 3 QPS；MusicBrainz 限速 1 QPS。 |
+| 回退策略 | 未配置 Key 或在线未命中时，可用库内指纹相似度匹配，阈值为 0.85。 |
+| 最终处理 | 标题、艺术家、专辑、流派等统一转简体；写标签、抓歌词、刷新曲目索引并重命名。 |
+
+### 3.3 一键刮削流程
+
+| 阶段 | 操作 | 注意事项 |
+| --- | --- | --- |
+| 0（可选） | 自动去重 | 默认不勾选；重复文件移入配置目录 trash/ 回收站，不是直接永久删除；**跨卷删除已修复**（见 3.5） |
+| 1 | 乱码修复 | 与独立乱码修复 API 共用 repairTrackText |
+| 2 | 繁体转简体 | 通过 OpenCC t2s |
+| 3 | 补全文件名艺术家 | 文件名缺少艺术家时补齐 |
+| 4 | 刮削标签、封面与歌词 | 多源并发查询（见 3.4）；刮削写回的标签统一转简体 |
+
+任务进度按曲目计数；每个阶段会重新获取曲目最新状态。被前置去重移除的曲目仍会计入完成数，避免进度无法到达 total。取消任务通过 `/api/jobs/{id}/cancel` 发起。
+
+### 3.4 多源并发刮削（v1.5.0 核心）
+
+所有需要数据源的环节（批量刮削、一键刮削、歌词、海报、编辑面板搜索）统一走 `internal/scrape/sources.go` 的 `SearchWithFallback`：
+
+1. 确定查询集：指定源（若有）+ 语言优先链（中文曲目：国内源优先；外文曲目：国际源优先）中**所有启用**的源。
+2. 每个源独立 goroutine 并发请求（外部 API 均有超时与限速），结果合并返回。
+3. `scrapejob.go` 的 `pickBest` 在合并结果上跨源比较：标题相似度 ≥ 0.35 中挑最高者；相似度并列时优先带专辑信息的命中。
+4. 将最佳匹配写入标签（歌名/艺术家/专辑/专辑艺术家/风格/年代/曲目号/封面/歌词等可选字段）。
+
+`/api/scrape/search?source=auto` 走同一并发路径，前端编辑面板一次搜索即可看到全部启用源的命中（每条带来源徽标），供用户跨源对比。
+
+### 3.5 去重删除（回收站 + 跨卷修复）
+
+去重与列表删除均进回收站（配置目录 `trash/`，日志记 act_dedup/act_del）：
+
+- **同卷**：`os.Rename` 到 trash（8×1s 重试，处理 Windows 瞬时占用）。
+- **跨卷**（如 E:\mp32 → C:\config\trash）：`os.Rename` 必返回 EXDEV，改为 复制 → **立即关闭读句柄（defer Close 需提前触发，否则句柄阻塞删除）** → 删除源文件（8×1s 重试，兼容 Defender 实时扫描）。
+- 历史 bug：跨卷一律失败（EXDEV 未处理）+ 跨卷 copy 分支 defer 句柄未提前释放 → 一键去重勾选后"移入回收站失败: file being used"。修复后删除耗时 16s → 39ms。
+
+### 3.6 歌词链路（多级兜底）
+
+`internal/scrape/lyrics.go` 的 FetchLyrics 按序尝试，**不依赖搜索是否命中**（搜索 0 命中时也按文件名解析出的标题/艺术家直接走链）：
+
+1. 网易云按 ID 拉取（独立 client，3s 短超时 ×3 重试，防挂起拖慢整链）；
+2. 网易未命中 → QQ 搜索歌词（提前到网易搜索之前，网易挂起时快速让位）；
+3. QQ 搜索 → 网易搜索 → lrclib 兜底。
+
+网易云歌词写入后统一转简体，避免"一键流水线先转、刮削后写回繁体覆盖"的问题。
+
+### 3.7 封面加载缓存
+
+- 后端封面接口带 **mtime 失效缓存**（coverCache：map[trackID]→{mtime, 封面数据}），文件未变更则复用缓存，并返回 `Cache-Control: private, max-age=3600`。
+- 前端封面组件失败重试 2 次，onerror 静默隐藏。
+- 实测：大列表重复请求 ~2ms，broken 封面 13 → 0。
+
+### 3.4 任务状态与恢复
+
+- 任务状态保存在内存任务表，并写入 SQLite `jobs` 表；进行中任务每 5 秒保存一次快照。
+- 前端记录 jobId，登录或刷新后调用 resumeJobs() 重新挂载轮询。
+- 任务记录可在进程重启后查询：已完成任务为 done，被进程中断的任务记录为 interrupted，恢复时同步写回库（不残留 running 状态）。
+- 启动时执行保留策略：清理 30 天前的终态任务（running 任务不受影响）。
+- 进度响应含 createdAt 与 duration（任务已耗时秒数），供前端与日志展示。
+- 自动断点续跑尚未实现；中断任务需要用户手动重新执行。
+
+## 4. 数据模型与持久化
+
+### 4.1 SQLite 表
+
+| 表/数据 | 字段或内容 | 用途 |
+| --- | --- | --- |
+| settings | key/value；账号、bcrypt 密码哈希、session_secret、API Key、插件配置、edit_fields（编辑面板显示字段）等 | 持久化应用设置 |
+| tracks | id、path、data、seq | 保存曲目 JSON、绝对路径和扫描顺序 |
+| jobs | id、kind、total、done、current、status、stage、stage_label、results（JSON）、created_at、updated_at | 任务状态持久化与重启后查询；创建/取消/完成即时写库，运行中每 5 秒快照 |
+| activity_logs | 操作日志条目 | 登录、任务、删除、插件等关键操作留痕，支持删除/清空 |
+
+曲目 ID 定义为 SHA256 的前 16 个字符；曲目数据主体以完整 JSON 保存于 tracks.data。启动时加载曲目，外部已删除的文件会从索引中清理。扫描、编辑、重命名和删除等操作会同步更新数据库。数据库使用 WAL + busy_timeout(5000)，连接池上限 4。
+
+### 4.2 Track 主要字段
+
+| 字段 | 含义 |
+| --- | --- |
+| ID / Path / FileName / Ext | 稳定 ID（SHA256 前 16 字符）、服务器绝对路径、文件名和扩展名 |
+| Size / Duration | 文件大小、时长 |
+| SHA256 | 用于内容哈希去重 |
+| Bitrate / SampleRate / Channels / BitDepth | 音频属性 |
+| HasCover / HasLrcFile / HasLyrics | 是否有内嵌封面、是否存在外挂歌词文件、是否已内嵌歌词 |
+| HasTrad / Garbled / NeedsIdentify | 繁体、疑似乱码、待音频识别标记 |
+| Tags | 按标准键扁平化保存的标签映射（可编辑字段键，见 4.3） |
+
+### 4.3 编辑面板字段清单（29 个元素）
+
+字段定义位于 **`web/src/fields.js`**（`FIELDS`），后端 `main.go` 的 `editFieldsList()` 解析设置页勾选的逗号串，`defaultEditFields` 为默认 12 项；设置存于 settings 表 `edit_fields` 键。
+
+**可编辑字段（17 个，前端经 TAG_KEYS 映射到标签键写入）：** 歌名、艺术家、专辑、专辑艺术家、风格、年份、曲目号、总曲目数、作曲家、作词、语言、专辑类型、简介（COMMENT）、光盘编号、总光盘数、歌词（独立 textarea 区块）。
+
+**只读展示字段（12 个，`.ro-val` 渲染）：** 封面、文件名、外挂 LRC、比特率、采样率、位深度、声道、时长、文件大小、SHA256、路径、MusicBrainz 录音/专辑（取自 tags.MUSICBRAINZ_*）。
+
+**默认勾选 12 项（DEFAULT_EDIT_FIELDS）：** 封面、歌名、艺术家、专辑、专辑艺术家、风格、年份、曲目号、总曲目数、作曲家、作词、歌词。
+
+> 说明：v1.4.10 时代"28 个可勾选字段"指批量面板的字段勾选；v1.5.0 编辑面板字段为 29 个元素（17 可编辑 + 12 只读），批量面板字段勾选仍为 28 字段 + 封面。
+
+### 4.4 数据一致性注意事项
+
+- 标签写入、重命名、文件删除和曲目索引更新应保持一致；优先复用统一刷新函数 refreshTrack。
+- 文件路径必须先规范化，并确认仍处于允许操作的音乐目录内。
+- 去重与删除操作使用回收站策略（配置目录 trash/，同卷 rename、跨卷复制后删源）。
+- 新增字段时需同步考虑 JSON 兼容、旧数据库兼容、前端展示和测试覆盖。
+
+## 5. 插件扩展机制
+
+插件注册表统一管理刮削源、工具、下载器与服务协议。内置插件按组展示：刮削源插件组（17 个数据源 + 自定义源）、工具插件组（FFmpeg 等）。第三方插件组支持导入解耦设计的 ZIP 插件。
+
+### 5.1 插件属性
+
+| 属性 | 用途 |
+| --- | --- |
+| Name | 唯一标识，例如 scrape.qq、tool.ffmpeg |
+| Label / Kind | 前端显示名称与插件类型（scrape/tool/download/protocol） |
+| Enabled / Builtin | 启用状态；内置 auto 插件不可停用 |
+| Installable | 是否支持一键安装 |
+| NeedsKey / KeyField / KeyConfigured | 外部 Key 依赖、对应配置键与是否已配置 |
+| Fields / Config | 前端动态表单定义与插件配置；Config 序列化时至少为空对象 {} |
+| Panel | 第三方插件 Web 面板声明（plugin.json 中 "panel": "xxx.html"），宿主自动挂载为插件 tab |
+
+### 5.2 第三方插件（解耦设计）
+
+- 导入：上传 ZIP → 校验 → 解压到配置目录 plugins/<name>/ → 注册。
+- 安全约束：压缩包 ≤256MiB、单文件 ≤256MiB、解压总量 ≤512MiB（防压缩炸弹）；拒绝符号链接/设备/命名管道条目（防符号链接逃逸）；解压目标必须位于插件目录内（防 zip-slip）；当前平台入口与 Web 面板声明文件必须存在。
+- 面板：plugin.json 声明 "panel" 后，前端自动在编辑/批量/去重旁生成插件 tab，通过同源 iframe 加载 `/api/plugins/{name}/panel`；面板可调用 `/api/plugins/{name}/run` 执行插件入口（op 分发），并通过 `/api/fs/scan-dir` 做通用目录扫描。
+- 卸载：删除配置与解压目录；前端列表页刷新后 tab 消失。
+- 宿主不侵入插件内部实现，插件逻辑全部在 ZIP 内，宿主只提供注册、运行、面板与通用文件接口。
+
+### 5.3 新增插件建议流程
+
+1. 实现所需的统一接口（plugin.json + 入口），明确输入、输出、超时和错误处理。
+2. 在初始化流程中注册插件，定义唯一 Name、Kind、配置字段与启停回调。
+3. 确保配置可持久化，旧配置缺字段时也能安全加载。
+4. 验证插件快照、前端表单、启停状态、Key 脱敏和异常场景。
+5. 若插件包含 Web 面板，必须评估同源 iframe 与 CSP 放宽带来的安全风险（见 9.3）。
+
+## 6. API 分类索引
+
+除公开例外外，业务 API 需要登录会话，并遵守 CSRF 请求头约定。错误响应统一为 `{"ok":false,"error":"..."}`。
+
+| 类别 | 方法与路径 | 用途 |
+| --- | --- | --- |
+| 会话 | POST /api/login | 登录并下发会话 Cookie（豁免 CSRF） |
+| 会话 | POST /api/logout；GET /api/me；POST /api/change-password | 登出、读取会话、修改密码 |
+| 扫描 | POST /api/scan；POST /api/scan/pause；GET /api/scan/status | 开始扫描、暂停/继续、查询进度 |
+| 扫描 | GET /api/tracks/refresh | 强制刷新曲目索引 |
+| 曲目 | GET /api/tracks；POST /api/tracks/delete | 查询曲目（含筛选）、批量删除（进回收站，记 act_del） |
+| 曲目 | GET /api/track/{id} | 单曲完整详情（含歌词正文，编辑面板按需拉取，列表不再下发） |
+| 曲目 | GET /api/tracks/{id}/cover；POST /api/tracks/{id}/cover | 读取（mtime 缓存 + Cache-Control）/ 写入封面 |
+| 曲目 | GET /api/tracks/{id}/lrcfile；GET /api/lyrics | 外挂 LRC 文件、歌词查询（多级兜底） |
+| 标签 | POST /api/tracks/{id}/tags | 写标签 |
+| 刮削 | GET /api/scrape/sources；GET /api/scrape/search | 读取源列表、搜索指定源（source=auto 并发合并） |
+| 刮削 | POST /api/tracks/{id}/scrape；POST /api/scrape/batch；POST /api/scrape/onekey | 单曲、批量、一键刮削 |
+| 任务 | GET /api/jobs；GET /api/jobs/{id}；POST /api/jobs/{id}/cancel | 进行中列表、查询进度（**瘦身：只回失败项 + summary 计数 + createdAt/duration**）、取消任务 |
+| 任务 | GET /api/scrape/jobs/{id} | 批量刮削进度（兼容旧路径） |
+| 工具 | POST /api/convert；POST /api/fix-encoding；POST /api/convert-script | 格式转换、乱码修复、简繁转换 |
+| 识别 | POST /api/identify；POST /api/rename-clean | 音频识别、修正文件后缀 |
+| 去重 | GET /api/duplicates；POST /api/duplicates/remove | 获取重复分组（`?log=1` 才记操作日志，防轮询刷屏）、移除选中文件（进回收站，记 act_dedup） |
+| 设置 | GET/POST /api/settings | 读取/保存应用设置（GET 返回 editFields 数组；POST 接受 EditFields 存 edit_fields 键） |
+| 插件 | GET/POST /api/plugins；POST /api/plugins/import；DELETE /api/plugins/{name} | 列表/更新、导入 ZIP、删除插件 |
+| 插件 | POST /api/plugins/{name}/run；GET /api/plugins/{name}/panel；GET /api/plugins/{name}/panel/{path...} | 执行插件入口、插件面板与面板静态资源 |
+| 插件 | POST /api/fs/scan-dir | 第三方插件面板通用目录扫描 |
+| FFmpeg | GET /api/ffmpeg/status；POST /api/ffmpeg/install；POST /api/ffmpeg/uninstall | 检测、安装、卸载 FFmpeg |
+| 日志 | GET /api/logs；POST /api/logs/delete；POST /api/logs/clear | 操作日志读取、删除条目、清空 |
+| 版本 | GET /api/version；GET /api/version/check | 读取缓存版本状态、强制实时检查 |
+
+## 7. 部署与配置
+
+### 7.1 Docker Compose 配置要点
+
+推荐使用 ghcr.io/lahuolou/lnh-musictag:latest，容器端口为 10248。需要挂载音乐目录和配置卷。
 
 ```yaml
 services:
@@ -505,92 +273,122 @@ services:
     ports:
       - "10248:10248"
     volumes:
-      - /mnt/sata3-1/mp3:/music        # 音乐目录（需读写）
-      - lnh_config:/config             # 配置卷（密码/Key/数据库）
+      - /your/music/path:/music
+      - lnh_config:/config
     environment:
-      - LNH_ADMIN_USER=admin           # 仅首次初始化
-      - LNH_ADMIN_PASS=                # 留空则随机初始密码打日志
+      - LNH_ADMIN_USER=admin
+      - LNH_ADMIN_PASS=
       - ACOUSTID_API_KEY=
-      - LNH_INSTALL_FFMPEG=false       # true 时启动自动装 ffmpeg
+      - LNH_INSTALL_FFMPEG=false
     restart: unless-stopped
+
 volumes:
   lnh_config:
 ```
 
-### 11.2 关键环境变量
+提示：以上为结构示例。部署时请将 /your/music/path 替换为真实路径，并按实际需要配置密钥；不要将密钥提交到公开仓库。
 
-| 变量 | 作用 |
-|------|------|
-| `LNH_ADMIN_USER` / `LNH_ADMIN_PASS` | 首次启动初始化种子（之后改库） |
-| `LNH_INSTALL_FFMPEG` | true/1/yes/on → entrypoint 启动前安装 ffmpeg |
-| `LNH_CONFIG_DIR` | 非容器运行时的配置目录（默认 `/config`） |
-| `ACOUSTID_API_KEY` 等 | 各 API Key 初始化种子 |
+### 7.2 主要环境变量
 
-### 11.3 构建
+| 变量 | 作用/注意事项 |
+| --- | --- |
+| LNH_ADMIN_USER / LNH_ADMIN_PASS | 首次初始化账号密码；后续账号信息保存在数据库中 |
+| LNH_INSTALL_FFMPEG | 设为 true/1/yes/on 时，启动前尝试安装 FFmpeg |
+| LNH_CONFIG_DIR | 配置目录（数据库/插件/回收站），非容器默认 /config |
+| LNH_PORT | HTTP 监听地址；容器内固定使用 10248 |
+| ACOUSTID_API_KEY 等 | 各数据源 API Key 的初始化配置 |
+
+### 7.3 构建命令
 
 ```bash
-cd web && npm ci && npm run build   # 前端产物 → web/dist
-cd .. && go build -ldflags "-s -w" -o lnh-musictag .
-# Docker（CI 已自动）：
-docker build -t lnh-musictag .
+cd web && npm ci && npm run build
+cd .. && go vet ./...
+go test ./...
+go build -ldflags "-s -w" -o lnh-musictag .
 ```
 
----
+Windows 本机调试：`Start-Process .\lnh-musictag.exe -ArgumentList "-port","10248" -WindowStyle Hidden`。
 
-## 12. 发布流程（CI/CD）
+## 8. 开发、测试与发布流程
 
-1. **改码**：项目根（唯一真源）修改代码；前端改完 `npm run build`。
-2. **验证**：`go vet ./...` + `go test ./...` + `go build`；本地起服务用浏览器冒烟（登录/关键页/console 无错）。
-3. **清理**：删除死代码/冗余代码，避免"屎山"；检查安全防护（CSRF/XSS/SQL 注入/路径穿越）。
-4. **同步**：robocopy 到发布副本（唯一 `.git`），`git add -A && git commit`（提交信息含 bump 说明）。
-5. **推送**：`git push origin main` → GitHub Actions 自动构建并推送 `ghcr.io/lahuolou/lnh-musictag:latest`。
-6. **版本**：先递增 `main.go` 的 `AppVersion` 与 `VERSION` 文件再提交（否则更新检查检测不到新版）。
-7. **Release**：`gh release create vX.Y.Z --notes-file ...`（tag 必须带 `v`）。
-8. **打包**：重新打源码 zip（含 web/dist 与 Dockerfile/compose/entrypoint），校验 dist 完整后交付。
+### 8.1 日常开发建议流程
 
-> 用户确认前不发布。修改完先交用户核验，确认后再推送/发 Release/重打 zip。
+1. 先定位功能所属模块，优先复用公共函数和任务框架。
+2. 修改后运行 gofmt，并检查前后端构建结果。
+3. 新增或变更 API 时同步更新前端封装、开发文档和测试。
+4. 执行 go vet ./...、go test ./... 与 go build。
+5. 在隔离的测试配置目录启动服务，冒烟验证登录、曲目列表、编辑、批量任务和插件页。
+6. 检查浏览器控制台、服务日志、失败统计和文件/数据库一致性。
 
----
+### 8.2 发布流程
 
-## 13. 更新检查机制
+1. 完成代码与前端构建，并通过静态检查、单元测试和构建。
+2. 执行本地 UI 冒烟测试，确认关键页面和浏览器控制台正常。
+3. 复核 CSRF、XSS、SQL 参数化查询、路径穿越与第三方插件风险。
+4. 同步发布副本并提交代码，推送 main 分支触发 Docker 镜像构建。
+5. 只修改根目录 VERSION 作为版本唯一来源，并确保版本号与 Git tag 一致（CI version-check 强制校验）。
+6. 创建带 v 前缀的 Release tag，检查 CI 校验结果。
+7. 打包源码时确认包含 web/dist、Dockerfile、Compose 与 entrypoint 文件。
+8. 按流程：用户确认前不发布；先交付核验，再执行正式发布。
 
-- **数据源**（任一成功即用）：① GitHub Releases API（最实时）；② jsDelivr CDN 读 `VERSION` 文件；③ raw.githubusercontent 读 `VERSION` 文件。
-- **三态**：`ok` / `fail`（全部源失败）/ `unknown`（未查）。查询失败不再误报"已是最新"。
-- **前端**：登录后自动检查一次，有新版弹 `UpdateModal`；手动「更新」强制实时重查。
-- **版本比较**：语义化数值逐段比较（`parseVersion`），正确处理 `1.4.50 → 1.5.0`、`1.10.0 > 1.9.0`。
+### 8.3 发布前检查表
 
----
+- 前端已重新构建，web/dist 内容完整。
+- go vet ./...、go test ./...、go build 均通过。
+- VERSION 与 Release tag 完全一致。
+- 登录、扫描、编辑、批量刮削、取消任务、插件配置和更新检查通过冒烟测试。
+- 密钥无明文泄漏；默认/测试账号未进入生产配置。
+- Docker 镜像、数据卷、FFmpeg 选项与部署说明已核对。
+- 发布说明、变更记录和回滚方式已准备。
 
-## 14. 常见问题排查
+## 9. 安全与运维注意事项
 
-| 现象 | 排查方向 |
-|------|----------|
-| 更新后界面还是旧的 | 浏览器/代理缓存旧 index.html：强刷一次；index.html 已 `Cache-Control: no-cache` |
-| 检查更新永远"已是最新" | `VERSION` 文件 / Release tag / `AppVersion` 三者未同步递增 |
-| 插件页空白 | 旧版本 bug（config omitempty 导致前端 undefined）；升级镜像即可 |
-| 刮削/转换任务换设备后看不到进度 | 前端登录后 `resumeJobs()` 按 jobId 恢复轮询；确认后端 `/api/jobs` 有任务 |
-| 扫描慢 | 异步增量扫描默认开启；首次全量计算哈希属正常耗时 |
-| 乱码筛选不出/误筛 | 乱码判定基于标签编码检测（GBK/UTF-8 错乱）；正常中文不应被标记；短串保守不判（防误判繁体） |
-| 源搜索失败（status 500 / TLS） | 源接口上游变动或网络受限；auto 自动跳过失败源 |
-| 需 Key 源搜不到 | 插件页显示 🔑 未配置 → 去「设置 → 数据库配置」填 Key |
-| 容器内无 ffmpeg 无法转换 | compose 设 `LNH_INSTALL_FFMPEG=true` 或插件页「一键安装」或填宿主路径 |
-| mp3 转换失败（Unknown encoder libmp3lame） | 精简版 ffmpeg 缺 mp3 编码器；换完整版 ffmpeg 或用 flac/wav 等格式 |
-| 一键刮削误删文件 | 自动去重默认不勾选；勾选后按"艺术家+标题/同名多格式/SHA256"分组，保留音质最好的一首 |
+### 9.1 安全措施
 
----
+| 风险面 | 措施 |
+| --- | --- |
+| 账号与会话 | bcrypt 密码哈希；随机 session_secret；HttpOnly、SameSite Cookie；登录失败限流 |
+| CSRF | 校验 X-Requested-With，自定义请求头并结合 SameSite；/api/login 豁免 |
+| XSS | Vue 默认转义；标签文本写入前净化；CSP script-src 'self'（宿主页） |
+| SQL 注入 | database/sql 参数化查询 |
+| 路径穿越 | filepath.Clean 并校验路径位于音乐目录/插件目录内；插件 ZIP 解压防 zip-slip |
+| 请求滥用 | 请求体限制（业务 8MiB，插件导入豁免）；外部 API 有超时与限速 |
+| 插件面板 | 仅插件面板路由放宽 script-src 'unsafe-inline'；iframe sandbox 去掉 allow-forms |
+| 删除安全 | 列表删除与去重删除均移入回收站 trash/，不直接永久删除 |
+| 公网部署 | 建议置于反向代理后并启用 HTTPS |
 
-## 15. 测试
+### 9.2 中间件例外汇总
 
-- `go test ./...`：核心逻辑单测（版本比较、去重、刮削源、乱码修复、指纹、文件名解析等）。
-- 本地 UI 冒烟：`%TEMP%\lnh_ui\lnh.exe` 起服务（配置目录指向测试库），浏览器验证登录、列表、编辑、批量、插件页渲染与 console 错误。
-- 接口验证：curl 登录拿 Cookie 后逐接口检查（含 CSRF 头）。
+- `/api/login`：豁免 CSRF。
+- `/api/plugins/import`：豁免 8MiB 请求体上限（插件包可达 256MiB）。
+- `/api/plugins/{name}/panel` 与 `/api/plugins/{name}/panel/{path...}`：CSP 允许内联脚本（兼容第三方插件面板）。
 
----
+### 9.3 第三方插件安全边界
 
-## 16. 安全说明
+- 插件面板是同源 iframe；当前以"仅面板路由放宽 CSP"作为兼容手段，不建议全站放宽。
+- 长期加固方向：面板外链脚本化（禁止内联 <script>/onclick）、nonce/hash 替代 unsafe-inline、独立源 + sandbox + postMessage 鉴权转发。
+- ZIP 导入已做三重上限与符号链接/路径穿越防护；安装前核对插件来源。
 
-- 密码 bcrypt 哈希；会话 Cookie HttpOnly+SameSite。
-- 所有 SQL 参数化；文件路径严格校验；标签文本 XSS 净化。
-- CSP：`default-src 'self'`；`script-src 'self' 'unsafe-inline'`（第三方插件 panel 内联脚本所需）；`frame-ancestors 'self'`（仅放行同源 iframe 嵌入）。
-- 更新检查、刮削、识别等出站请求均带超时与 UA，避免滥用第三方接口。
-- 建议部署时：容器内仅挂载音乐目录与配置卷；公网访问时置于反向代理后并启用 HTTPS。
+### 9.4 故障排查速查
+
+| 现象 | 优先检查 |
+| --- | --- |
+| 更新后页面仍旧 | 浏览器/代理缓存；强制刷新；确认 index.html no-cache |
+| 更新检查总是显示最新 | VERSION 文件与 Release tag 是否同步 |
+| 任务重启后中断 | 查询 jobId 历史状态（interrupted）；当前不支持自动断点续跑 |
+| 扫描较慢 | 首次全量 SHA256 计算可能耗时 |
+| 刮削源报 500/TLS | 上游接口变化、网络限制或源服务故障 |
+| 需 Key 的源无结果 | 插件页 Key 状态及设置页配置 |
+| 无法转换音频 | FFmpeg 是否安装、路径是否正确、编码器是否可用 |
+| MP3 转换提示 Unknown encoder | 检查 FFmpeg 是否包含 libmp3lame 编码器 |
+| 去重后文件不见 | 检查配置目录下 trash/ 回收站 |
+| 接口报错格式异常 | 确认错误响应为 {"ok":false,"error":...} 统一结构 |
+
+## 10. 版本记录
+
+- v1.5.0：多源并发刮削（SearchWithFallback 并发合并 + pickBest 跨源最佳）；编辑面板 29 元素 + 设置页字段配置（默认 12 常用）；去重删除跨卷修复（EXDEV + 句柄释放 + 重试，一键去重可用）；歌词多级兜底（网易 3s 短超时 / QQ 优先 / 脱离搜索命中限制 / 刮削结果统一转简体）；任务接口瘦身（/api/jobs/{id} 只回失败项，/api/track/{id} 单曲详情）；封面 mtime 缓存 + Cache-Control；筛选拆分（有/无歌词、有/无海报）；批量海报写入修复；清除调试残留。
+- v1.4.10：29 字段模型（28 可勾选 + 勾选列）、一键刮削 4 阶段、封面优化、手机适配、第三方插件解耦框架、操作日志增强。
+- v1.4.10（P0 系列，已随 v1.5.0 发布）：命名统一 lnh-musictag；CSP 精确放宽（仅面板路由）；插件 ZIP 安全加固；删除进回收站；任务状态持久化与恢复写回库；版本单一源 + CI 校验；代码精简轮。
+- 开发文档优化项（已落地）：API 错误响应统一 {ok:false,error}；jobs 保留策略（30 天清理）；任务 createdAt/duration 可观测；任务恢复/耗时/保留策略单元测试。
+
+—— 文档结束 ——

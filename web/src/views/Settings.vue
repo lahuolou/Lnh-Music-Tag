@@ -3,13 +3,14 @@ import { onMounted, ref } from 'vue'
 import { toast } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
+import { FIELDS, DEFAULT_EDIT_FIELDS } from '../fields.js'
 
 const oldPass = ref('')
 const newPass = ref('')
 const confirm = ref('')
 const msg = ref('')
 
-const cfg = ref({ adminUser: '', autoFixTitle: true, autoRenameFile: true, scanDir: '' })
+const cfg = ref({ adminUser: '', autoFixTitle: true, autoRenameFile: true, scanDir: '', editFields: [] })
 const cfgMsg = ref('')
 
 async function doChange() {
@@ -25,7 +26,10 @@ async function doChange() {
 }
 
 async function loadCfg() {
-  try { cfg.value = await api('/api/settings'); }
+  try {
+    cfg.value = await api('/api/settings');
+    if (!Array.isArray(cfg.value.editFields) || !cfg.value.editFields.length) cfg.value.editFields = [...DEFAULT_EDIT_FIELDS];
+  }
   catch (e) { toast(t('cfgLoadFail', { m: e.message }), 'err'); }
 }
 
@@ -38,13 +42,16 @@ async function saveCfg() {
         adminUser: cfg.value.adminUser,
         autoFixTitle: cfg.value.autoFixTitle,
         autoRenameFile: cfg.value.autoRenameFile,
-        scanDir: cfg.value.scanDir
+        scanDir: cfg.value.scanDir,
+        editFields: cfg.value.editFields
       })
     });
     toast(t('cfgSaved'), 'ok');
     cfgMsg.value = t('cfgSavedDb');
   } catch (e) { cfgMsg.value = t('cfgSaveFail', { m: e.message }); }
 }
+
+function resetEditFields() { cfg.value.editFields = [...DEFAULT_EDIT_FIELDS]; }
 
 onMounted(loadCfg);
 </script>
@@ -82,6 +89,17 @@ onMounted(loadCfg);
         <div class="chk" style="margin:0 0 14px">
           <input type="checkbox" id="autoRename" class="tchk" v-model="cfg.autoRenameFile" />
           <label for="autoRename">{{ t('optAutoRename') }}</label>
+        </div>
+        <div style="margin:0 0 8px"><strong>{{ t('editFields') }}</strong></div>
+        <p class="muted" style="margin:0 0 8px">{{ t('editFieldsHint') }}</p>
+        <div class="field-grid" style="max-height:220px;overflow:auto">
+          <label v-for="f in FIELDS" :key="f.id" class="chk">
+            <input type="checkbox" class="tchk" :value="f.id" v-model="cfg.editFields" />
+            {{ t(f.label) }}
+          </label>
+        </div>
+        <div class="row" style="margin:8px 0 14px">
+          <button class="ghost sm" @click="resetEditFields">{{ t('editFieldsReset') }}</button>
         </div>
         <div class="row">
           <button @click="saveCfg">{{ t('saveCfg') }}</button>

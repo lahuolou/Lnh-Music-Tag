@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -8,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"LNH-musictag/internal/model"
-	"LNH-musictag/internal/scrape"
-	cstore "LNH-musictag/internal/store"
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/model"
+	"lnh-musictag/internal/scrape"
+	cstore "lnh-musictag/internal/store"
+	"lnh-musictag/internal/taglibx"
 )
 
 // Batch scraping runs in a background job so the UI can show progress.
@@ -300,10 +301,15 @@ type scrapeJob struct {
 	Current string         `json:"current"`
 	Status  string         `json:"status"` // "running" | "done" | "cancelled"
 	Results []scrapeResult `json:"results"`
+	Summary jobSummary     `json:"summary"`
+	// CreatedAt 任务创建时间（落库与耗时统计用，restore 时从库回填）。
+	CreatedAt time.Time `json:"createdAt"`
 	// Stage 标识当前流水线阶段（仅 onekey 任务使用，如 fixEnc/script/artist/scrape）；
 	// StageLabel 是该阶段面向用户的中文/英文文案（由后端按请求语言给出）。
 	Stage      string `json:"stage,omitempty"`
 	StageLabel string `json:"stageLabel,omitempty"`
+	// Duration 任务已耗时（秒，进度轮询时按 CreatedAt 计算；历史任务无创建时间时为 0）。
+	Duration int `json:"duration,omitempty"`
 	// Updated carries tracks whose tags/cover changed since the last poll.
 	// Each progress poll consumes (clears) it so the UI can patch the list
 	// incrementally instead of reloading the whole list.
@@ -322,25 +328,203 @@ type scrapeResult struct {
 	Message  string `json:"message"`
 }
 
+// jobSummary 聚合计数：前端统计不再依赖遍历全量 results（大任务节省传输）。
+type jobSummary struct {
+	OK   int `json:"ok"`
+	Fail int `json:"fail"`
+	Skip int `json:"skip"`
+}
+
+// summarize 统计结果计数。
+func summarize(results []scrapeResult) jobSummary {
+	var s jobSummary
+	for _, r := range results {
+		switch {
+		case r.OK:
+			s.OK++
+		case r.Skip:
+			s.Skip++
+		default:
+			s.Fail++
+		}
+	}
+	return s
+}
+
+// failResults 仅返回真失败项（skip 属预期行为，只进 summary 计数）。
+func failResults(results []scrapeResult) []scrapeResult {
+	out := make([]scrapeResult, 0, len(results))
+	for _, r := range results {
+		if !r.OK && !r.Skip {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 type jobStore struct {
 	mu   sync.Mutex
 	jobs map[string]*scrapeJob
+	db   *sql.DB // 持久化（nil 时跳过，测试用）
 }
 
-func newJobStore() *jobStore { return &jobStore{jobs: map[string]*scrapeJob{}} }
+// newJobStore 创建任务表并恢复历史任务（重启前 running 的任务标记为
+// interrupted，完成/取消的历史任务保留结果）。db 为 nil 时仅内存（测试）。
+func newJobStore(db *sql.DB) *jobStore {
+	js := &jobStore{jobs: map[string]*scrapeJob{}, db: db}
+	js.initDB()
+	js.restore()
+	go js.autoPersist()
+	return js
+}
+
+func (js *jobStore) initDB() {
+	if js.db == nil {
+		return
+	}
+	js.db.Exec(`CREATE TABLE IF NOT EXISTS jobs (
+		id TEXT PRIMARY KEY, kind TEXT NOT NULL, total INTEGER NOT NULL,
+		done INTEGER NOT NULL, current TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+		stage TEXT NOT NULL DEFAULT '', stage_label TEXT NOT NULL DEFAULT '',
+		results TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+	)`)
+}
+
+// persistedJob 是落库的任务快照（不含运行时字段 Updated/Cancel/mu）。
+type persistedJob struct {
+	ID         string         `json:"id"`
+	Kind       string         `json:"kind"`
+	Total      int            `json:"total"`
+	Done       int            `json:"done"`
+	Current    string         `json:"current"`
+	Status     string         `json:"status"`
+	Stage      string         `json:"stage"`
+	StageLabel string         `json:"stageLabel"`
+	Results    []scrapeResult `json:"results"`
+	CreatedAt  string         `json:"createdAt"`
+	UpdatedAt  string         `json:"updatedAt"`
+}
+
+func (j *scrapeJob) snapshot() persistedJob {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	now := time.Now()
+	created := j.CreatedAt
+	if created.IsZero() {
+		created = now
+	}
+	return persistedJob{
+		ID: j.ID, Kind: j.Kind, Total: j.Total, Done: j.Done,
+		Current: j.Current, Status: j.Status, Stage: j.Stage, StageLabel: j.StageLabel,
+		Results: append([]scrapeResult(nil), j.Results...),
+		CreatedAt: created.Format(time.RFC3339),
+		UpdatedAt: now.Format(time.RFC3339),
+	}
+}
+
+// persist 全量写库（create/cancel/完成/定时快照共用）；created_at 首插保留，
+// updated_at 每次刷新。
+func (js *jobStore) persist(j *scrapeJob) {
+	if js.db == nil {
+		return
+	}
+	p := j.snapshot()
+	rb, err := json.Marshal(p.Results)
+	if err != nil {
+		return
+	}
+	js.db.Exec(`INSERT INTO jobs(id,kind,total,done,current,status,stage,stage_label,results,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET done=excluded.done,current=excluded.current,status=excluded.status,
+		stage=excluded.stage,stage_label=excluded.stage_label,results=excluded.results,updated_at=excluded.updated_at`,
+		p.ID, p.Kind, p.Total, p.Done, p.Current, p.Status, p.Stage, p.StageLabel, string(rb), p.CreatedAt, p.UpdatedAt)
+}
+
+// autoPersist 每 5 秒把进行中任务全量落库一次：进程意外退出时进度最多丢失
+// 5 秒；重启后按库内快照恢复（running → interrupted）。
+func (js *jobStore) autoPersist() {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		if js.db == nil {
+			return
+		}
+		for _, j := range js.active() {
+			js.persist(j)
+		}
+	}
+}
+
+// restore 启动时从库恢复任务：running → interrupted（本进程任务线程已随重启
+// 结束），done/cancelled 历史保留供前端按 jobId 查询；恢复后写回库，保证库内
+// 不再残留 running 状态。最后执行保留策略：清理 30 天前的终态任务。
+func (js *jobStore) restore() {
+	if js.db == nil {
+		return
+	}
+	rows, err := js.db.Query(`SELECT id,kind,total,done,current,status,stage,stage_label,results,created_at FROM jobs`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, kind, current, status, stage, stageLabel, results, created string
+		var total, done int
+		if err := rows.Scan(&id, &kind, &total, &done, &current, &status, &stage, &stageLabel, &results, &created); err != nil {
+			continue
+		}
+		var rs []scrapeResult
+		_ = json.Unmarshal([]byte(results), &rs)
+		if status == "running" {
+			status = "interrupted"
+			js.db.Exec(`UPDATE jobs SET status='interrupted' WHERE id=?`, id)
+		}
+		j := &scrapeJob{ID: id, Kind: kind, Total: total, Done: done, Current: current, Status: status, Stage: stage, StageLabel: stageLabel, Results: rs}
+		if t, err := time.Parse(time.RFC3339, created); err == nil {
+			j.CreatedAt = t
+		}
+		js.mu.Lock()
+		js.jobs[id] = j
+		js.mu.Unlock()
+	}
+	js.db.Exec(`DELETE FROM jobs WHERE status != 'running' AND updated_at < ?`,
+		time.Now().AddDate(0, 0, -30).Format(time.RFC3339))
+}
 
 func (js *jobStore) create(total int, kind string) *scrapeJob {
-	j := &scrapeJob{ID: randomToken(), Kind: kind, Total: total, Status: "running"}
+	j := &scrapeJob{ID: randomToken(), Kind: kind, Total: total, Status: "running", CreatedAt: time.Now()}
 	js.mu.Lock()
 	js.jobs[j.ID] = j
 	js.mu.Unlock()
+	js.persist(j)
 	return j
 }
 
 func (js *jobStore) get(id string) *scrapeJob {
 	js.mu.Lock()
 	defer js.mu.Unlock()
-	return js.jobs[id]
+	if j, ok := js.jobs[id]; ok {
+		return j
+	}
+	// 内存无此任务（进程重启后）：从库恢复历史任务
+	if js.db == nil {
+		return nil
+	}
+	var jid, kind, current, status, stage, stageLabel, results, created string
+	var total, done int
+	if err := js.db.QueryRow(
+		`SELECT id,kind,total,done,current,status,stage,stage_label,results,created_at FROM jobs WHERE id=?`,
+		id).Scan(&jid, &kind, &total, &done, &current, &status, &stage, &stageLabel, &results, &created); err != nil {
+		return nil
+	}
+	var rs []scrapeResult
+	_ = json.Unmarshal([]byte(results), &rs)
+	j := &scrapeJob{ID: jid, Kind: kind, Total: total, Done: done, Current: current, Status: status, Stage: stage, StageLabel: stageLabel, Results: rs}
+	if t, err := time.Parse(time.RFC3339, created); err == nil {
+		j.CreatedAt = t
+	}
+	js.jobs[jid] = j
+	return j
 }
 
 // cancel 请求取消任务：置位 Cancel，任务循环在下一步前检查并立即停止。
@@ -351,11 +535,13 @@ func (js *jobStore) cancel(id string) bool {
 		return false
 	}
 	j.mu.Lock()
-	defer j.mu.Unlock()
 	if j.Status != "running" {
+		j.mu.Unlock()
 		return false
 	}
 	j.Cancel = true
+	j.mu.Unlock()
+	js.persist(j)
 	return true
 }
 
@@ -371,7 +557,7 @@ func cancelJobHandler(js *jobStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if !js.cancel(id) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "任务不存在或已结束"})
+			writeErr(w, http.StatusNotFound, "任务不存在或已结束")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "已请求取消"})
@@ -392,7 +578,9 @@ func (js *jobStore) active() []*scrapeJob {
 		j.mu.Lock()
 		out = append(out, &scrapeJob{
 			ID: j.ID, Kind: j.Kind, Total: j.Total, Done: j.Done,
-			Current: j.Current, Status: j.Status, Results: append([]scrapeResult(nil), j.Results...),
+			Current: j.Current, Status: j.Status,
+			Results: failResults(j.Results),
+			Summary: summarize(j.Results),
 		})
 		j.mu.Unlock()
 	}
@@ -424,6 +612,7 @@ func (js *jobStore) runProgressJob(kind string, total int, step func(j *scrapeJo
 		job.Current = ""
 		job.mu.Unlock()
 		logJobDone(job) // 任务完成后统一写入操作日志
+		js.persist(job)
 	}()
 	return job
 }
@@ -441,11 +630,11 @@ func batchScrapeHandler(js *jobStore, store *store, ms *scrape.MultiSource, cfg 
 			SkipFilled  bool     `json:"skipFilled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if len(req.IDs) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请至少勾选一首曲目"})
+			writeErr(w, http.StatusBadRequest, "请至少勾选一首曲目")
 			return
 		}
 		if req.Source == "" {
@@ -453,7 +642,10 @@ func batchScrapeHandler(js *jobStore, store *store, ms *scrape.MultiSource, cfg 
 		}
 		fields := fieldsFromList(req.Fields, req.FetchCover, req.FetchLyrics)
 		job := js.create(len(req.IDs), "scrape")
-		go runBatch(job, store, ms, cfg, req.Source, req.IDs, fields, req.SkipFilled)
+		go func() {
+			runBatch(job, store, ms, cfg, req.Source, req.IDs, fields, req.SkipFilled)
+			js.persist(job) // 完成/中断后落库，重启可查历史
+		}()
 		writeJSON(w, http.StatusOK, map[string]any{"jobId": job.ID, "total": job.Total})
 	}
 }
@@ -472,7 +664,7 @@ func jobProgressHandler(js *jobStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		j := js.get(r.PathValue("id"))
 		if j == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "job not found"})
+			writeErr(w, http.StatusNotFound, "job not found")
 			return
 		}
 		j.mu.Lock()
@@ -484,8 +676,18 @@ func jobProgressHandler(js *jobStore) http.HandlerFunc {
 			Status:     j.Status,
 			Stage:      j.Stage,
 			StageLabel: j.StageLabel,
-			Results:    append([]scrapeResult(nil), j.Results...),
-			Updated:    j.Updated,
+			// 大任务瘦身：只回问题项（失败/跳过），成功项仅进 summary 计数。
+			Results: failResults(j.Results),
+			Summary: summarize(j.Results),
+			// 增量曲目同样剥离歌词正文（列表合并只需展示字段）。
+			Updated:   stripListLyrics(j.Updated),
+			CreatedAt: j.CreatedAt,
+		}
+		if !out.CreatedAt.IsZero() {
+			out.Duration = int(time.Since(out.CreatedAt).Seconds())
+			if out.Duration < 1 {
+				out.Duration = 1
+			}
 		}
 		j.Updated = nil
 		j.mu.Unlock()
@@ -575,13 +777,15 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 
 	tags := map[string][]string{}
 	var sr scrape.SearchResult
+	searched := false // 搜索执行且命中结果（区分“源无结果”与“标签已完整”）
 	query := ""
 	var title string       // 函数级：封面纯标题兜底用（effectiveSearchTerms 的标题）
+	var artist string      // 函数级：歌词兜底用（搜索 0 命中时仍按标题+艺术家直查歌词）
 	var coverErrMsg string // 封面失败原因（写入结果消息便于排查）
 	if hasSearch {
 		// 搜索关键词：优先真实标签；标签为空/“Unknown”/乱码时回退文件名解析
 		// （如 `Unknown - 蓝色蝴蝶.mp3` → 用“蓝色蝴蝶”去刮削）。
-		title, artist := effectiveSearchTerms(t)
+		title, artist = effectiveSearchTerms(t)
 		query = title
 		if artist != "" && !looksUnknown(artist) && !looksGarbled(artist) {
 			query += " " + artist
@@ -598,20 +802,24 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 					return "搜索失败: " + err.Error(), false
 				}
 			} else if len(results) > 0 {
+				searched = true
 				sr = pickBest(results, title)
 				ms.Enrich(&sr) // 补全专辑艺术家/流派/年代/曲目号/语言/专辑类型/总数
 
 				// 部分源会把 GBK 编码字节按 Latin-1 塞进 JSON，得到
 				// "习惯了寂寞" → "Ï°¹ßÁË¼ÅÄ¯" 这类乱码。写入标签前统一修复，
 				// 防止把乱码写进文件（fixMojibake 有得分保护，正常文本不受影响）。
+				// 修复后统一转简体（与音频识别/乱码修复口径一致，整理结果应为简体）：
+				// 否则刮削源（如 QQ/网易）返回的繁体标题会在 script 阶段之后覆盖
+				// 已转简体的标签，导致繁体筛选始终有残留。
 				fixSrc := func(s string) string {
 					if s == "" {
 						return s
 					}
 					if f := fixMojibake(s); f != s {
-						return f
+						s = f
 					}
-					return s
+					return simpConverter(s)
 				}
 				sr.Title = fixSrc(sr.Title)
 				sr.Album = fixSrc(sr.Album)
@@ -687,12 +895,22 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 				if fields.DiscTotal && sr.TotalDiscs > 0 {
 					tags[taglibx.DiscTotal] = []string{strconv.Itoa(sr.TotalDiscs)}
 				}
-				if fields.Lyrics {
-					if lyric, err := ms.FetchLyrics(sr); err == nil && strings.TrimSpace(lyric) != "" {
-						tags[taglibx.Lyrics] = []string{lyric}
-					}
-				}
 			}
+		}
+	}
+	// 歌词兜底：即使源搜索 0 命中（国内源偶发风控/限流），也用标签/文件名
+	// 解析出的标题+艺术家直接查歌词——FetchLyrics 内部自带 netease→qq→lrclib
+	// 多级兜底，不依赖刮削搜索是否命中（手动 /api/lyrics 同路径已验证可命中）。
+	if fields.Lyrics {
+		lyricSr := sr
+		if lyricSr.Title == "" {
+			lyricSr = scrape.SearchResult{Title: title}
+			if artist != "" && !looksUnknown(artist) && !looksGarbled(artist) {
+				lyricSr.Artists = []string{artist}
+			}
+		}
+		if lyric, err := ms.FetchLyrics(lyricSr); err == nil && strings.TrimSpace(lyric) != "" {
+			tags[taglibx.Lyrics] = []string{simpConverter(lyric)}
 		}
 	}
 	// 音频属性写标签（本地探测值，无源依赖）
@@ -771,7 +989,13 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 			}
 		}
 		if len(img) > 0 {
-			if err := taglibx.WriteCover(t.Path, img); err == nil {
+			// 重命名可能已发生（t.Path 仍旧路径），封面必须写新路径，
+			// 否则文件已被改名导致 "can't save file"。
+			coverPath := t.Path
+			if newPath != "" {
+				coverPath = newPath
+			}
+			if err := taglibx.WriteCover(coverPath, img); err == nil {
 				t.HasCover = true // 同步内存状态，列表“海报”筛选/统计立即生效
 				coverWritten = true
 			} else {
@@ -801,6 +1025,14 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 		wrote = append(wrote, "文件名")
 	}
 	if len(wrote) == 0 {
+		// 区分三种情况：封面失败（优先展示，便于排查）/ 标签已完整（智能跳过）/
+		// 源无结果（真“无可用数据”）。
+		if coverErrMsg != "" {
+			return coverErrMsg, true
+		}
+		if searched {
+			return "标签已完整，智能跳过", true
+		}
 		return "无可用数据，跳过", true
 	}
 	// 写过标签/封面且未重命名时，重新探测文件并把最新状态（含 hasCover）

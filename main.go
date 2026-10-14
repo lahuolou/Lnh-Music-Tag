@@ -22,17 +22,21 @@ import (
 	"sync"
 	"time"
 
-	"LNH-musictag/internal/dedup"
-	"LNH-musictag/internal/model"
-	"LNH-musictag/internal/scrape"
-	cstore "LNH-musictag/internal/store"
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/dedup"
+	"lnh-musictag/internal/model"
+	"lnh-musictag/internal/scrape"
+	cstore "lnh-musictag/internal/store"
+	"lnh-musictag/internal/taglibx"
 )
 
-// AppVersion 当前版本号（与 GitHub Release tag 比较，用于“新版本提示”）。
-// 每次发布新版本时同步 bump（发布流程约束：推送前 bump 版本并打对应 Release tag，
-// 否则项目内“检查更新”会因 current==latest 而检测不到新版本）。
-const AppVersion = "1.4.10"
+// AppVersion 返回当前版本号（单一版本源 = 仓库根 VERSION 文件；与 GitHub
+// Release tag 比较，用于“新版本提示”）。发布新版本只改 VERSION 一处，
+// 避免代码常量与文件两处手工同步导致“检查更新”检测不到新版。
+//
+//go:embed VERSION
+var versionFile string
+
+func AppVersion() string { return strings.TrimSpace(versionFile) }
 
 //go:embed web/dist
 var webFS embed.FS
@@ -46,10 +50,18 @@ type store struct {
 	order  map[string]int64  // id -> 扫描（插入）序号，保证 /api/tracks 按扫描顺序稳定返回
 	seq    int64
 	db     *sql.DB // 曲目持久化（可能为 nil：配置库不可用时退化为纯内存）
+
+	coverMu    sync.RWMutex
+	coverCache map[string]coverEntry // id -> 封面字节缓存（mtime 变化自动失效）
+}
+
+type coverEntry struct {
+	mod time.Time
+	img []byte
 }
 
 func newStore(db *sql.DB) *store {
-	return &store{tracks: map[string]*model.Track{}, byPath: map[string]string{}, order: map[string]int64{}, db: db}
+	return &store{tracks: map[string]*model.Track{}, byPath: map[string]string{}, order: map[string]int64{}, db: db, coverCache: map[string]coverEntry{}}
 }
 
 func (s *store) add(t *model.Track) {
@@ -296,7 +308,7 @@ func main() {
 		log.Fatalf("init admin: %v", err)
 	}
 	sessions := newSessionStore(cfg)
-	jobs := newJobStore()
+	jobs := newJobStore(cfg.DB())
 	scans := newScanManager()
 	updates := newUpdateChecker("lahuolou/lnh-musictag")
 	updates.Start()
@@ -337,7 +349,7 @@ func main() {
 		defer installMu.Unlock()
 		out, err := installFFmpeg()
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "安装失败: " + err.Error(), "output": out})
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "安装失败: " + err.Error(), "output": out})
 			return
 		}
 		bin := ffmpegBin(cfg)
@@ -373,7 +385,7 @@ func main() {
 			Dir string `json:"dir"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		dir := strings.TrimSpace(req.Dir)
@@ -382,13 +394,13 @@ func main() {
 		}
 		dir = filepath.Clean(dir) // 折叠 ../，防止路径遍历混淆；仍须为真实存在的目录
 		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "目录不可访问: " + dir})
+			writeErr(w, http.StatusBadRequest, "目录不可访问: " + dir)
 			return
 		}
 		autoFix := cfg.GetDefault("auto_fix_title", "1") == "1"
 		autoRename := cfg.GetDefault("auto_rename_file", "1") == "1"
 		if err := scans.start(store, dir, autoFix, autoRename); err != nil {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": "扫描已开始", "dir": dir})
@@ -402,7 +414,7 @@ func main() {
 			Paused bool `json:"paused"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		scans.pause(req.Paused)
@@ -417,24 +429,29 @@ func main() {
 			"autoRenameFile": cfg.GetDefault("auto_rename_file", "1") == "1",
 			"scanDir":        cfg.GetDefault("scan_dir", "/music"),
 			"ffmpegPath":     cfg.GetDefault("ffmpeg_path", ""),
+			"editFields":     editFieldsList(cfg),
 		})
 	})
 	pm.HandleFunc("POST /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			AdminUser      *string `json:"adminUser"`
-			AutoFixTitle   *bool   `json:"autoFixTitle"`
-			AutoRenameFile *bool   `json:"autoRenameFile"`
-			ScanDir        *string `json:"scanDir"`
-			FFmpegPath     *string `json:"ffmpegPath"`
+			AdminUser      *string   `json:"adminUser"`
+			AutoFixTitle   *bool     `json:"autoFixTitle"`
+			AutoRenameFile *bool     `json:"autoRenameFile"`
+			ScanDir        *string   `json:"scanDir"`
+			FFmpegPath     *string   `json:"ffmpegPath"`
+			EditFields     *[]string `json:"editFields"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if req.AdminUser != nil {
 			if u := strings.TrimSpace(*req.AdminUser); u != "" {
 				cfg.Set("admin_user", u)
 			}
+		}
+		if req.EditFields != nil {
+			cfg.Set("edit_fields", strings.Join(*req.EditFields, ","))
 		}
 		if req.AutoFixTitle != nil {
 			v := "0"
@@ -463,9 +480,10 @@ func main() {
 
 	// List tracks. 每次返回时动态重算 garbled/needsIdentify 标记（覆盖扫描
 	// 时快照），升级后无需重新扫描，"乱码/待识别"筛选立即按最新算法生效。
+	// 列表瘦身：歌词正文不下发（见 stripLyrics），编辑时经单曲接口取全量标签。
 	pm.HandleFunc("GET /api/tracks", func(w http.ResponseWriter, r *http.Request) {
 		recalcFlags(store)
-		writeJSON(w, http.StatusOK, store.all())
+		writeJSON(w, http.StatusOK, stripListLyrics(store.all()))
 	})
 
 	// Refresh the list: drop records whose files no longer exist on disk
@@ -480,7 +498,17 @@ func main() {
 			}
 		}
 		recalcFlags(store)
-		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "tracks": store.all()})
+		writeJSON(w, http.StatusOK, map[string]any{"removed": removed, "tracks": stripListLyrics(store.all())})
+	})
+
+	// 单曲详情：完整标签（含 LYRICS 歌词正文），编辑面板选中行时按需取。
+	pm.HandleFunc("GET /api/track/{id}", func(w http.ResponseWriter, r *http.Request) {
+		t := store.get(r.PathValue("id"))
+		if t == nil {
+			writeErr(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, t)
 	})
 
 	// Duplicates (hash-based, plus fingerprint if available)
@@ -496,31 +524,54 @@ func main() {
 		for _, g := range groups {
 			total += g.Count
 		}
-		// 重复检测日志：组数 + 涉及曲目数（detail 便于人工核对）
-		addLog("act_dedupscan", true, len(groups), 0, 0, actDetail("tracks", total))
+		// 重复检测日志：仅用户主动“重新检测”（?log=1）时记录，
+		// 被动查询（列表刷新/任务完成后的自动同步）不写日志，避免刷屏。
+		if r.URL.Query().Get("log") == "1" {
+			addLog("act_dedupscan", true, len(groups), 0, 0, actDetail("tracks", total))
+		}
 		writeJSON(w, http.StatusOK, groups)
 	})
 
 	// Remove selected duplicate files (user-choose which to keep first)
-	pm.HandleFunc("POST /api/duplicates/remove", deleteTracksHandler(store, "act_dedup"))
+	pm.HandleFunc("POST /api/duplicates/remove", deleteTracksHandler(store, cfg, "act_dedup"))
 
-	// 列表页选中删除文件（前端二次确认后调用；同时清理 store 与磁盘）
-	pm.HandleFunc("POST /api/tracks/delete", deleteTracksHandler(store, "act_del"))
+	// 列表页选中删除文件（前端二次确认后调用；文件进回收站，同时清理 store）
+	pm.HandleFunc("POST /api/tracks/delete", deleteTracksHandler(store, cfg, "act_del"))
 
 	// Serve embedded cover art of a track
 	pm.HandleFunc("GET /api/tracks/{id}/cover", func(w http.ResponseWriter, r *http.Request) {
 		t := store.get(r.PathValue("id"))
 		if t == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "track not found"})
+			writeErr(w, http.StatusNotFound, "track not found")
 			return
 		}
+		// 封面缓存：大库列表并发加载封面时，避免每个请求都走 WASM 读文件+解码。
+		// 以文件 mtime 为失效键（写/清封面会改 mtime，自动失效）；缓存后浏览器
+		// 也按 max-age 复用，不再每次轮询全量拉取。
+		st, err := os.Stat(t.Path)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "file not found")
+			return
+		}
+		store.coverMu.RLock()
+		if e, ok := store.coverCache[t.ID]; ok && e.mod.Equal(st.ModTime()) {
+			img := e.img
+			store.coverMu.RUnlock()
+			w.Header().Set("Cache-Control", "private, max-age=3600")
+			w.Header().Set("Content-Type", http.DetectContentType(img))
+			w.Write(img)
+			return
+		}
+		store.coverMu.RUnlock()
 		img, err := taglibx.ReadCover(t.Path)
 		if err != nil || len(img) == 0 {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no cover"})
+			writeErr(w, http.StatusNotFound, "no cover")
 			return
 		}
-		// 不缓存：批量刮削写入新封面后，列表封面图需立即刷新
-		w.Header().Set("Cache-Control", "no-store")
+		store.coverMu.Lock()
+		store.coverCache[t.ID] = coverEntry{mod: st.ModTime(), img: img}
+		store.coverMu.Unlock()
+		w.Header().Set("Cache-Control", "private, max-age=3600")
 		w.Header().Set("Content-Type", http.DetectContentType(img))
 		w.Write(img)
 	})
@@ -529,17 +580,17 @@ func main() {
 	pm.HandleFunc("GET /api/tracks/{id}/lrcfile", func(w http.ResponseWriter, r *http.Request) {
 		t := store.get(r.PathValue("id"))
 		if t == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "track not found"})
+			writeErr(w, http.StatusNotFound, "track not found")
 			return
 		}
 		lp := taglibx.LrcPath(t.Path)
 		if lp == "" {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no lrc file"})
+			writeErr(w, http.StatusNotFound, "no lrc file")
 			return
 		}
 		b, err := os.ReadFile(lp)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"name": filepath.Base(lp), "content": string(b)})
@@ -549,7 +600,7 @@ func main() {
 	pm.HandleFunc("POST /api/tracks/{id}/tags", func(w http.ResponseWriter, r *http.Request) {
 		t := store.get(r.PathValue("id"))
 		if t == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "track not found"})
+			writeErr(w, http.StatusNotFound, "track not found")
 			return
 		}
 		var req struct {
@@ -557,7 +608,7 @@ func main() {
 			Tags  map[string]string `json:"tags"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		m := map[string][]string{}
@@ -567,7 +618,7 @@ func main() {
 			}
 		}
 		if err := taglibx.WriteTags(t.Path, m, req.Clear); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		// 保存后：标题/艺术家与文件名不符时，把源文件重命名为“艺术家 - 标题.后缀”
@@ -595,7 +646,7 @@ func main() {
 	pm.HandleFunc("POST /api/tracks/{id}/cover", func(w http.ResponseWriter, r *http.Request) {
 		t := store.get(r.PathValue("id"))
 		if t == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "track not found"})
+			writeErr(w, http.StatusNotFound, "track not found")
 			return
 		}
 		var req struct {
@@ -604,7 +655,7 @@ func main() {
 			Clear      bool   `json:"clear"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		var img []byte
@@ -614,23 +665,23 @@ func main() {
 		case req.DataBase64 != "":
 			b, err := decodeBase64(req.DataBase64)
 			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			img = b
 		case req.URL != "":
 			b, err := fetchBytes(req.URL)
 			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+				writeErr(w, http.StatusBadGateway, err.Error())
 				return
 			}
 			img = b
 		default:
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "url, dataBase64 or clear required"})
+			writeErr(w, http.StatusBadRequest, "url, dataBase64 or clear required")
 			return
 		}
 		if err := taglibx.WriteCover(t.Path, img); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		refreshTrack(store, t.Path)
@@ -645,9 +696,17 @@ func main() {
 		if l := r.URL.Query().Get("limit"); l != "" {
 			fmt.Sscanf(l, "%d", &limit)
 		}
-		results, err := ms.Search(source, q, limit)
+		// auto/空：并发查询全部启用源并合并（多源同时采集，结果带 source 标记，
+		// 前端可跨源对比选最佳）；指定源时仍单源查询。
+		var results []scrape.SearchResult
+		var err error
+		if source == "" || source == "auto" {
+			results, err = ms.SearchWithFallback("", q, limit)
+		} else {
+			results, err = ms.Search(source, q, limit)
+		}
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, results)
@@ -665,12 +724,12 @@ func main() {
 			sr.Artists = strings.Split(a, "||")
 		}
 		if sr.Title == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title is required"})
+			writeErr(w, http.StatusBadRequest, "title is required")
 			return
 		}
 		lyric, err := ms.FetchLyrics(sr)
 		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusNotFound, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"lyric": lyric})
@@ -680,7 +739,7 @@ func main() {
 	pm.HandleFunc("POST /api/tracks/{id}/scrape", func(w http.ResponseWriter, r *http.Request) {
 		t := store.get(r.PathValue("id"))
 		if t == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "track not found"})
+			writeErr(w, http.StatusNotFound, "track not found")
 			return
 		}
 		var req struct {
@@ -701,7 +760,7 @@ func main() {
 			Fields      []string `json:"fields"` // 手动选择要写入的字段
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		fields := fieldsFromList(req.Fields, req.FetchCover, req.FetchLyrics)
@@ -753,7 +812,7 @@ func main() {
 			}
 		}
 		if err := taglibx.WriteTags(t.Path, tags, false); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		if fields.Cover {
@@ -980,6 +1039,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// 编辑面板默认显示的常用字段（未配置时）；可在设置页自定义。
+const defaultEditFields = "cover,title,artist,album,albumartist,genre,year,tracknumber,tracktotal,composer,lyricist,lyrics"
+
+// editFieldsList 返回设置页配置的编辑面板显示字段列表（逗号分隔，去空）。
+func editFieldsList(cfg *cstore.Config) []string {
+	var out []string
+	for _, f := range strings.Split(cfg.GetDefault("edit_fields", defaultEditFields), ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // recalcFlags 重算全部曲目的乱码/待识别/繁体标记（覆盖扫描时的快照）。
 // /api/tracks 与刷新接口共用，保证筛选与最新修复算法一致，无需重扫描。
 func recalcFlags(s *store) {
@@ -987,18 +1060,19 @@ func recalcFlags(s *store) {
 		t.Garbled = looksGarbledTags(t)
 		t.NeedsIdentify = needsIdentify(t)
 		t.HasTrad = detectTraditional(t.Tags)
+		t.HasLyrics = strings.TrimSpace(t.Tags["LYRICS"]) != ""
 	}
 }
 
-// deleteTracksHandler 删除勾选曲目（磁盘 + 库）：去重页与列表页删除共用。
+// deleteTracksHandler 删除勾选曲目（磁盘 → 回收站 + 库）：去重页与列表页删除共用。
 // actKey 是操作日志的 action 键（act_dedup / act_del）。
-func deleteTracksHandler(s *store, actKey string) http.HandlerFunc {
+func deleteTracksHandler(s *store, cfg *cstore.Config, actKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			IDs []string `json:"ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		removed := 0
@@ -1008,7 +1082,7 @@ func deleteTracksHandler(s *store, actKey string) http.HandlerFunc {
 			if t == nil {
 				continue
 			}
-			if err := os.Remove(t.Path); err != nil {
+			if _, err := moveToTrash(cfg, t.Path); err != nil {
 				failed = append(failed, t.FileName)
 				continue
 			}

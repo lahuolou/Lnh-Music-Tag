@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 
-	"LNH-musictag/internal/model"
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/model"
+	"lnh-musictag/internal/taglibx"
 )
 
 func TestFixMojibake(t *testing.T) {
@@ -160,7 +160,7 @@ func TestFixEncodingHandlerFilenameFallback(t *testing.T) {
 	s := newStore(nil)
 	s.add(tr)
 
-	js := newJobStore()
+	js := newJobStore(nil)
 	body, _ := json.Marshal(map[string]any{"ids": []string{tr.ID}})
 	req := httptest.NewRequest(http.MethodPost, "/api/fix-encoding", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()

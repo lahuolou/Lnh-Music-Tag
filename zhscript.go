@@ -9,7 +9,7 @@ import (
 
 	"github.com/liuzl/gocc"
 
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/taglibx"
 )
 
 // scriptConverter builds a simp<->trad converter for the given target.
@@ -75,13 +75,13 @@ func convertScriptHandler(js *jobStore, s *store) http.HandlerFunc {
 			To  string   `json:"to"` // "simp" | "trad"
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		conv := scriptConverter(req.To)
 		list := resolveTracks(s, req.IDs)
 		if len(list) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请至少勾选一首曲目"})
+			writeErr(w, http.StatusBadRequest, "请至少勾选一首曲目")
 			return
 		}
 		job := js.runProgressJob("script", len(list), func(j *scrapeJob, i int) scrapeResult {

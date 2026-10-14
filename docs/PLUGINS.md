@@ -1,5 +1,7 @@
 # LNH-MusicTag 插件开发指南
 
+版本：v1.5.0（与主程序同步）｜ 仓库：github.com/lahuolou/lnh-musictag
+
 本文档说明 LNH-MusicTag 的插件框架：插件分**内置**与**第三方**两组，
 第三方插件以 **ZIP 插件包**形式导入（解压即用），也兼容纯 JSON 声明。
 内置插件只有开关、不可删除；第三方插件可导入、启停、删除。
@@ -19,7 +21,27 @@
 | `download` | 下载器（预留）                           | —                           |
 | `protocol` | 服务端协议（Subsonic 等，预留）           | —                           |
 
-## 二、ZIP 插件包（推荐，导入即用）
+## 二、内置刮削源与并发调度
+
+内置刮削源在 `internal/scrape/` 实现统一的 `Source` 接口，注册进
+`registerBuiltinPlugins`（`plugins_api.go`）联动启停。**所有启用的刮削源
+会同时被查询（v1.5.0 起 `SearchWithFallback` 全并发），结果合并后由
+`pickBest` 跨源挑出最佳匹配再写入标签**。
+
+新增一个刮削源只需：
+
+1. 在 `internal/scrape/` 实现 `Source` 接口（Search 返回标准命中结构）；
+2. 在 `main.go` 的源注册表追加实例（含语言分组：国内/国际）；
+3. 在 `plugins_api.go` 的 `registerBuiltinPlugins` 注册插件（`scrape.xxx`），
+   启停回调调用 `SetEnabled("xxx", on)`。
+
+接入后自动获得以下能力，无需额外工作：
+
+- 批量刮削 / 一键刮削 / 歌词 / 海报 / 编辑面板搜索全部走并发合并；
+- 源请求带全局超时与限速（网易云歌词另设 3s 短超时）；
+- 插件页开关、Key 配置（NeedsKey / KeyField）与持久化。
+
+## 三、ZIP 插件包（推荐，导入即用）
 
 ZIP 插件包是**自包含**的插件：一个 `plugin.json` 声明 + 各平台可执行入口，
 导入后宿主自动解压并注册，无需重新编译镜像。
@@ -89,7 +111,7 @@ myplugin.zip
   解压目录，重启不会复活。
 - 内置插件只有开关、不可删除；删除接口对内置插件返回明确错误。
 
-## 三、纯 JSON 插件（轻量声明）
+## 四、纯 JSON 插件（轻量声明）
 
 适合「只需要开关与配置管理、无需执行入口」的场景：
 
@@ -113,7 +135,7 @@ myplugin.zip
 对应接口：`POST /api/plugins/import`（ZIP 二进制或 JSON 文本，上限 256MB）、
 `DELETE /api/plugins/{name}`、`POST /api/plugins/{name}/run`（调用 ZIP 插件入口）。
 
-## 四、内置插件接入（源码扩展点）
+## 五、内置插件接入（源码扩展点）
 
 内置插件在 `registerBuiltinPlugins`（`plugins_api.go`）注册，只允许开关：
 

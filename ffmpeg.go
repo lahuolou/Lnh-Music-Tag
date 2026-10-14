@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
-	cstore "LNH-musictag/internal/store"
+	cstore "lnh-musictag/internal/store"
 )
 
 // ffmpegBin 返回可用的 ffmpeg 可执行文件路径：优先插件配置

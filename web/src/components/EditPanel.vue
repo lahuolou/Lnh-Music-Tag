@@ -1,10 +1,31 @@
 <script setup>
-import { reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { state, cur, toast, refresh, busy } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
+import { FIELDS, DEFAULT_EDIT_FIELDS } from '../fields.js'
 
-const f = ref({ title: '', artist: '', album: '', albumartist: '', genre: '', date: '', track: '', lyrics: '' })
+// 可编辑字段 → 标签键
+const TAG_KEYS = {
+  title: 'TITLE', artist: 'ARTIST', album: 'ALBUM', albumartist: 'ALBUMARTIST',
+  genre: 'GENRE', year: 'DATE', tracknumber: 'TRACKNUMBER', tracktotal: 'TRACKTOTAL',
+  composer: 'COMPOSER', lyricist: 'LYRICIST', language: 'LANGUAGE',
+  albumtype: 'RELEASETYPE', comment: 'COMMENT', discnumber: 'DISCNUMBER',
+  disctotal: 'DISCTOTAL',
+}
+
+// 编辑面板显示字段（设置页配置，默认常用 12 项）
+const editFields = ref([...DEFAULT_EDIT_FIELDS])
+async function loadEditFields() {
+  try {
+    const s = await api('/api/settings');
+    if (Array.isArray(s.editFields) && s.editFields.length) editFields.value = s.editFields;
+    else editFields.value = [...DEFAULT_EDIT_FIELDS];
+  } catch (e) { /* 配置拉取失败用默认 */ }
+}
+
+const f = ref(Object.fromEntries(Object.keys(TAG_KEYS).map(k => [k, ''])))
+f.value.lyrics = ''
 const sQuery = ref('')
 const sSource = ref('auto')
 const searching = ref(false)
@@ -27,7 +48,7 @@ function selFields(withCover) {
   return names;
 }
 
-function loadTrack(t) {
+async function loadTrack(t) {
   if (!t) return;
   lastId = t.id;
   // 标题/艺术家为空时默认从源文件名载入（如“陈小春 - 街角的晚风.flac” → 艺术家=陈小春，标题=街角的晚风）
@@ -38,14 +59,23 @@ function loadTrack(t) {
     const m = base.match(/^(.*?)\s*-\s*(.+)$/);
     title = m ? m[2].trim() : base.trim();
     if (!artist && m) artist = m[1].trim();
-  }  f.value = {
-    title, artist,
-    album: t.tags.ALBUM || '', albumartist: t.tags.ALBUMARTIST || '',
-    genre: t.tags.GENRE || '', date: t.tags.DATE || '',
-    track: t.tags.TRACKNUMBER || '', lyrics: t.tags.LYRICS || ''
-  };
+  }
+  const tv = {};
+  for (const k in TAG_KEYS) tv[k] = t.tags[TAG_KEYS[k]] || '';
+  f.value = { ...tv, title, artist };
+  f.value.lyrics = t.tags.LYRICS || '';
   sQuery.value = title + ' ' + artist;
   sSource.value = 'auto';
+  // 列表瘦身后歌词正文不下发：编辑时经单曲接口按需拉取。
+  if (!f.value.lyrics && (t.hasLyrics || t.tags.LYRICS === undefined)) {
+    try {
+      const full = await api('/api/track/' + encodeURIComponent(t.id));
+      if (full && full.tags) {
+        for (const k in TAG_KEYS) if (full.tags[TAG_KEYS[k]] && !f.value[k]) f.value[k] = full.tags[TAG_KEYS[k]];
+        f.value.lyrics = full.tags.LYRICS || '';
+      }
+    } catch (e) { /* 单曲拉取失败不影响其余字段编辑 */ }
+  }
 }
 
 watch(() => state.currentId, (id) => {
@@ -55,12 +85,12 @@ watch(() => state.currentId, (id) => {
 
 async function save() {
   if (!cur()) return;
-  const tags = {
-    TITLE: f.value.title, ARTIST: f.value.artist, ALBUM: f.value.album,
-    ALBUMARTIST: f.value.albumartist, GENRE: f.value.genre, DATE: f.value.date,
-    TRACKNUMBER: f.value.track, LYRICS: f.value.lyrics
-  };
-  const body = { clear: false, tags: Object.fromEntries(Object.entries(tags).filter(([, v]) => v !== '')) };
+  const tags = {};
+  for (const k in TAG_KEYS) {
+    const v = String(f.value[k] || '').trim();
+    if (v !== '') tags[TAG_KEYS[k]] = v;
+  }
+  const body = { clear: false, tags };
   try {
     const r = await api('/api/tracks/' + encodeURIComponent(state.currentId) + '/tags', { method: 'POST', body: JSON.stringify(body) });
     toast(t('saved') + (r.renamed ? t('renamed', { name: r.name }) : ''), 'ok');
@@ -94,6 +124,32 @@ function fmtDur(d) {
   return m + ':' + String(s).padStart(2, '0');
 }
 
+// 按设置配置渲染：可编辑字段（除歌词单独处理）+ 只读信息字段
+const shownEditable = computed(() =>
+  FIELDS.filter(x => x.editable && x.id !== 'lyrics' && editFields.value.includes(x.id)));
+const shownReadonly = computed(() =>
+  FIELDS.filter(x => !x.editable && x.id !== 'cover' && editFields.value.includes(x.id)));
+const showCover = computed(() => editFields.value.includes('cover'));
+
+function readVal(id) {
+  const t = cur(); if (!t) return '';
+  switch (id) {
+    case 'filename': return t.fileName;
+    case 'lrcfile': return t.hasLrcFile ? '✓' : '—';
+    case 'bitrate': return t.bitrate ? t.bitrate + ' kbps' : '—';
+    case 'samplerate': return t.sampleRate ? (t.sampleRate / 1000).toFixed(1) + ' kHz' : '—';
+    case 'bitdepth': return t.bitDepth ? t.bitDepth + ' bit' : '—';
+    case 'channels': return t.channels ? t.channels + ' ch' : '—';
+    case 'duration': return fmtDur(t.duration) || '—';
+    case 'filesize': return fmtSize(t.size) || '—';
+    case 'sha256': return t.sha256 ? t.sha256.slice(0, 20) + '…' : '—';
+    case 'path': return t.path;
+    case 'mbtrack': return t.tags.MUSICBRAINZ_TRACKID || '—';
+    case 'mbalbum': return t.tags.MUSICBRAINZ_ALBUMID || '—';
+    default: return '';
+  }
+}
+
 // 导入同目录外挂 .lrc 歌词到标签
 async function importLrc() {
   if (!cur()) return;
@@ -119,6 +175,7 @@ async function mbSearch() {
   searching.value = true;
   state.mbRes = [];
   try {
+    // auto/空源：后端并发查询全部启用源并合并结果（多源同时采集）
     const res = await api('/api/scrape/search?q=' + encodeURIComponent(q) + '&source=' + encodeURIComponent(sSource.value) + '&limit=8');
     state.mbRes = res || [];
   } catch (e) { toast(t('searchFail', { m: e.message }), 'err'); }
@@ -144,29 +201,29 @@ async function apply(i, withCover) {
 }
 
 function srcLabel(name) { return (state.sources.find(s => s.name === name) || { label: name }).label; }
+
+onMounted(loadEditFields);
 </script>
 
 <template>
   <div v-if="cur()" class="form">
     <div class="row" style="margin-bottom:10px">
-      <img class="cover-lg" :src="`/api/tracks/${encodeURIComponent(cur().id)}/cover`" onerror="this.style.visibility='hidden'" />
-      <div>
+      <img v-if="showCover" class="cover-lg" :src="`/api/tracks/${encodeURIComponent(cur().id)}/cover`" onerror="this.style.visibility='hidden'" />
+      <div style="flex:1;min-width:0">
         <div style="font-weight:600">{{ cur().tags.TITLE || cur().fileName }}</div>
-        <div class="muted" style="font-size:13px">{{ cur().path }}</div>
+        <div class="muted" style="font-size:13px;word-break:break-all">{{ cur().path }}</div>
         <div class="muted" style="font-size:12px">
           {{ fmtSize(cur().size) }} · {{ fmtDur(cur().duration) }} · {{ cur().bitrate || '?' }} kbps · {{ cur().sampleRate ? (cur().sampleRate / 1000).toFixed(1) + ' kHz' : '' }} · SHA256: {{ cur().sha256 ? cur().sha256.slice(0, 20) + '…' : '—' }}
         </div>
       </div>
     </div>
-    <label>{{ t('fTitle') }}</label><input type="text" v-model="f.title" />
-    <label>{{ t('fArtist') }}</label><input type="text" v-model="f.artist" />
-    <label>{{ t('fAlbum') }}</label><input type="text" v-model="f.album" />
-    <label>{{ t('fAlbumArtist') }}</label><input type="text" v-model="f.albumartist" />
-    <label>{{ t('fGenre') }}</label><input type="text" v-model="f.genre" />
-    <label>{{ t('fDate') }}</label><input type="text" v-model="f.date" />
-    <label>{{ t('fTrack') }}</label><input type="text" v-model="f.track" />
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px">
+    <template v-for="field in shownEditable" :key="field.id">
+      <label>{{ t(field.label) }}</label>
+      <input type="text" v-model="f[field.id]" />
+    </template>
+
+    <div v-if="editFields.includes('lyrics')" style="display:flex;align-items:center;justify-content:space-between;margin-top:14px">
       <label style="margin:0">{{ t('fLyrics') }}</label>
       <div class="row" style="gap:6px">
         <button v-if="cur().hasLrcFile" class="ghost sm" :disabled="busy()" @click="importLrc" :title="t('lrcTitle')">{{ t('importLrc') }}</button>
@@ -174,11 +231,16 @@ function srcLabel(name) { return (state.sources.find(s => s.name === name) || { 
         <button class="ghost sm" :disabled="busy()" @click="clearLyrics">{{ t('clearLyrics') }}</button>
       </div>
     </div>
-    <textarea rows="8" v-model="f.lyrics"></textarea>
+    <textarea v-if="editFields.includes('lyrics')" rows="8" v-model="f.lyrics"></textarea>
+
+    <template v-for="field in shownReadonly" :key="field.id">
+      <label>{{ t(field.label) }}</label>
+      <div class="ro-val">{{ readVal(field.id) }}</div>
+    </template>
 
     <div class="row" style="margin-top:12px">
       <button class="sm" :disabled="busy()" @click="save">{{ t('saveTags') }}</button>
-      <button class="ghost sm" :disabled="busy()" @click="clearCover">{{ t('clearCover') }}</button>
+      <button v-if="showCover" class="ghost sm" :disabled="busy()" @click="clearCover">{{ t('clearCover') }}</button>
     </div>
 
     <label style="margin-top:14px">{{ t('searchScrape') }}</label>

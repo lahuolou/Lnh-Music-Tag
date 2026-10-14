@@ -18,11 +18,11 @@ import (
 	"sync"
 	"time"
 
-	"LNH-musictag/internal/dedup"
-	"LNH-musictag/internal/model"
-	"LNH-musictag/internal/scrape"
-	cstore "LNH-musictag/internal/store"
-	"LNH-musictag/internal/taglibx"
+	"lnh-musictag/internal/dedup"
+	"lnh-musictag/internal/model"
+	"lnh-musictag/internal/scrape"
+	cstore "lnh-musictag/internal/store"
+	"lnh-musictag/internal/taglibx"
 )
 
 // pipelineStages 一键刮削的阶段总数（不含可选的自动去重阶段）。
@@ -40,16 +40,19 @@ func oneKeyScrapeHandler(js *jobStore, s *store, ms *scrape.MultiSource, cfg *cs
 			Dedup bool     `json:"dedup"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		list := resolveTracks(s, req.IDs)
 		if len(list) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "没有可处理的曲目"})
+			writeErr(w, http.StatusBadRequest, "没有可处理的曲目")
 			return
 		}
 		job := js.create(len(list), "onekey")
-		go runOneKeyPipeline(job, s, ms, list, req.Dedup, cfg)
+		go func() {
+			runOneKeyPipeline(job, s, ms, list, req.Dedup, cfg)
+			js.persist(job) // 完成/中断后落库，重启可查历史
+		}()
 		writeJSON(w, http.StatusOK, map[string]any{"jobId": job.ID, "total": job.Total})
 	}
 }
@@ -89,7 +92,7 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 		{"scrape", "刮削元素", stageScrape(s, ms, cfg)},
 	}
 	if dedup {
-		stages = append([]pipelineStage{{"dedup", "自动去重", stageDedup(s)}}, stages...)
+		stages = append([]pipelineStage{{"dedup", "自动去重", stageDedup(s, cfg)}}, stages...)
 	}
 
 	for si, st := range stages {
@@ -151,8 +154,9 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 // stageDedup 阶段 0（可选）：自动去重。按三种口径合并分组（与去重页一致）：
 // ① 艺术家+标题一致（同人同歌不同格式/版本）② 同名多格式 ③ SHA256 内容一致
 // （完全相同的副本）。每组保留质量最好的一首（无损优先；hash 组保留第一首），
-// 其余删除文件并从列表移除。仅当一键刮削勾选"自动去重"时启用；默认不勾选。
-func stageDedup(s *store) stageFunc {
+// 其余移入配置目录 trash/ 回收站并从列表移除（不永久删除，可人工恢复）。
+// 仅当一键刮削勾选"自动去重"时启用；默认不勾选。
+func stageDedup(s *store, cfg *cstore.Config) stageFunc {
 	var once sync.Once
 	remove := map[string]bool{} // track id → 待删除
 	init := func() {
@@ -186,11 +190,11 @@ func stageDedup(s *store) stageFunc {
 		if !remove[t.ID] {
 			return t, false, true, "无重复，保留"
 		}
-		if err := os.Remove(t.Path); err != nil {
-			return t, false, false, "删除失败: " + err.Error()
+		if _, err := moveToTrash(cfg, t.Path); err != nil {
+			return t, false, false, "移入回收站失败: " + err.Error()
 		}
 		s.remove(t.ID)
-		return nil, true, false, "重复文件，已删除"
+		return nil, true, false, "重复文件，已移入回收站"
 	}
 }
 

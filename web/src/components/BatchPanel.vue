@@ -71,6 +71,7 @@ async function runToolJob(kind, url, body, allowAll = false) {
     // 等待任务完成（startToolJob 立即返回，完成信号通过状态轮询到位）。
     // jobId 匹配检查：用户在任务完成前点了别的任务时，旧轮询立即退出，
     // 避免"识别完成后点乱码，旧任务提示覆盖新任务"的串扰。
+    const t0 = Date.now();
     const iv = setInterval(() => {
       const tj = state.toolJob;
       if (tj && tj.id !== r.jobId) { clearInterval(iv); return; }
@@ -78,14 +79,17 @@ async function runToolJob(kind, url, body, allowAll = false) {
         clearInterval(iv);
         if (tj.status === 'cancelled') {
           toast(t('jobCancelled'), 'err');
+        } else if (tj.status === 'failed') {
+          toast(t(failKeys[kind], { m: t('jobLost') }), 'err');
         } else {
           toast(t('jobDone', { ok: tj.ok, fail: tj.fail, skip: tj.skip, t: tj.total }), tj.fail === 0 ? 'ok' : 'err');
         }
         state.selected.clear();
         refresh();
         if (kind === 'convert') fmtOpen.value = false;
-      } else if (!tj) {
+      } else if (!tj || Date.now() - t0 > 120000) { // 任务丢失或 2 分钟未完成：解锁避免卡死
         clearInterval(iv);
+        starting.value = false;
       }
     }, 500);
   } catch (e) {
@@ -255,7 +259,7 @@ async function oneKey() {
       <div class="muted" style="flex:1;min-width:0">
         {{ curJob.status === 'done'
           ? (curIsBatch
-              ? t('batchDone', { ok: (curJob.results || []).filter(r => r.ok).length, t: curJob.total })
+              ? t('batchDone', { ok: (curJob.summary || {}).ok || 0, t: curJob.total })
               : t('jobDone', { ok: curJob.ok, fail: curJob.fail, skip: curJob.skip, t: curJob.total }))
           : (curJob.status === 'cancelled'
               ? t('jobCancelled')

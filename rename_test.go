@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"LNH-musictag/internal/model"
+	"lnh-musictag/internal/model"
 )
 
 func TestRenameFileToArtistTitle(t *testing.T) {

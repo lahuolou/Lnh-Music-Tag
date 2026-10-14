@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	cstore "LNH-musictag/internal/store"
+	cstore "lnh-musictag/internal/store"
 )
 
 const (
@@ -106,7 +106,7 @@ func bootstrapAdmin(cfg *cstore.Config, envUser, envPass string) (string, string
 // loginHandler validates credentials (from the DB) and issues a session cookie.
 func (s *sessionStore) loginHandler(w http.ResponseWriter, r *http.Request) {
 	if !s.guard.allow(r) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "失败次数过多，请 5 分钟后再试"})
+		writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 5 分钟后再试")
 		return
 	}
 	var req struct {
@@ -114,7 +114,7 @@ func (s *sessionStore) loginHandler(w http.ResponseWriter, r *http.Request) {
 		Pass string `json:"pass"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	wantUser, _ := s.cfg.Get("admin_user")
@@ -123,10 +123,10 @@ func (s *sessionStore) loginHandler(w http.ResponseWriter, r *http.Request) {
 	okP := okU && verifyPassword(wantPass, req.Pass)
 	if !(okU && okP) {
 		if d := s.guard.fail(r); d > 0 {
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "失败次数过多，请 5 分钟后再试"})
+			writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 5 分钟后再试")
 			return
 		}
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "账号或密码错误"})
+		writeErr(w, http.StatusUnauthorized, "账号或密码错误")
 		return
 	}
 	// 旧版明文密码首次验证通过后自动升级为加盐哈希
@@ -164,7 +164,7 @@ func (s *sessionStore) meHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"user": s.cfg.GetDefault("admin_user", "admin")})
 		return
 	}
-	writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未登录"})
+	writeErr(w, http.StatusUnauthorized, "未登录")
 }
 
 // changePasswordHandler (authenticated) validates the old password and updates
@@ -175,20 +175,20 @@ func (s *sessionStore) changePasswordHandler(w http.ResponseWriter, r *http.Requ
 		NewPass string `json:"newPass"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	cur, _ := s.cfg.Get("admin_pass")
 	if !verifyPassword(cur, req.OldPass) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "旧密码错误"})
+		writeErr(w, http.StatusUnauthorized, "旧密码错误")
 		return
 	}
 	if len(req.NewPass) < 6 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "新密码至少 6 位"})
+		writeErr(w, http.StatusBadRequest, "新密码至少 6 位")
 		return
 	}
 	if err := s.cfg.Set("admin_pass", hashPassword(req.NewPass)); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "密码更新失败: " + err.Error()})
+		writeErr(w, http.StatusInternalServerError, "密码更新失败: " + err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "密码已修改"})
@@ -198,7 +198,7 @@ func (s *sessionStore) changePasswordHandler(w http.ResponseWriter, r *http.Requ
 func (s *sessionStore) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.valid(r) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未登录或会话过期"})
+			writeErr(w, http.StatusUnauthorized, "未登录或会话过期")
 			return
 		}
 		next.ServeHTTP(w, r)
