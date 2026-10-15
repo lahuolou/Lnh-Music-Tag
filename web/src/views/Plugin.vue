@@ -14,7 +14,11 @@ const ffInstalling = ref(false)
 
 // 每类卡片独立展开状态（默认：刮削源折叠，工具组、第三方插件组展开）
 const openGroups = ref({ scrape: false, tool: true, third: true })
+// 第三方插件逐卡片折叠：卡片头（名称+开关+删除）常驻，配置区默认折叠
+const openExt = ref({})
 const confirmDel = ref('') // 二次点击确认态：记录待删除插件名
+
+function toggleExt(p) { openExt.value[p.name] = !openExt.value[p.name]; }
 
 const groupMeta = [
   { kind: 'scrape', key: 'srcPlugins', hint: 'srcPluginsHint' },
@@ -184,7 +188,7 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
           <pre class="muted" style="font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin:8px 0 2px">{{ t('extDevGuideText') }}</pre>
         </details>
         <div class="pitem" v-for="p in groups[gm.kind]" :key="p.name">
-          <div class="prow">
+          <div class="prow" :class="{ clickable: !p.builtin }" @click="!p.builtin && toggleExt(p)">
             <span class="plabel">
               {{ p.label }}
               <small class="muted">{{ p.name }}</small>
@@ -192,17 +196,18 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
               <em v-if="!p.builtin" class="ext">ext</em>
               <em v-if="p.needsKey" class="key" :class="{ ok: p.keyConfigured }">🔑 {{ p.keyConfigured ? t('keySet') : t('keyNotSet') }}</em>
             </span>
-            <span class="pacts">
+            <span class="pacts" @click.stop>
               <label class="switch" :class="{ on: p.enabled }">
                 <input type="checkbox" :checked="p.enabled" :disabled="busy || (p.needsKey && !p.keyConfigured) || p.name === 'scrape.auto'" @change="togglePlugin(p)" />
                 <span class="slider"></span>
               </label>
               <button v-if="!p.builtin" class="sm ghost danger" :class="{ confirm: confirmDel === p.name }" @click="deletePlugin(p)">{{ confirmDel === p.name ? t('pluginDeleteAsk') : t('pluginDelete') }}</button>
+              <span v-if="!p.builtin" class="chev small">{{ openExt[p.name] ? '▲' : '▼' }}</span>
             </span>
           </div>
 
-          <!-- 直接展开：状态 / 配置 -->
-          <div class="pdetail">
+          <!-- 第三方插件配置区可折叠（默认折叠，点卡片头展开）；内置插件直接展开 -->
+          <div class="pdetail" v-show="p.builtin || openExt[p.name]">
             <p v-if="p.hint" class="muted small" style="margin:6px 0">{{ t(p.hint) }}</p>
 
             <!-- FFmpeg 实时状态 -->
@@ -254,6 +259,9 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .card-body { padding: 4px 14px 14px; border-top: 1px solid var(--line, rgba(128,128,128,.15)); }
 .pitem { padding: 10px; border-radius: 8px; background: var(--bg2, rgba(128,128,128,.08)); }
 .prow { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.prow.clickable { cursor: pointer; user-select: none; }
+.prow.clickable .plabel { flex: 1; min-width: 0; }
+.prow.clickable .pacts .chev { opacity: .6; }
 .plabel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .plabel small { opacity: .6; }
 .pacts { display: flex; align-items: center; gap: 8px; }

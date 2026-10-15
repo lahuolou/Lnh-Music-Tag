@@ -95,9 +95,14 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	if len(decl.Entries) == 0 {
 		return nil, errors.New("plugin.json 缺少 entries（平台 -> 入口文件映射）")
 	}
-	// 3. 冲突检查
-	if _, ok := reg.plugins[decl.Name]; ok {
-		return nil, errors.New("插件已存在（内置或已导入）: " + decl.Name)
+	// 3. 冲突检查：内置插件不可覆盖；已导入的第三方插件允许覆盖升级，
+	//    覆盖时保留用户已填的配置（Config 不变），只更新插件定义。
+	oldConfig := map[string]string{}
+	if old, ok := reg.plugins[decl.Name]; ok {
+		if old.Builtin {
+			return nil, errors.New("内置插件不可覆盖: " + decl.Name)
+		}
+		oldConfig = old.Config
 	}
 	// 4. 解压到 root/<name>/
 	root := pluginsRoot(cfg, configDir)
@@ -183,7 +188,7 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			return nil, errors.New("插件面板文件不存在: " + decl.Panel)
 		}
 	}
-	// 6. 注册
+	// 6. 注册（覆盖导入时替换旧定义，保留原配置）
 	p := &Plugin{
 		Name:    decl.Name,
 		Label:   decl.Label,
@@ -196,9 +201,9 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 		Entries: decl.Entries,
 		ZipName: zipName,
 		Panel:   decl.Panel,
-		Config:  map[string]string{},
+		Config:  oldConfig,
 	}
-	registerPlugin(p, nil)
+	replacePlugin(p, nil)
 	savePluginsToDB(cfg)
 	return p, nil
 }

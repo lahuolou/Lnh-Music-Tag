@@ -77,6 +77,23 @@ func registerPlugin(p *Plugin, apply applyFn) {
 	}
 }
 
+// replacePlugin 覆盖注册（覆盖导入用）：替换已存在第三方插件的元数据，
+// 保留注册顺序；apply 为空时沿用旧回调（内置刮削源的 SetEnabled 等不得丢失）。
+func replacePlugin(p *Plugin, apply applyFn) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if _, ok := reg.plugins[p.Name]; !ok {
+		reg.plugins[p.Name] = p
+		reg.order = append(reg.order, p.Name)
+		reg.apply[p.Name] = apply
+		return
+	}
+	reg.plugins[p.Name] = p
+	if apply != nil {
+		reg.apply[p.Name] = apply
+	}
+}
+
 // pluginsSnapshot 返回全部插件快照（按注册顺序，深拷贝，防外部篡改）。
 func pluginsSnapshot() []Plugin {
 	reg.mu.RLock()
