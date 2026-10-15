@@ -183,9 +183,9 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
         </div>
         <p v-if="gm.kind === 'third' && !groups.third.length" class="muted small" style="padding:10px 2px">{{ t('extEmpty') }}</p>
         <!-- 第三方插件：插件开发说明（折叠展示） -->
-        <details v-if="gm.kind === 'third'" class="dev-guide" style="margin-top:8px">
+        <details v-if="gm.kind === 'third'" class="dev-guide" style="margin-top:12px">
           <summary class="muted small" style="cursor:pointer;user-select:none">{{ t('extDevGuide') }}</summary>
-          <pre class="muted" style="font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin:8px 0 2px">{{ t('extDevGuideText') }}</pre>
+          <pre class="muted" style="font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin:10px 0 4px">{{ t('extDevGuideText') }}</pre>
         </details>
         <div class="pitem" v-for="p in groups[gm.kind]" :key="p.name">
           <div class="prow" :class="{ clickable: !p.builtin }" @click="!p.builtin && toggleExt(p)">
@@ -208,10 +208,10 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 
           <!-- 第三方插件配置区可折叠（默认折叠，点卡片头展开）；内置插件直接展开 -->
           <div class="pdetail" v-show="p.builtin || openExt[p.name]">
-            <p v-if="p.hint" class="muted small" style="margin:6px 0">{{ t(p.hint) }}</p>
+            <p v-if="p.hint" class="muted small" style="margin:10px 0 6px">{{ t(p.hint) }}</p>
 
             <!-- FFmpeg 实时状态 -->
-            <div v-if="p.name === 'tool.ffmpeg'" class="ff-status" :class="{ ok: ffStatus.available }" style="margin:8px 0 2px">
+            <div v-if="p.name === 'tool.ffmpeg'" class="ff-status" :class="{ ok: ffStatus.available }" style="margin:10px 0 4px">
               <span class="dot"></span>
               {{ ffStatus.available ? t('ffReady') : t('ffMissing') }}
               <span v-if="ffStatus.available" class="muted"> · {{ t('ffVersion') }}: {{ ffStatus.version }}</span>
@@ -219,12 +219,12 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 
             <!-- 配置字段表单 -->
             <div v-if="p.fields && p.fields.length" class="pfields">
-              <div class="field" v-for="f in p.fields" :key="f.key" style="margin-top:6px">
+              <div class="field" v-for="f in p.fields" :key="f.key">
                 <label>{{ t(f.label) }}</label>
                 <input v-if="p.name === 'tool.ffmpeg' && f.key === 'path'" type="text" v-model="ffPath" :placeholder="t(f.placeholder || '')" />
                 <input v-else :type="f.type === 'password' ? 'password' : 'text'" v-model="(p.config || {})[f.key]" :placeholder="t(f.placeholder || '')" />
               </div>
-              <div class="row" style="margin-top:8px">
+              <div class="row" style="margin-top:12px">
                 <button class="sm" :disabled="busy" @click="savePluginConfig(p)">{{ t('saveCfg') }}</button>
                 <button v-if="p.installable && !ffStatus.available" class="sm secondary" :disabled="ffInstalling" @click="installFFmpeg">{{ ffInstalling ? t('ffInstalling') : t('ffInstall') }}</button>
                 <button v-if="p.installable && ffStatus.available" class="sm secondary danger" :disabled="ffInstalling" @click="uninstallFFmpeg">{{ ffInstalling ? t('ffInstalling') : t('ffUninstall') }}</button>
@@ -257,7 +257,9 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .card-head .muted { flex: 1; min-width: 0; }
 .card-head .chev { flex: none; font-size: 12px; opacity: .7; }
 .card-body { padding: 4px 14px 14px; border-top: 1px solid var(--line, rgba(128,128,128,.15)); }
-.pitem { padding: 10px; border-radius: 8px; background: var(--bg2, rgba(128,128,128,.08)); }
+.pitem { padding: 12px 14px; border-radius: 10px; background: var(--bg2, rgba(128,128,128,.08)); }
+.pitem + .pitem { margin-top: 12px; }
+.dev-guide { margin-top: 12px; margin-bottom: 14px; }
 .prow { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .prow.clickable { cursor: pointer; user-select: none; }
 .prow.clickable .plabel { flex: 1; min-width: 0; }
@@ -269,7 +271,8 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .ext { background: rgba(61,126,230,.18); color: #3d7ee6; }
 .key { background: rgba(230,148,61,.22); color: #e6943d; }
 .key.ok { background: rgba(48,164,108,.2); color: #30a46c; }
-.pdetail { border-top: 1px dashed var(--line, rgba(128,128,128,.2)); margin-top: 8px; padding-top: 8px; }
+.pdetail { border-top: 1px dashed var(--line, rgba(128,128,128,.2)); margin-top: 12px; padding-top: 10px; }
+.pdetail .field + .field { margin-top: 10px; }
 .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; cursor: pointer; inset: 0; background: rgba(128,128,128,.35); border-radius: 22px; transition: .2s; }
