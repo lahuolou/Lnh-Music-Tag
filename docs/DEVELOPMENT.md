@@ -1,6 +1,6 @@
 # LNH-MusicTag 开发文档
 
-版本：v1.5.3 ｜ 仓库：github.com/lahuolou/lnh-musictag ｜ 许可证：MIT
+版本：v1.5.4 ｜ 仓库：github.com/lahuolou/lnh-musictag ｜ 许可证：MIT
 
 本文档与当前代码同步维护，覆盖架构、业务流程、数据模型、插件机制、API、部署、开发测试发布流程与安全运维。用于开发交接、日常维护、功能扩展与发布排错。
 
@@ -29,7 +29,7 @@ LNH-MusicTag 是一款自托管音乐库标签管理工具。系统扫描本地�
 - 文件处理：格式转换、文件后缀修正、简繁转换、乱码修复。
 - 任务与日志：异步进度（含阶段进度）、成功/失败/跳过统计、取消任务、操作日志；任务详情接口瘦身（只回失败项 + 计数）。
 - 插件生态：内置刮削源插件组与工具插件组（FFmpeg/AcoustID），支持导入第三方 ZIP 插件并动态挂载 Web 面板；**同名重复导入 = 覆盖升级且保留已填配置**；插件卡片可折叠。
-- 部署与更新：Docker Compose、FFmpeg 可选安装/卸载、多个更新源容错、单一版本源与 CI 校验。
+- 部署与更新：Docker Compose、FFmpeg 可选安装/卸载、**一键安装后持久化到配置卷（`/config/ffmpeg`，镜像更新重建容器无需重装）**、多个更新源容错、单一版本源与 CI 校验。
 
 ## 2. 技术架构与模块边界
 
@@ -259,7 +259,7 @@ LNH-MusicTag 是一款自托管音乐库标签管理工具。系统扫描本地�
 | 插件 | GET/POST /api/plugins；POST /api/plugins/import；DELETE /api/plugins/{name} | 列表/更新、导入 ZIP/JSON（**同名覆盖保留配置**）、删除插件 |
 | 插件 | POST /api/plugins/{name}/run；GET /api/plugins/{name}/panel；GET /api/plugins/{name}/panel/{path...} | 执行插件入口、插件面板与面板静态资源 |
 | 插件 | POST /api/fs/scan-dir | 第三方插件面板通用目录扫描 |
-| FFmpeg | GET /api/ffmpeg/status；POST /api/ffmpeg/install；POST /api/ffmpeg/uninstall | 检测、安装、卸载 FFmpeg |
+| FFmpeg | GET /api/ffmpeg/status；POST /api/ffmpeg/install；POST /api/ffmpeg/uninstall | 检测、安装、卸载 FFmpeg。一键安装后自动把二进制与动态库持久化到配置卷 `$LNH_CONFIG_DIR/ffmpeg/` 并生成 wrapper，镜像更新重建容器后自动认领，无需重装 |
 | 日志 | GET /api/logs；POST /api/logs/delete；POST /api/logs/clear | 操作日志读取、删除条目、清空 |
 | 版本 | GET /api/version；GET /api/version/check | 读取缓存版本状态、强制实时检查 |
 
@@ -298,7 +298,7 @@ volumes:
 | --- | --- |
 | LNH_ADMIN_USER / LNH_ADMIN_PASS | 首次初始化账号密码；后续账号信息保存在数据库中 |
 | LNH_INSTALL_FFMPEG | 设为 true/1/yes/on 时，启动前尝试安装 FFmpeg |
-| LNH_CONFIG_DIR | 配置目录（数据库/插件/回收站），非容器默认 /config |
+| LNH_CONFIG_DIR | 配置目录（数据库/插件/回收站/**FFmpeg 持久化安装**），非容器默认 /config |
 | LNH_PORT | HTTP 监听地址；容器内固定使用 10248 |
 | ACOUSTID_API_KEY 等 | 各数据源 API Key 的初始化配置 |
 
@@ -392,9 +392,11 @@ Windows 本机调试：`Start-Process .\lnh-musictag.exe -ArgumentList "-port","
 | 歌词/作词/语言等元素乱码或繁体未修复 | v1.5.3 起乱码修复与繁转简覆盖全部 11 个文本元素；深层双重损坏（GBK→单字节→再 Unicode 化，如 `ÈÄĐÔ³»,Ä`）信息已部分丢失，无法完整还原原字 |
 | 去重后文件不见 | 检查配置目录下 trash/ 回收站 |
 | 接口报错格式异常 | 确认错误响应为 {"ok":false,"error":...} 统一结构 |
+| 更新镜像后又要重装 FFmpeg | v1.5.4 起一键安装会持久化到配置卷 `$LNH_CONFIG_DIR/ffmpeg/`（默认 `/config/ffmpeg`），重建容器后探测链自动认领 wrapper；若目录为空说明未持久化成功（/config 卷未挂载或写入失败），需在插件页重新一键安装 |
 
 ## 10. 版本记录
 
+- v1.5.4：**FFmpeg 持久化安装**——一键安装后把二进制与动态库（ldd 解析，跳过 ld-musl/ld-linux 加载器）复制到配置卷 `$LNH_CONFIG_DIR/ffmpeg/`（bin/ 与 lib/），生成带 LD_LIBRARY_PATH 的 wrapper 并写入插件 path；`ffmpegBin` 探测链新增持久化回退（插件配置 → 旧键 ffmpeg_path → PATH → 配置卷 wrapper），镜像更新重建容器自动认领；`uninstallFFmpeg` 同步清理持久化目录；新增回归测试（persist 复制/wrapper/插件 path 写入、PATH 缺失时持久化认领、shell 转义）。删除 docs/DEVELOPMENT.html 中间渲染文档，README/开发文档/插件说明同步更新。
 - v1.5.3：乱码修复与简繁转换**覆盖全部 11 个文本元素**（新增作词/语言/专辑类型；繁体检测 detectTraditional 与阶段简繁转换共用同一 textFields 清单）；`fixMojibake` 修复——Latin-1 范围内 GBK 字节恰好构成合法 UTF-8 时旧逻辑直接重组会误改（如"黄家驹"GBK 字节），现 UTF-8 重组与 GBK 解码均作为候选参与得分比较取最优；一键刮削面板移除与下方进度条重复的独立阶段标签；新增回归测试（GBK-合法 UTF-8 不误改、11 字段全修复且 ASCII 不误动）。
 - v1.5.2：插件页两项体验——第三方插件卡片可折叠（配置区默认收起）；重复导入同名插件改为**覆盖升级且保留已填配置**（ZIP 与 JSON 导入同规则，内置插件仍拒绝覆盖）；插件页间距优化；插件开发说明文案同步更新（覆盖语义）。
 - v1.5.1：一键刮削自动去重卡死修复——哈希改为 8 线程并发 + 单文件 120s 超时兜底 + feeder/worker 双处取消检查 + hashDone/hashTotal 进度上报（前端哈希进度条）；取消任务即时生效。

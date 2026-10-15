@@ -392,6 +392,11 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "安装失败: " + err.Error(), "output": out})
 			return
 		}
+		// 安装成功后把二进制与动态库复制到配置卷并配置 path，
+		// 容器更新重建后无需重新安装（失败不影响本次安装成功）。
+		if perr := persistFFmpeg(cfg); perr != nil {
+			addLog("act_plugin", false, 1, 0, 0, "FFmpeg 持久化失败: "+perr.Error())
+		}
 		bin := ffmpegBin(cfg)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out, "path": bin, "version": ffmpegVersion(bin)})
 	})

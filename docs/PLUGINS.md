@@ -1,6 +1,6 @@
 # LNH-MusicTag 插件开发指南
 
-版本：v1.5.3（与主程序同步）｜ 仓库：github.com/lahuolou/lnh-musictag
+版本：v1.5.4（与主程序同步）｜ 仓库：github.com/lahuolou/lnh-musictag
 
 本文档说明 LNH-MusicTag 的插件框架：插件分**内置**与**第三方**两组，
 第三方插件以 **ZIP 插件包**形式导入（解压即用），也兼容纯 JSON 声明。
@@ -170,4 +170,5 @@ myplugin.zip
 | DELETE | `/api/plugins/{name}`         | 删除第三方导入插件（内置不可删）           |
 | POST   | `/api/plugins/{name}/run`     | 调用 ZIP 插件入口（op + 参数）            |
 | GET    | `/api/ffmpeg/status`          | FFmpeg 可用状态与版本                     |
-| POST   | `/api/ffmpeg/install`         | 容器内一键安装 FFmpeg                     |
+| POST   | `/api/ffmpeg/install`         | 容器内一键安装 FFmpeg（v1.5.4 起**自动持久化到配置卷** `$LNH_CONFIG_DIR/ffmpeg/`：二进制 + 动态库 + wrapper，镜像更新重建容器后自动认领，无需重装） |
+| POST   | `/api/ffmpeg/uninstall`       | 卸载并清理配置卷持久化产物                 |

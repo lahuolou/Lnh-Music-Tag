@@ -30,7 +30,7 @@ ghcr.io/lahuolou/lnh-musictag:latest
 
 The image is built automatically from the `main` branch of the GitHub repository `lahuolou/lnh-musictag` (GitHub Actions): multi-stage build → static binary on an alpine runtime (CA certificates + Chromaprint included, architecture auto-matched).
 
-> **FFmpeg is now an optional plugin** — the image no longer bundles it. To use format conversion, either (1) mount the host's `/usr/bin` into the container and set the path in **Settings → FFmpeg Plugin**, or (2) click "Install" in the same panel (runs `apk add ffmpeg` inside the container, needs root).
+> **FFmpeg is now an optional plugin** — the image no longer bundles it. To use format conversion, either (1) mount the host's `/usr/bin` into the container and set the path in **Settings → FFmpeg Plugin**, or (2) click "Install" in the same panel (runs `apk add ffmpeg` inside the container, needs root). **One-click install persists ffmpeg + its shared libs to the config volume (`/config/ffmpeg/`)**, so after image updates / container rebuilds it is picked up automatically — no reinstall needed.
 
 ### Quick deploy
 
@@ -137,7 +137,7 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/identify` | Convert / fix mojibake / script convert / identify |
 | GET/POST | `/api/plugins` | List / toggle / configure all plugins |
 | POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | Import ZIP/JSON plugin (overwrite keeps config) · delete · invoke |
-| GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg probe · one-click install |
+| GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg probe · one-click install (**persists to config volume, survives container rebuilds**) |
 | GET/POST | `/api/settings` | Read/write settings (incl. `editFields` for the edit panel) |
 | POST | `/api/change-password` | Change password |
 
@@ -178,7 +178,7 @@ ghcr.io/lahuolou/lnh-musictag:latest
 
 镜像由 GitHub 仓库 `lahuolou/lnh-musictag` 的 `main` 分支自动构建推送（GitHub Actions）：多阶段构建 → 静态二进制 + alpine 运行层（内置 CA 证书与 Chromaprint，按目标机架构自动适配）。
 
-> **FFmpeg 已改为可选插件**——镜像不再捆绑。需要「格式转换」时：① 把宿主机 `/usr/bin` 挂载进容器并在「设置 → FFmpeg 插件」填路径；② 或在同一面板点「一键安装」（容器内执行 `apk add ffmpeg`，需 root 权限）。
+> **FFmpeg 已改为可选插件**——镜像不再捆绑。需要「格式转换」时：① 把宿主机 `/usr/bin` 挂载进容器并在「设置 → FFmpeg 插件」填路径；② 或在同一面板点「一键安装」（容器内执行 `apk add ffmpeg`，需 root 权限）。**一键安装会自动把 ffmpeg 及动态库持久化到配置卷 `/config/ffmpeg/`**——之后更新镜像重建容器无需重装，启动即自动认领。
 
 ### 快速部署
 
@@ -285,7 +285,7 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/identify` | 转换 / 乱码修复 / 简繁转换 / 音频识别 |
 | GET/POST | `/api/plugins` | 插件列表 / 启停与配置 |
 | POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | 导入 ZIP/JSON 插件（同名覆盖保留配置）· 删除 · 调用 |
-| GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg 探测 · 容器内一键安装 |
+| GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg 探测 · 容器内一键安装（**持久化到配置卷，重建容器免重装**） |
 | GET/POST | `/api/settings` | 读写配置（含编辑面板字段 `editFields`） |
 | POST | `/api/change-password` | 修改密码 |
 
