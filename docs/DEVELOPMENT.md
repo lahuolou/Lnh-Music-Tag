@@ -407,9 +407,13 @@ Windows 本机调试：`Start-Process .\lnh-musictag.exe -ArgumentList "-port","
 | 去重后文件不见 | 检查配置目录下 trash/ 回收站 |
 | 接口报错格式异常 | 确认错误响应为 {"ok":false,"error":...} 统一结构 |
 | 更新镜像后又要重装 FFmpeg | v1.5.4 起一键安装会持久化到配置卷 `$LNH_CONFIG_DIR/ffmpeg/`（默认 `/config/ffmpeg`），重建容器后探测链自动认领 wrapper；若目录为空说明未持久化成功（/config 卷未挂载或写入失败），需在插件页重新一键安装 |
+| 播放器连不上 Subsonic | 地址应为 `http://<主机IP>:10248/rest`（带 /rest），用户名用后台账号；先用浏览器打开 `/rest/ping.view?u=...&p=...&v=1.16.1&c=t` 确认返回 status=ok |
+| Subsonic token 认证失败（40） | 专用密码 `subsonic_pass` 未配置时回退后台密码（加盐哈希，不可逆），仅支持明文/Basic；token 认证需先在插件页配置专用密码 |
+| Subsonic 播放器搜不到中文 | 搜索走 search3（query 支持 UTF-8），确认客户端传 `format=json` 或留空（缺省 XML 内容一致） |
 
 ## 10. 版本记录
 
+- v1.6.0：**内置 Subsonic API 协议输出插件（protocol.subsonic）**——用预留的 PluginProtocol 接口在 `/rest/*` 挂载标准 Subsonic 服务端 API（XML 缺省 + `format=json`，OpenSubsonic 结构），音流/Symfonium/Ultrasonic/DSub 等空壳播放器可直连本音乐库浏览/搜索/在线播放（stream 支持 Range）/下载/封面/歌词/收藏评分；三种认证（token=md5(pass+salt)/明文 p=含 enc: 前缀/Basic），插件页可配置专用密码 subsonic_pass，留空回退后台密码（仅明文/Basic）；错误码 40（认证失败）/70（未找到）；ID 规则曲目 t-<trackID>、艺术家 r-sha256(name)[:12]、专辑 a-sha256(artist\0album)[:12]；标签读取走 ssTag 大小写不敏感。**插件安全**：pluginsSnapshot 对 API Key 类字段（subsonic_pass/acoustid_key/spotify 等）统一脱敏为 `********`，保存时跳过占位符。**CI 修复**：workflow 增加 `v*` tag 触发（version-check + 构建在 tag 推送时真正执行）。随附 v1.5.4 后未发布的清理轮：插件卸载无残留（Config.Del 删除 settings 键）、列表筛选精简+列排序（封面-歌名-歌手-专辑-歌词）+ 移动端无横滑、进度条显示当前任务阶段、更新弹窗按钮修复、CSP 增加 font-src、更新检查取多源中数值最新版本。
 - v1.5.4：**FFmpeg 持久化安装**——一键安装后把二进制与动态库（ldd 解析，跳过 ld-musl/ld-linux 加载器）复制到配置卷 `$LNH_CONFIG_DIR/ffmpeg/`（bin/ 与 lib/），生成带 LD_LIBRARY_PATH 的 wrapper 并写入插件 path；`ffmpegBin` 探测链新增持久化回退（插件配置 → 旧键 ffmpeg_path → PATH → 配置卷 wrapper），镜像更新重建容器自动认领；`uninstallFFmpeg` 同步清理持久化目录；新增回归测试（persist 复制/wrapper/插件 path 写入、PATH 缺失时持久化认领、shell 转义）。删除 docs/DEVELOPMENT.html 中间渲染文档，README/开发文档/插件说明同步更新。
 - v1.5.3：乱码修复与简繁转换**覆盖全部 11 个文本元素**（新增作词/语言/专辑类型；繁体检测 detectTraditional 与阶段简繁转换共用同一 textFields 清单）；`fixMojibake` 修复——Latin-1 范围内 GBK 字节恰好构成合法 UTF-8 时旧逻辑直接重组会误改（如"黄家驹"GBK 字节），现 UTF-8 重组与 GBK 解码均作为候选参与得分比较取最优；一键刮削面板移除与下方进度条重复的独立阶段标签；新增回归测试（GBK-合法 UTF-8 不误改、11 字段全修复且 ASCII 不误动）。
 - v1.5.2：插件页两项体验——第三方插件卡片可折叠（配置区默认收起）；重复导入同名插件改为**覆盖升级且保留已填配置**（ZIP 与 JSON 导入同规则，内置插件仍拒绝覆盖）；插件页间距优化；插件开发说明文案同步更新（覆盖语义）。
