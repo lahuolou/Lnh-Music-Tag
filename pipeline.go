@@ -96,6 +96,16 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 	}
 
 	for si, st := range stages {
+		// 进入新阶段：重置阶段内进度（阶段进度 = 本阶段已处理曲目数/总曲目数）。
+		// 前端进度条据此显示"当前阶段"进度；自动去重阶段的哈希进度单独走
+		// hashDone/hashTotal（哈希期间逐首删除判断尚未开始）。
+		job.mu.Lock()
+		job.Stage = st.key
+		job.StageLabel = fmt.Sprintf("%s（%d/%d）", st.label, si+1, len(stages))
+		job.StageDone = 0
+		job.StageTotal = len(list)
+		job.mu.Unlock()
+
 		for i := range list {
 			if jobCanceled(job) {
 				return
@@ -104,6 +114,13 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 			// 每阶段从 store 取最新状态：前一阶段（如乱码修复/自动去重）可能已
 			// 重写标签/重命名/删除，后续阶段要基于最新状态处理，而不是启动快照。
 			cur := s.get(t.ID)
+			job.mu.Lock()
+			job.Current = ""
+			if cur != nil {
+				job.Current = cur.FileName
+			}
+			job.StageDone++
+			job.mu.Unlock()
 			if cur == nil {
 				// 已被去重等阶段删除：该曲目视为已完成
 				job.mu.Lock()
@@ -111,11 +128,6 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 				job.mu.Unlock()
 				continue
 			}
-			job.mu.Lock()
-			job.Stage = st.key
-			job.StageLabel = fmt.Sprintf("%s（%d/%d）", st.label, si+1, len(stages))
-			job.Current = cur.FileName
-			job.mu.Unlock()
 
 			nt, ok, skip, msg := st.fn(cur)
 			if nt != nil && nt.ID != cur.ID {

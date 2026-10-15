@@ -313,6 +313,11 @@ type scrapeJob struct {
 	// "哈希 x/n" 而不是 0/947 假死。
 	HashDone  int `json:"hashDone,omitempty"`
 	HashTotal int `json:"hashTotal,omitempty"`
+	// StageDone/StageTotal 当前流水线阶段内的进度（如去重阶段逐首判断、
+	// 乱码修复逐首处理）。前端进度条优先显示"当前阶段"的进度，
+	// 而不是全局"完成全部阶段的曲目数"，让用户直观看到阶段在推进。
+	StageDone  int `json:"stageDone,omitempty"`
+	StageTotal int `json:"stageTotal,omitempty"`
 	// Duration 任务已耗时（秒，进度轮询时按 CreatedAt 计算；历史任务无创建时间时为 0）。
 	Duration int `json:"duration,omitempty"`
 	// Updated carries tracks whose tags/cover changed since the last poll.
@@ -683,6 +688,8 @@ func jobProgressHandler(js *jobStore) http.HandlerFunc {
 			StageLabel: j.StageLabel,
 			HashDone:   j.HashDone,
 			HashTotal:  j.HashTotal,
+			StageDone:  j.StageDone,
+			StageTotal: j.StageTotal,
 			// 大任务瘦身：只回问题项（失败/跳过），成功项仅进 summary 计数。
 			Results: failResults(j.Results),
 			Summary: summarize(j.Results),

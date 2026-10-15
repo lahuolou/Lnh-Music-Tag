@@ -252,15 +252,22 @@ async function oneKey() {
     <button :disabled="busy() || state.selected.size === 0" @click="startBatch">{{ state.selected.size === 0 ? t('selBtn') : t('batchRun', { n: state.selected.size }) }}</button>
   </div>
 
-  <!-- 统一任务进度：批量刮削与工具任务共用一个进度条（curJob 优先显示运行中的任务） -->
+  <!-- 统一任务进度：批量刮削与工具任务共用一个进度条（curJob 优先显示运行中的任务）。
+       进度显示当前阶段：去重哈希 → hashDone/hashTotal；其余阶段 → stageDone/stageTotal；
+       无阶段信息时回退全局曲目进度 done/total。 -->
   <div v-if="curJob" style="margin-top:12px">
-    <div class="progbar"><div class="progfill" :style="{ width: (curJob.status === 'running' && curJob.hashTotal
+    <div class="progbar"><div class="progfill" :style="{ width: (curJob.status === 'running' && curJob.hashTotal && (curJob.hashDone || 0) < curJob.hashTotal
       ? Math.round((curJob.hashDone || 0) / curJob.hashTotal * 100)
-      : (curJob.total ? Math.round(curJob.done / curJob.total * 100) : 0)) + '%' }"></div></div>
+      : (curJob.status === 'running' && curJob.stageTotal
+          ? Math.round((curJob.stageDone || 0) / curJob.stageTotal * 100)
+          : (curJob.total ? Math.round(curJob.done / curJob.total * 100) : 0))) + '%' }"></div></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <div class="muted" style="flex:1;min-width:0">
-        <template v-if="curJob.status === 'running' && curJob.hashTotal">
+        <template v-if="curJob.status === 'running' && curJob.hashTotal && (curJob.hashDone || 0) < curJob.hashTotal">
           {{ t('hashProgress', { d: curJob.hashDone || 0, t: curJob.hashTotal, c: curJob.current || t('processing') }) }}
+        </template>
+        <template v-else-if="curJob.status === 'running' && curJob.stageTotal">
+          {{ t('stageProgress', { l: curJob.stageLabel || '', d: curJob.stageDone || 0, t: curJob.stageTotal, c: curJob.current || t('processing') }) }}
         </template>
         <template v-else-if="curJob.status === 'done'">
           {{ curIsBatch
