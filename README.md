@@ -18,9 +18,9 @@
 
 ### What is it
 
-**LNH-MusicTag** is a self-hosted web application for managing your music library's tags: **tag read/write, duplicate detection, multi-source metadata & lyrics scraping, batch fixing, format conversion, async scanning and audio-content identification** — all operated from the browser, no local CLI.
+**LNH-MusicTag** is a self-hosted web application for managing your music library's tags: **tag read/write, duplicate detection, multi-source metadata & lyrics scraping, one-key full pipeline, batch fixing, format conversion, async scanning and audio-content identification** — all operated from the browser, no local CLI.
 
-Built with **Go (go-taglib WASM wrapper of TagLib, no CGo) + pure-Go SHA256 dedup + Chromaprint audio fingerprinting + 17 scraping sources + lyrics + Vue 3 frontend**. All config (account, password, API keys) is stored in **SQLite** — no environment variables required.
+Built with **Go (go-taglib WASM wrapper of TagLib, no CGo) + pure-Go SHA256 dedup + Chromaprint audio fingerprinting + 17 scraping sources + lyrics + Vue 3 frontend**. All config (account, password, API keys, plugin settings) is stored in **SQLite** — no environment variables required.
 
 ### Docker image
 
@@ -86,17 +86,18 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 1 | Tag read/write | MP3/FLAC/M4A/OGG/WAV/WMA… via TagLib (WASM, no CGo); **29 elements**: title/artist/album/album artist/genre/year/track no./track total/composer/lyricist/language/album type/comment/disc no./disc total/lyrics + read-only audio properties (bitrate/sample rate/bit depth/channels/duration/file size/path/hash/MBID…) |
 | 2 | Editable panel | Which fields appear in the edit panel is configurable in **Settings → Edit panel fields**; **12 common fields checked by default** (cover/title/artist/album/album artist/genre/year/track/track total/composer/lyricist/lyrics), one-click restore defaults |
 | 3 | Async progressive scan | Tracks appear while scanning; incremental, no full reload; pause/resume; known files smart-skipped (no hashing during scan) |
-| 4 | Duplicate detection | SHA256 identical files + same-name multi-format (keeps best quality) + same artist+title; user checks & deletes manually (moved to trash, never permanent); **cross-volume delete fixed** (rename→copy+retry) |
+| 4 | Duplicate detection | SHA256 identical files + same-name multi-format (keeps best quality) + same artist+title; user checks & deletes manually (moved to trash, never permanent); **concurrent hashing (8 workers, cancellable, per-file timeout)** — no more "stuck at 0/N" on slow/network disks |
 | 5 | **Concurrent multi-source scraping** | **All enabled sources are queried in parallel and results merged**; the best match is picked across sources (title similarity + album completeness) before writing tags; batch/one-key/lyrics/cover/search all share this path |
 | 6 | Lyrics | NetEase (3s short timeout + retry) → QQ → lrclib multi-level fallback, **independent of search hits**; get/edit/embed; batch included; external .lrc import |
 | 7 | Batch scrape | Selectable fields (cover/title/artist/genre/year/album artist/track/lyrics…, 28+cover), smart-skip filled tracks, background job with live progress, list updates incrementally; three-state messages (cover failed / smart-skip / no data) |
-| 8 | Audio-content identify | Untagged/un-named tracks (e.g. `track01.mp3`) matched by Chromaprint fingerprint against the library; optional external AcoustID lookup (set API key in Settings) |
-| 9 | File ops | Rename-to-tag (`Artist - Title.ext`), strip bad/duplicate extensions by real codec sniff (`发如雪.mp3.flac → 发如雪.flac`), format conversion (ffmpeg plugin, optional), mojibake repair (GBK/UTF-8), Simplified⇄Traditional (OpenCC, **scrape results auto-converted to Simplified**), artist>3 → "合唱" |
-| 10 | List & UX | Sticky table header, filters (**with/without lyrics, with/without cover**, mojibake/traditional/no-artist), real-time search, paginated rendering, **cached cover loading** (mtime-keyed cache, ~2ms repeat hits, 0 broken images), mobile responsive |
-| 11 | Theme | Dark/light modern flat UI, language toggle 中/EN |
-| 12 | Security | Salted password hashing (auto-migrates legacy plaintext), login rate limiting, CSRF guard, security headers (CSP/nosniff/X-Frame), request size limits, parameterized SQL, no shell command injection |
-| 13 | Slim job API | `/api/jobs/{id}` returns only failed items + summary counts (588-track job: 170KB → 263B); lyrics fetched on demand via `GET /api/track/{id}` |
-| 14 | Plugin system | Built-in plugins (scrape sources / FFmpeg) are toggle-only & undeletable; **3rd-party plugins import as ZIP packages** (extract & ready, `plugin.json` + executable entry, cross-platform, JSON run protocol, persistent after restart, deletable); generic plugin API reserves `download` / `protocol` kinds for future plugins |
+| 8 | **One-key pipeline** | Check tracks and run the whole flow in one click: **auto-dedup → mojibake fix → Traditional→Simplified → filename artist fill → multi-source scrape**; the progress bar shows the **current stage** (dedup hashes / fix-encoding / script convert / scrape element stage) with per-file names |
+| 9 | Audio-content identify | Untagged/un-named tracks (e.g. `track01.mp3`) matched by Chromaprint fingerprint against the library; optional external AcoustID lookup (set API key in Settings) |
+| 10 | File ops | Rename-to-tag (`Artist - Title.ext`), strip bad/duplicate extensions by real codec sniff (`发如雪.mp3.flac → 发如雪.flac`), format conversion (ffmpeg plugin, optional), mojibake repair (GBK/UTF-8), Simplified⇄Traditional (OpenCC, **scrape results auto-converted to Simplified**), artist>3 → "合唱" |
+| 11 | List & UX | Sticky table header, filters (**with/without lyrics, with/without cover**, mojibake/traditional/no-artist), real-time search, paginated rendering, **cached cover loading** (mtime-keyed cache, ~2ms repeat hits, 0 broken images), mobile responsive |
+| 12 | Theme | Dark/light modern flat UI, language toggle 中/EN |
+| 13 | Security | Salted password hashing (auto-migrates legacy plaintext), login rate limiting, CSRF guard, security headers (CSP/nosniff/X-Frame), request size limits, parameterized SQL, no shell command injection |
+| 14 | Slim job API | `/api/jobs/{id}` returns only failed items + summary counts (588-track job: 170KB → 263B); lyrics fetched on demand via `GET /api/track/{id}` |
+| 15 | Plugin system | Built-in plugins (scrape sources / FFmpeg / AcoustID) are toggle-only & undeletable; **3rd-party plugins import as ZIP packages** (extract & ready, `plugin.json` + executable entry, cross-platform, JSON run protocol, persistent after restart); **re-importing the same name upgrades in place and keeps your saved config** (Cookie/Key untouched); **plugin cards are collapsible** on the Plugins page; generic plugin API reserves `download` / `protocol` kinds |
 
 ### Scraping sources
 
@@ -130,12 +131,12 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | POST | `/api/tracks/delete` `/api/duplicates/remove` | Delete selected files (to trash) |
 | GET | `/api/tracks/{id}/cover` `/api/tracks/{id}/lrcfile` `/api/track/{id}` | Cover (cached) / external LRC / full track detail |
 | POST | `/api/tracks/{id}/tags` `/api/tracks/{id}/scrape` `/api/tracks/{id}/cover` | Save tags / scrape / clear cover |
-| POST | `/api/scrape/batch` | Batch scrape (background) |
-| GET | `/api/scrape/jobs/{id}` `/api/scrape/search` `/api/scrape/sources` | Job progress (slim) / **concurrent search** / sources |
+| POST | `/api/scrape/batch` `/api/scrape/onekey` | Batch scrape / **one-key pipeline** (background) |
+| GET | `/api/scrape/jobs/{id}` `/api/scrape/search` `/api/scrape/sources` | Job progress (slim, with **stage progress**) / concurrent search / sources |
 | GET | `/api/lyrics` | Fetch lyrics (multi-level fallback) |
 | POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/identify` | Convert / fix mojibake / script convert / identify |
 | GET/POST | `/api/plugins` | List / toggle / configure all plugins |
-| POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | Import ZIP/JSON plugin · delete · invoke |
+| POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | Import ZIP/JSON plugin (overwrite keeps config) · delete · invoke |
 | GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg probe · one-click install |
 | GET/POST | `/api/settings` | Read/write settings (incl. `editFields` for the edit panel) |
 | POST | `/api/change-password` | Change password |
@@ -163,9 +164,9 @@ go build -o lnh .                        # embed frontend + build binary
 
 ### 项目简介
 
-**LNH-MusicTag** 是一款自托管的音乐库标签管理 Web 工具：**标签读写、歌曲去重、多源元数据/歌词刮削、批量修正、格式转换、异步扫描、音频内容识别**，全部操作通过浏览器后台完成，无需本地命令行。
+**LNH-MusicTag** 是一款自托管的音乐库标签管理 Web 工具：**标签读写、歌曲去重、多源元数据/歌词刮削、一键刮削、批量修正、格式转换、异步扫描、音频内容识别**，全部操作通过浏览器后台完成，无需本地命令行。
 
-技术栈：**Go 后端（go-taglib WASM 封装 TagLib，无 CGo）+ 纯 Go SHA256 去重 + Chromaprint 音频指纹识别 + 17 个刮削源 + 歌词 + Vue3 前端**；账号、密码、API Key 等配置全部存 **SQLite**（不依赖环境变量）。
+技术栈：**Go 后端（go-taglib WASM 封装 TagLib，无 CGo）+ 纯 Go SHA256 去重 + Chromaprint 音频指纹识别 + 17 个刮削源 + 歌词 + Vue3 前端**；账号、密码、API Key、插件配置等全部存 **SQLite**（不依赖环境变量）。
 
 前端采用 **Vue 3 + Vite**，构建产物约 170KB JS，`go:embed` 进单个静态二进制；Docker 多阶段构建（node → Go → scratch），运行时无 node 依赖、不额外占内存。
 
@@ -233,17 +234,18 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 1 | 标签读写 | MP3/FLAC/M4A/OGG/WAV/WMA…（TagLib WASM，无 CGo）：**29 个元素**——歌名/艺术家/专辑/专辑艺术家/流派/年份/曲目号/总曲目数/作曲家/作词/语言/专辑类型/简介/碟号/总碟数/歌词 + 只读音频属性（比特率/采样率/位深度/声道/时长/文件大小/路径/哈希/MBID…） |
 | 2 | 可配置编辑面板 | 「设置 → 编辑面板显示字段」自定义显示哪些元素，**默认勾选 12 个常用项**（封面/歌名/艺术家/专辑/专辑艺术家/风格/年代/曲目号/总曲目数/作曲家/作词/歌词），一键恢复默认 |
 | 3 | 异步渐进扫描 | 边扫边出、增量入库、不整表刷新；可暂停/继续；已知文件智能跳过（扫描不哈希，速度快） |
-| 4 | 歌曲去重 | SHA256 内容相同 + 同名多格式（保留音质最佳）+ 艺术家+标题相同；人工勾选删除（**移入回收站**，绝不永久删除）；**跨卷删除已修复**（同卷 rename / 跨卷复制后删源 + 重试，一键去重真正可用） |
+| 4 | 歌曲去重 | SHA256 内容相同 + 同名多格式（保留音质最佳）+ 艺术家+标题相同；人工勾选删除（**移入回收站**，绝不永久删除）；**并发哈希（8 线程、可取消、单文件超时兜底）**——慢盘/网络挂载下不再「卡在 0/N」 |
 | 5 | **多源并发刮削** | **全部启用源同时查询、结果合并**，写入前跨源挑最佳匹配（标题相似度 + 专辑完整性）；批量/一键/歌词/海报/搜索全部共用此链路 |
 | 6 | 歌词 | 网易云（3s 短超时+重试）→ QQ → lrclib 多级兜底，**不依赖搜索是否命中**；单曲获取/编辑/嵌入；批量可选；外挂 .lrc 一键导入 |
 | 7 | 批量补全 | 字段可选（28 字段+封面）、智能跳过已填曲目、后台运行、进度实时可见、列表增量更新；**三态消息**（封面失败/智能跳过/无可用数据） |
-| 8 | 音频内容识别 | 无标签/无文件名信息的曲目（如 `track01.mp3`）按 Chromaprint 指纹与库内已标注曲目匹配；可选外部 AcoustID 听声识曲（设置页填 Key） |
-| 9 | 文件处理 | 保存即重命名（`艺术家 - 标题.后缀`）；按真实编码去重复/错误后缀（`发如雪.mp3.flac → 发如雪.flac`）；格式转换（ffmpeg 可选插件）；乱码修复（GBK/UTF-8）；简繁体转换（OpenCC，**刮削结果统一转简体**）；艺术家>3 位 → 一键改「合唱」 |
-| 10 | 列表与体验 | 表头冻结；筛选（**有歌词/无歌词、有海报/无海报**、乱码/繁体/无艺术家）；输入即搜歌名；分页渲染不卡；**封面缓存加载**（mtime 失效缓存，重复请求 ~2ms，0 坏图）；手机横竖屏适配 |
-| 11 | 主题与语言 | 黑/白现代扁平主题；界面中英双语一键切换 |
-| 12 | 安全加固 | 密码加盐哈希存储（旧明文自动迁移）、登录失败限流、CSRF 防护、安全响应头（CSP/nosniff/X-Frame）、请求体大小限制、SQL 全参数化、命令无注入风险 |
-| 13 | 任务接口瘦身 | `/api/jobs/{id}` 只返回失败项 + summary 计数（588 首任务 170KB → 263B）；歌词正文经 `GET /api/track/{id}` 按需拉取 |
-| 14 | 插件系统 | 内置插件（刮削源 / FFmpeg）只有开关、不可删除；**第三方插件以 ZIP 插件包导入**（解压即用：plugin.json + 可执行入口、跨平台、JSON 调用协议、重启保留、可删除）；通用插件接口预留 download/protocol 两类 |
+| 8 | **一键刮削** | 勾选曲目一键跑完整流水线：**自动去重 → 乱码修复 → 繁体转简体 → 文件名补艺术家 → 多源刮削**；进度条显示**当前阶段**进度（去重哈希数/乱码修复/简繁转换/刮削元素各自计数 + 当前文件名），取消即时生效 |
+| 9 | 音频内容识别 | 无标签/无文件名信息的曲目（如 `track01.mp3`）按 Chromaprint 指纹与库内已标注曲目匹配；可选外部 AcoustID 听声识曲（设置页填 Key） |
+| 10 | 文件处理 | 保存即重命名（`艺术家 - 标题.后缀`）；按真实编码去重复/错误后缀（`发如雪.mp3.flac → 发如雪.flac`）；格式转换（ffmpeg 可选插件）；乱码修复（GBK/UTF-8）；简繁体转换（OpenCC，**刮削结果统一转简体**）；艺术家>3 位 → 一键改「合唱」 |
+| 11 | 列表与体验 | 表头冻结；筛选（**有歌词/无歌词、有海报/无海报**、乱码/繁体/无艺术家）；输入即搜歌名；分页渲染不卡；**封面缓存加载**（mtime 失效缓存，重复请求 ~2ms，0 坏图）；手机横竖屏适配 |
+| 12 | 主题与语言 | 黑/白现代扁平主题；界面中英双语一键切换 |
+| 13 | 安全加固 | 密码加盐哈希存储（旧明文自动迁移）、登录失败限流、CSRF 防护、安全响应头（CSP/nosniff/X-Frame）、请求体大小限制、SQL 全参数化、命令无注入风险 |
+| 14 | 任务接口瘦身 | `/api/jobs/{id}` 只返回失败项 + summary 计数（588 首任务 170KB → 263B）；歌词正文经 `GET /api/track/{id}` 按需拉取 |
+| 15 | 插件系统 | 内置插件（刮削源 / FFmpeg / AcoustID）只有开关、不可删除；**第三方插件以 ZIP 插件包导入**（解压即用：plugin.json + 可执行入口、跨平台、JSON 调用协议、重启保留）；**重复导入同名插件 = 覆盖升级，已填配置（Cookie/Key）原样保留**；**插件卡片可折叠**（配置区默认收起，点卡片头展开）；通用插件接口预留 download/protocol 两类 |
 
 ### 刮削源清单
 
@@ -277,12 +279,12 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | POST | `/api/tracks/delete` `/api/duplicates/remove` | 删除选中文件（进回收站） |
 | GET | `/api/tracks/{id}/cover` `/api/tracks/{id}/lrcfile` `/api/track/{id}` | 封面（缓存）/ 外挂 LRC / 单曲完整详情 |
 | POST | `/api/tracks/{id}/tags` `/api/tracks/{id}/scrape` `/api/tracks/{id}/cover` | 保存标签 / 刮削 / 清除封面 |
-| POST | `/api/scrape/batch` | 批量刮削（后台任务） |
-| GET | `/api/scrape/jobs/{id}` `/api/scrape/search` `/api/scrape/sources` | 任务进度（瘦身）/ **并发搜索** / 源列表 |
+| POST | `/api/scrape/batch` `/api/scrape/onekey` | 批量刮削 / **一键刮削流水线**（后台任务） |
+| GET | `/api/scrape/jobs/{id}` `/api/scrape/search` `/api/scrape/sources` | 任务进度（瘦身，含**阶段进度**）/ 并发搜索 / 源列表 |
 | GET | `/api/lyrics` | 获取歌词（多级兜底） |
 | POST | `/api/convert` `/api/fix-encoding` `/api/convert-script` `/api/identify` | 转换 / 乱码修复 / 简繁转换 / 音频识别 |
 | GET/POST | `/api/plugins` | 插件列表 / 启停与配置 |
-| POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | 导入 ZIP/JSON 插件 · 删除 · 调用 |
+| POST | `/api/plugins/import` · DELETE `/api/plugins/{name}` · POST `/api/plugins/{name}/run` | 导入 ZIP/JSON 插件（同名覆盖保留配置）· 删除 · 调用 |
 | GET | `/api/ffmpeg/status` · POST `/api/ffmpeg/install` | FFmpeg 探测 · 容器内一键安装 |
 | GET/POST | `/api/settings` | 读写配置（含编辑面板字段 `editFields`） |
 | POST | `/api/change-password` | 修改密码 |

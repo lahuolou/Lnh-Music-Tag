@@ -381,7 +381,7 @@ my-plugin.zip
 
 二、plugin.json 字段
 {
-  "name": "my.plugin",          // 唯一标识，不可与已有插件重名
+  "name": "my.plugin",          // 唯一标识；重复导入同名插件将覆盖升级（保留已填配置）
   "label": "我的插件",            // 插件页显示名，也是主界面插件 tab 名
   "kind": "tool",               // 类型：scrape=刮削源 / tool=工具 / download=下载器（预留）/ protocol=协议（预留）
   "version": "1.0.0",           // 版本号
@@ -415,7 +415,8 @@ my-plugin.zip
 五、限制与安全
 · 插件包上限 256MB；
 · 解压禁止路径穿越（..），非法包直接拒绝；
-· 重名插件会被拒绝，需先删除旧插件再导入。`,
+· 重复导入同名插件 = 覆盖升级：更新插件定义，已填配置（Key/Cookie 等）原样保留；
+· 内置插件（scrape.* / FFmpeg / AcoustID）不可覆盖、不可删除。`,
     extImportZipOnly: '仅支持 .zip 插件包',
     extTooBig: '插件包超过 256MB 上限，无法导入',
     extImportOk: '已导入 {name}',
@@ -807,7 +808,7 @@ my-plugin.zip
 
 2. plugin.json fields
 {
-  "name": "my.plugin",          // unique id, must not collide with existing plugins
+  "name": "my.plugin",          // unique id; re-importing the same name upgrades it (keeps saved config)
   "label": "My Plugin",         // display name on the plugin page, also the plugin tab label
   "kind": "tool",               // scrape=scrape source / tool=tool / download=downloader (reserved) / protocol=protocol (reserved)
   "version": "1.0.0",           // version
@@ -840,7 +841,8 @@ my-plugin.zip
 5. Limits & security
 · Max package size 256MB;
 · Zip-slip (..) is rejected;
-· Duplicate names are rejected; delete the old plugin first.`,
+· Re-importing the same plugin name upgrades it in place (keeps saved config);
+· Built-in plugins (scrape.* / FFmpeg / AcoustID) cannot be overwritten or deleted.`,
     extImportZipOnly: 'Only .zip plugin packages are supported',
     extTooBig: 'Plugin package exceeds 256MB limit',
     extImportOk: 'Imported {name}',

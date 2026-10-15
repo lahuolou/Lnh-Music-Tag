@@ -208,10 +208,6 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 			writeErr(w, http.StatusBadRequest, "插件声明为空或格式不正确")
 			return
 		}
-		existing := map[string]bool{}
-		for _, p := range pluginsSnapshot() {
-			existing[p.Name] = true
-		}
 		imported := []Plugin{}
 		for _, d := range decls {
 			if d.Name == "" || d.Label == "" {
@@ -244,7 +240,6 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 				Fields:  d.Fields,
 				Config:  oldConfig,
 			}, nil)
-			existing[d.Name] = true
 			imported = append(imported, Plugin{Name: d.Name, Label: d.Label, Kind: kind, Enabled: true, Version: d.Version, Hint: d.Hint, Fields: d.Fields, Config: oldConfig})
 			addLog("act_plugin_import", true, 1, 0, 0, "导入插件 "+d.Label+"（"+d.Name+"）")
 		}
