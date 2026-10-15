@@ -219,10 +219,6 @@ async function oneKey() {
       </button>
       <span class="muted small">{{ t('oneKeySelHint') }}</span>
     </div>
-    <!-- 阶段进度（后端返回 stageLabel） -->
-    <div v-if="state.batchJob && state.batchJob.stageLabel" class="muted" style="margin-top:10px">
-      🔄 {{ state.batchJob.stageLabel }}
-    </div>
   </div>
 
   <!-- 批量刮削元素 -->

@@ -19,9 +19,13 @@ import (
 )
 
 // textFields 是需要承载人读文本、参与乱码修复 / 简繁转换的标签字段。
+// 覆盖全部可编辑文本元素（29 元素中的文本型字段）：歌名/艺术家/专辑/
+// 专辑艺术家/风格/作曲家/作词/简介/歌词/语言/专辑类型。
+// 数值与属性键（曲目号/年代/增益/比特率等）不参与——无文本可转。
 var textFields = []string{
 	taglibx.Title, taglibx.Artist, taglibx.Album, taglibx.AlbumArtist,
-	taglibx.Genre, taglibx.Composer, taglibx.Comment, taglibx.Lyrics,
+	taglibx.Genre, taglibx.Composer, taglibx.Lyricist, taglibx.Comment,
+	taglibx.Lyrics, taglibx.Language, taglibx.ReleaseType,
 }
 
 // resolveTracks converts an id list into the store's tracks; an empty list
@@ -125,20 +129,7 @@ func fixMojibake(s string) string {
 		return cj*3 - (total-cj)*3 - kana*5 - rare*10
 	}
 
-	// 字符串全在 Latin-1 范围：很可能是 UTF-8/GBK 字节被按 Latin-1 读出。
-	if latin, ok := latinBytesOf(s); ok {
-		// 情形 C（优先、确定）：字节即原始 UTF-8，重组解码
-		if utf8.Valid(latin) {
-			return string(latin)
-		}
-		// 情形 B：字节是 GBK，按 GBK 解码
-		if b, err := simplifiedchinese.GBK.NewDecoder().Bytes(latin); err == nil && score(string(b)) > score(s) {
-			return string(b)
-		}
-		return s
-	}
-
-	// 含非 Latin-1 字符：尝试 GBK/UTF-8 错读还原，按得分取最优。
+	// 候选统一走得分机制：正常中文得分最高，乱码/生僻/非中文字符扣分。
 	best, bestScore := s, score(s)
 	try := func(c string) {
 		if c == "" || c == s || !utf8.ValidString(c) || strings.ContainsRune(c, '\uFFFD') {
@@ -152,6 +143,21 @@ func fixMojibake(s string) string {
 			best, bestScore = c, sc
 		}
 	}
+
+	// 字符串全在 Latin-1 范围：很可能是 UTF-8/GBK 字节被按 Latin-1 读出。
+	if latin, ok := latinBytesOf(s); ok {
+		// 情形 C：字节即原始 UTF-8，重组解码（作为候选参与比分——GBK 字节
+		// 恰好构成合法 UTF-8 序列时重组会得到错误汉字串，靠得分机制纠正）
+		if utf8.Valid(latin) {
+			try(string(latin))
+		}
+		// 情形 B：字节是 GBK，按 GBK 解码
+		if b, err := simplifiedchinese.GBK.NewDecoder().Bytes(latin); err == nil {
+			try(string(b))
+		}
+		return best
+	}
+
 	// 情形 A：UTF-8 字节被按 GBK 读出（"浣犲ソ"）→ 再编码为 GBK、按 UTF-8 解码
 	if b, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(s)); err == nil && utf8.Valid(b) {
 		try(string(b))

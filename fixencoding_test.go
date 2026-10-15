@@ -133,6 +133,75 @@ func TestDetectTraditional(t *testing.T) {
 	}
 }
 
+func TestFixMojibakeGbkBytesValidUtf8(t *testing.T) {
+	// 回归：GBK 字节序列恰好构成合法 UTF-8 时，情形 C 的重组是错误汉字串，
+	// 必须由得分机制纠正走情形 B（GBK 解码回原文）。旧实现直接 return 会误修。
+	for _, s := range []string{"黄家驹", "张学友", "海阔天空"} {
+		gbkBytes, _ := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(s))
+		latin := ""
+		for _, x := range gbkBytes {
+			latin += string(rune(x))
+		}
+		got := fixMojibake(latin)
+		if got != s {
+			t.Fatalf("fixMojibake(GBK字节%q) = %q, want %q", s, got, s)
+		}
+	}
+}
+
+func TestRepairTrackTextAllFields(t *testing.T) {
+	// 所有可编辑文本元素都应参与乱码修复：歌名/艺术家/专辑/专辑艺术家/风格/
+	// 作曲家/作词/简介/歌词/语言/专辑类型。构造每个字段均为 GBK 字节串
+	// （按 Latin-1/单字节读出的乱码形态），断言全部被修复为简体原文。
+	gbk := func(s string) string {
+		b, _ := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(s))
+		out := ""
+		for _, x := range b {
+			out += string(rune(x))
+		}
+		return out
+	}
+	tr := &model.Track{
+		FileName: "test.flac",
+		Tags: map[string]string{
+			taglibx.Title:       gbk("海阔天空"),
+			taglibx.Artist:      gbk("Beyond"),
+			taglibx.Album:       gbk("乐与怒"),
+			taglibx.AlbumArtist: gbk("Beyond"),
+			taglibx.Genre:       gbk("摇滚"),
+			taglibx.Composer:    gbk("黄家驹"),
+			taglibx.Lyricist:    gbk("黄家驹"),
+			taglibx.Comment:     gbk("经典专辑"),
+			taglibx.Lyrics:      "[00:00.00]" + gbk("海阔天空") + "\n[00:05.00]" + gbk("仍记起"),
+			taglibx.Language:    gbk("粤语"),
+			taglibx.ReleaseType: "Album", // ASCII，无需修复
+		},
+	}
+	_, m, _ := repairTrackText(tr)
+	want := map[string]string{
+		taglibx.Title:    "海阔天空",
+		taglibx.Album:    "乐与怒",
+		taglibx.Genre:    "摇滚",
+		taglibx.Composer: "黄家驹",
+		taglibx.Lyricist: "黄家驹",
+		taglibx.Comment:  "经典专辑",
+		taglibx.Language: "粤语",
+		taglibx.Lyrics:   "[00:00.00]海阔天空\n[00:05.00]仍记起",
+	}
+	for k, v := range want {
+		gotVals := m[k]
+		if len(gotVals) == 0 || gotVals[0] != v {
+			t.Fatalf("字段 %s 未修复为 %q: 实际 %v", k, v, gotVals)
+		}
+	}
+	// 纯 ASCII 字段（Beyond / Album）无乱码，不应进入修复表，也不应被误改
+	for _, k := range []string{taglibx.Artist, taglibx.AlbumArtist, taglibx.ReleaseType} {
+		if len(m[k]) > 0 {
+			t.Fatalf("ASCII 字段 %s 被改动: %v", k, m[k])
+		}
+	}
+}
+
 func TestFixEncodingHandlerFilenameFallback(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg 不可用，跳过集成测试")

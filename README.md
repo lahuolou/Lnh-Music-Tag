@@ -92,7 +92,7 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 7 | Batch scrape | Selectable fields (cover/title/artist/genre/year/album artist/track/lyrics…, 28+cover), smart-skip filled tracks, background job with live progress, list updates incrementally; three-state messages (cover failed / smart-skip / no data) |
 | 8 | **One-key pipeline** | Check tracks and run the whole flow in one click: **auto-dedup → mojibake fix → Traditional→Simplified → filename artist fill → multi-source scrape**; the progress bar shows the **current stage** (dedup hashes / fix-encoding / script convert / scrape element stage) with per-file names |
 | 9 | Audio-content identify | Untagged/un-named tracks (e.g. `track01.mp3`) matched by Chromaprint fingerprint against the library; optional external AcoustID lookup (set API key in Settings) |
-| 10 | File ops | Rename-to-tag (`Artist - Title.ext`), strip bad/duplicate extensions by real codec sniff (`发如雪.mp3.flac → 发如雪.flac`), format conversion (ffmpeg plugin, optional), mojibake repair (GBK/UTF-8), Simplified⇄Traditional (OpenCC, **scrape results auto-converted to Simplified**), artist>3 → "合唱" |
+| 10 | File ops | Rename-to-tag (`Artist - Title.ext`), strip bad/duplicate extensions by real codec sniff (`发如雪.mp3.flac → 发如雪.flac`), format conversion (ffmpeg plugin, optional), mojibake repair (GBK/UTF-8, **covers all 11 text elements incl. lyricist/language/album type**), Simplified⇄Traditional (OpenCC, **scrape results auto-converted to Simplified**, same full-element coverage), artist>3 → "合唱" |
 | 11 | List & UX | Sticky table header, filters (**with/without lyrics, with/without cover**, mojibake/traditional/no-artist), real-time search, paginated rendering, **cached cover loading** (mtime-keyed cache, ~2ms repeat hits, 0 broken images), mobile responsive |
 | 12 | Theme | Dark/light modern flat UI, language toggle 中/EN |
 | 13 | Security | Salted password hashing (auto-migrates legacy plaintext), login rate limiting, CSRF guard, security headers (CSP/nosniff/X-Frame), request size limits, parameterized SQL, no shell command injection |
@@ -240,7 +240,7 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 7 | 批量补全 | 字段可选（28 字段+封面）、智能跳过已填曲目、后台运行、进度实时可见、列表增量更新；**三态消息**（封面失败/智能跳过/无可用数据） |
 | 8 | **一键刮削** | 勾选曲目一键跑完整流水线：**自动去重 → 乱码修复 → 繁体转简体 → 文件名补艺术家 → 多源刮削**；进度条显示**当前阶段**进度（去重哈希数/乱码修复/简繁转换/刮削元素各自计数 + 当前文件名），取消即时生效 |
 | 9 | 音频内容识别 | 无标签/无文件名信息的曲目（如 `track01.mp3`）按 Chromaprint 指纹与库内已标注曲目匹配；可选外部 AcoustID 听声识曲（设置页填 Key） |
-| 10 | 文件处理 | 保存即重命名（`艺术家 - 标题.后缀`）；按真实编码去重复/错误后缀（`发如雪.mp3.flac → 发如雪.flac`）；格式转换（ffmpeg 可选插件）；乱码修复（GBK/UTF-8）；简繁体转换（OpenCC，**刮削结果统一转简体**）；艺术家>3 位 → 一键改「合唱」 |
+| 10 | 文件处理 | 保存即重命名（`艺术家 - 标题.后缀`）；按真实编码去重复/错误后缀（`发如雪.mp3.flac → 发如雪.flac`）；格式转换（ffmpeg 可选插件）；乱码修复（GBK/UTF-8，**覆盖全部 11 个文本元素，含作词/语言/专辑类型**）；简繁体转换（OpenCC，**刮削结果统一转简体**，同样全元素覆盖）；艺术家>3 位 → 一键改「合唱」 |
 | 11 | 列表与体验 | 表头冻结；筛选（**有歌词/无歌词、有海报/无海报**、乱码/繁体/无艺术家）；输入即搜歌名；分页渲染不卡；**封面缓存加载**（mtime 失效缓存，重复请求 ~2ms，0 坏图）；手机横竖屏适配 |
 | 12 | 主题与语言 | 黑/白现代扁平主题；界面中英双语一键切换 |
 | 13 | 安全加固 | 密码加盐哈希存储（旧明文自动迁移）、登录失败限流、CSRF 防护、安全响应头（CSP/nosniff/X-Frame）、请求体大小限制、SQL 全参数化、命令无注入风险 |

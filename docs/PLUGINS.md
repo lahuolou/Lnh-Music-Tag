@@ -1,6 +1,6 @@
 # LNH-MusicTag 插件开发指南
 
-版本：v1.5.2（与主程序同步）｜ 仓库：github.com/lahuolou/lnh-musictag
+版本：v1.5.3（与主程序同步）｜ 仓库：github.com/lahuolou/lnh-musictag
 
 本文档说明 LNH-MusicTag 的插件框架：插件分**内置**与**第三方**两组，
 第三方插件以 **ZIP 插件包**形式导入（解压即用），也兼容纯 JSON 声明。
