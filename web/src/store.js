@@ -38,7 +38,7 @@ export function busy() {
 // - force=false（自动：登录成功/刷新恢复会话）：调 /api/version 读缓存；
 //   有新版弹更新窗（同一版本号每个会话只提醒一次，避免反复打扰）；
 //   已是最新或查询失败均静默。
-export const verState = { ver: null, showUpdate: false }
+export const verState = reactive({ ver: null, showUpdate: false })
 
 // verNewer 数值化逐段比较版本：latest 是否比 current 新（1.4.50 → 1.5.0 判新，
 // "1.4.3" vs "1.4.7" 判旧）。与后端 hasUpdate 口径一致，避免字符串比较误判。

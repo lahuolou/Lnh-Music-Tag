@@ -20,9 +20,26 @@
 | `scrape`   | 刮削源 / 音源（元数据、歌词、封面）       | `scrape.qq`、`scrape.netease` |
 | `tool`     | 工具                                    | `tool.ffmpeg` |
 | `download` | 下载器（预留）                           | —                           |
-| `protocol` | 服务端协议（Subsonic 等，预留）           | —                           |
+| `protocol` | 服务端协议                               | `protocol.subsonic`（内置）  |
 
-## 二、内置刮削源与并发调度
+## 二、内置协议插件：Subsonic API 输出（v1.6.0）
+
+内置 `protocol.subsonic` 在现有 Web 服务上挂载 `GET /rest/*`，对外提供标准
+Subsonic 服务端 API（XML 缺省 + `format=json`），音流 / Symfonium / Ultrasonic /
+DSub 等空壳播放器可直接添加服务器连接本音乐库。
+
+- **认证**：三种——token（`md5(pass+salt)`）、明文 `p=`（含 `enc:` 前缀）、
+  HTTP Basic。插件页可配置专用密码 `subsonic_pass`；留空回退后台账号密码
+  （加盐哈希，仅明文/Basic 可用）。认证失败返回错误码 40，未找到返回 70。
+- **连接地址**：`http://<主机IP>:10248/rest`，用户名用后台账号。
+- **能力**：浏览（getIndexes/getArtist/getAlbum/getMusicDirectory/getAlbumList）、
+  搜索（search/search2/search3）、在线播放（stream，支持 Range 断点续传）、
+  下载（download）、封面（getCoverArt）、歌词（getLyrics）、收藏/评分/
+  播放记录（star/setRating/scrobble）等，未知方法返回 status=ok。
+- **实现**：见 `subsonic.go`；曲目标签大小写不敏感读取走 `ssTag`；ID 规则
+  曲目 `t-<trackID>`、艺术家 `r-sha256(name)[:12]`、专辑 `a-sha256(artist\0album)[:12]`。
+
+## 三、内置刮削源与并发调度
 
 内置刮削源在 `internal/scrape/` 实现统一的 `Source` 接口，注册进
 `registerBuiltinPlugins`（`plugins_api.go`）联动启停。**所有启用的刮削源
@@ -42,12 +59,12 @@
 - 源请求带全局超时与限速（网易云歌词另设 3s 短超时）；
 - 插件页开关、Key 配置（NeedsKey / KeyField）与持久化。
 
-## 三、ZIP 插件包（推荐，导入即用）
+## 四、ZIP 插件包（推荐，导入即用）
 
 ZIP 插件包是**自包含**的插件：一个 `plugin.json` 声明 + 各平台可执行入口，
 导入后宿主自动解压并注册，无需重新编译镜像。
 
-### 3.1 包结构
+### 4.1 包结构
 
 ```
 myplugin.zip
@@ -58,7 +75,7 @@ myplugin.zip
     └── myplugin-windows-amd64.exe
 ```
 
-### 3.2 plugin.json 声明格式
+### 4.2 plugin.json 声明格式
 
 ```json
 {
@@ -85,7 +102,7 @@ myplugin.zip
 | `entries` | ✅   | 平台 → 包内相对入口路径；宿主按运行平台选择入口执行。          |
 | `fields`  |      | 配置字段数组（同 JSON 插件），前端据此渲染配置表单。            |
 
-### 3.3 宿主调用协议（run）
+### 4.3 宿主调用协议（run）
 
 宿主以固定 JSON 协议调用插件入口，无 shell、无环境变量注入：
 
@@ -103,7 +120,7 @@ myplugin.zip
 - 输出文件写到 `outDir` 下（宿主不指定具体文件名，插件自定）；
 - 处理尽量幂等、超时自控（宿主侧默认 120s 超时）。
 
-### 3.4 导入、覆盖升级与卸载
+### 4.4 导入、覆盖升级与卸载
 
 - **导入**：插件页「上传导入」选择 `.zip` 包（可多选）。宿主校验
   `plugin.json`、`entries` 平台入口、防 zip-slip 解压到
@@ -115,12 +132,12 @@ myplugin.zip
   解压目录，重启不会复活。
 - 内置插件只有开关、不可删除；删除接口对内置插件返回明确错误。
 
-### 3.5 前端卡片
+### 4.5 前端卡片
 
 第三方插件（ext 标签）在「插件」页以卡片展示：卡片头常驻
 （名称 + 开关 + 删除），**配置区默认折叠**，点卡片头展开/收起（▲▼）。
 
-## 四、纯 JSON 插件（轻量声明）
+## 六、纯 JSON 插件（轻量声明）
 
 适合「只需要开关与配置管理、无需执行入口」的场景：
 
@@ -145,7 +162,7 @@ myplugin.zip
 对应接口：`POST /api/plugins/import`（ZIP 二进制或 JSON 文本，上限 256MB）、
 `DELETE /api/plugins/{name}`、`POST /api/plugins/{name}/run`（调用 ZIP 插件入口）。
 
-## 五、内置插件接入（源码扩展点）
+## 七、内置插件接入（源码扩展点）
 
 内置插件在 `registerBuiltinPlugins`（`plugins_api.go`）注册，只允许开关：
 
@@ -160,7 +177,7 @@ myplugin.zip
    ```
 2. **工具（tool）**：实现 `applyFn` 生效回调，读取 `plugin.Config` 执行。
 
-## 六、API 一览
+## 八、API 一览
 
 | 方法   | 路径                          | 说明                                    |
 |--------|-------------------------------|-----------------------------------------|

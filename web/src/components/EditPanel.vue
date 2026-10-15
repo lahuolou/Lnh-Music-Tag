@@ -208,7 +208,7 @@ onMounted(loadEditFields);
 <template>
   <div v-if="cur()" class="form">
     <div class="row" style="margin-bottom:10px">
-      <img v-if="showCover" class="cover-lg" :src="`/api/tracks/${encodeURIComponent(cur().id)}/cover`" onerror="this.style.visibility='hidden'" />
+      <img v-if="showCover" class="cover-lg" :src="`/api/tracks/${encodeURIComponent(cur().id)}/cover`" @error="e => e.target.style.visibility='hidden'" />
       <div style="flex:1;min-width:0">
         <div style="font-weight:600">{{ cur().tags.TITLE || cur().fileName }}</div>
         <div class="muted" style="font-size:13px;word-break:break-all">{{ cur().path }}</div>
@@ -269,7 +269,7 @@ onMounted(loadEditFields);
     </div>
     <div v-for="(r, i) in state.mbRes" :key="i" class="res-item">
       <div class="row" style="gap:10px;align-items:flex-start">
-        <img v-if="r.coverURL" class="thumb" :src="r.coverURL" onerror="this.style.visibility='hidden'" />
+        <img v-if="r.coverURL" class="thumb" :src="r.coverURL" @error="e => e.target.style.visibility='hidden'" />
         <div style="flex:1;min-width:0">
           <div class="t"><span class="tag src">{{ srcLabel(r.source) }}</span> {{ r.title }} <span class="muted">{{ r.artists ? r.artists.join(', ') : '' }}</span></div>
           <div class="m">{{ r.album }} <span class="muted">({{ r.date || t('unknown') }})</span></div>

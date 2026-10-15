@@ -21,7 +21,7 @@
 .ml-head{font-size:12px;color:var(--muted);padding:12px 4px 6px}
 .tree{max-height:calc(100vh - 260px);overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:6px}
 .tree-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
-.mtbl{width:100%;border-collapse:collapse;font-size:13px;min-width:1300px}
+.mtbl{width:100%;border-collapse:collapse;font-size:13px;min-width:1100px}
 .mtbl{border-collapse:separate;border-spacing:0;overflow:visible;background:transparent}
 .mtbl th{position:sticky;top:0;background:var(--panel2);text-align:left;padding:8px 10px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);z-index:2;white-space:nowrap}
 .mtbl th.th-sort{cursor:pointer;user-select:none}
@@ -149,11 +149,11 @@ label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
   .tree-scroll{max-height:calc(100vh - 330px);flex:none}
 }
 
-/* 手机适配：窄屏隐藏低优先级列，表格宽度收敛（列序=全字段 29 列：1勾选 2封面 3歌名 4艺术家 5专辑
-   6专辑艺术家 7风格 8年代 9曲目号 10歌词 11文件名 12作曲家 13作词家 14专辑类型 15语言 16简介
-   17光盘编号 18总光盘数 19总音轨数 20曲目增益 21专辑增益 22曲目峰值 23专辑峰值 24比特率
-   25采样率 26位深度 27声道 28时长 29文件大小） */
-@media(max-width:900px){
+/* 手机适配：窄屏隐藏低优先级列（col-extra），表格宽度收敛、禁止横向滚动
+   列序（24 列）：1勾选 2封面 3歌名 4歌手 5专辑 6歌词 7专辑艺术家 8风格 9年代
+   10曲目号 11文件名 12作曲家 13作词家 14专辑类型 15语言 16简介 17光盘编号
+   18总光盘数 19总音轨数 20比特率 21采样率 22位深度 23时长 24文件大小 */
+@media(max-width:1100px){
   .page{padding:10px 12px}
   .topnav{padding:8px 12px}
   .split .right{padding:12px}
@@ -164,38 +164,18 @@ label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
   .subtabs{overflow-x:auto;scrollbar-width:none}
   .subtabs::-webkit-scrollbar{display:none}
   .subtabs .tab{flex:0 0 auto}
-  /* 表格在窄屏横向滚动而不是挤压（配合列隐藏） */
-  .mtbl{min-width:780px}
+  /* 表格：隐藏次要列，宽度收敛到容器内，不横向滚动 */
+  .mtbl{min-width:0;width:100%}
+  .mtbl th.col-extra,.mtbl td.col-extra{display:none}
+  .mtbl th:nth-child(3),.mtbl th:nth-child(4),.mtbl th:nth-child(5){max-width:160px}
   .ml-toolbar .row input{min-width:0;flex:1 1 100%}
   .field-grid{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
-  .mtbl th:nth-child(12),.mtbl td:nth-child(12),   /* 作曲家 */
-  .mtbl th:nth-child(13),.mtbl td:nth-child(13),   /* 作词家 */
-  .mtbl th:nth-child(14),.mtbl td:nth-child(14),   /* 专辑类型 */
-  .mtbl th:nth-child(15),.mtbl td:nth-child(15),   /* 语言 */
-  .mtbl th:nth-child(16),.mtbl td:nth-child(16),   /* 简介 */
-  .mtbl th:nth-child(17),.mtbl td:nth-child(17),   /* 光盘编号 */
-  .mtbl th:nth-child(18),.mtbl td:nth-child(18),   /* 总光盘数 */
-  .mtbl th:nth-child(19),.mtbl td:nth-child(19),   /* 总音轨数 */
-  .mtbl th:nth-child(20),.mtbl td:nth-child(20),   /* 曲目增益 */
-  .mtbl th:nth-child(21),.mtbl td:nth-child(21),   /* 专辑增益 */
-  .mtbl th:nth-child(22),.mtbl td:nth-child(22),   /* 曲目峰值 */
-  .mtbl th:nth-child(23),.mtbl td:nth-child(23),   /* 专辑峰值 */
-  .mtbl th:nth-child(25),.mtbl td:nth-child(25),   /* 采样率 */
-  .mtbl th:nth-child(26),.mtbl td:nth-child(26),   /* 位深度 */
-  .mtbl th:nth-child(27),.mtbl td:nth-child(27)    /* 声道 */
-  {display:none}
-  .mtbl td:nth-child(3),.mtbl td:nth-child(4){max-width:130px}
 }
 @media(max-width:600px){
-  .mtbl th:nth-child(6),.mtbl td:nth-child(6),   /* 专辑艺术家 */
-  .mtbl th:nth-child(7),.mtbl td:nth-child(7),   /* 风格 */
-  .mtbl th:nth-child(8),.mtbl td:nth-child(8),   /* 年代 */
-  .mtbl th:nth-child(9),.mtbl td:nth-child(9),   /* 曲目号 */
-  .mtbl th:nth-child(24),.mtbl td:nth-child(24)  /* 比特率 */
-  {display:none}
-  .mtbl{min-width:640px}
+  .mtbl th:nth-child(3),.mtbl th:nth-child(4),.mtbl th:nth-child(5){max-width:110px}
   .mtbl th:nth-child(3),.mtbl td:nth-child(3){max-width:100px}
   .mtbl th:nth-child(4),.mtbl td:nth-child(4){max-width:90px}
+  .mtbl th:nth-child(5),.mtbl td:nth-child(5){max-width:80px}
   .login-box{width:88vw;padding:26px 20px}
   .fmt-grid{grid-template-columns:1fr}
   /* 手机触控友好：按钮/下拉最小高度，避免点击困难 */

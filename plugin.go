@@ -95,6 +95,10 @@ func replacePlugin(p *Plugin, apply applyFn) {
 }
 
 // pluginsSnapshot 返回全部插件快照（按注册顺序，深拷贝，防外部篡改）。
+// pluginsSnapshot 返回插件注册快照（深拷贝，避免调用方改动注册状态）。
+// API Key 类字段脱敏：已配置的 Key 只回传占位符，避免密码明文下发前端。
+const keyRedacted = "********"
+
 func pluginsSnapshot() []Plugin {
 	reg.mu.RLock()
 	defer reg.mu.RUnlock()
@@ -105,7 +109,11 @@ func pluginsSnapshot() []Plugin {
 		if p.Config != nil {
 			np.Config = make(map[string]string, len(p.Config))
 			for k, v := range p.Config {
-				np.Config[k] = v
+				if v != "" && isKeyField(p, k) {
+					np.Config[k] = keyRedacted
+				} else {
+					np.Config[k] = v
+				}
 			}
 		} else {
 			np.Config = map[string]string{} // 保证前端始终拿到非空 config，避免渲染崩溃
@@ -113,6 +121,16 @@ func pluginsSnapshot() []Plugin {
 		out = append(out, np)
 	}
 	return out
+}
+
+// isKeyField 判断某配置键是否属于该插件的 API Key 字段。
+func isKeyField(p *Plugin, k string) bool {
+	for _, kf := range pluginKeyFields(p) {
+		if k == kf {
+			return true
+		}
+	}
+	return false
 }
 
 // unregisterPlugin 删除插件（仅非内置插件；内置插件受保护）。
@@ -193,6 +211,7 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSou
 		Version string            `json:"version,omitempty"`
 		Hint    string            `json:"hint,omitempty"`
 		Fields  []PluginField     `json:"fields,omitempty"`
+		KeyField string           `json:"keyField,omitempty"`
 		ZipName string            `json:"zipName,omitempty"`
 		Entries map[string]string `json:"entries,omitempty"`
 		Panel   string            `json:"panel,omitempty"`
@@ -238,6 +257,7 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSou
 			Version: r.Version,
 			Hint:    r.Hint,
 			Fields:  r.Fields,
+			KeyField: r.KeyField,
 			ZipName: r.ZipName,
 			Entries: r.Entries,
 			Panel:   r.Panel,
@@ -297,6 +317,9 @@ func savePluginsToDB(cfg *cstore.Config) {
 		}
 		if len(p.Fields) > 0 {
 			rec["fields"] = p.Fields
+		}
+		if p.KeyField != "" {
+			rec["keyField"] = p.KeyField
 		}
 		if p.ZipName != "" {
 			rec["zipName"] = p.ZipName

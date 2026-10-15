@@ -12,29 +12,33 @@ const msg = ref('')
 const ffStatus = ref({ available: false, path: '', version: '' })
 const ffInstalling = ref(false)
 
-// 每类卡片独立展开状态（默认：刮削源折叠，工具组、第三方插件组展开）
-const openGroups = ref({ scrape: false, tool: true, third: true })
-// 第三方插件逐卡片折叠：卡片头（名称+开关+删除）常驻，配置区默认折叠
+// 每类卡片独立展开状态（默认：刮削源折叠，工具组、第三方插件组、协议组展开）
+const openGroups = ref({ scrape: false, tool: true, third: true, protocol: true })
+// 第三方插件逐卡片折叠：卡片头（名称+开关+卸载）常驻，配置区默认折叠
 const openExt = ref({})
-const confirmDel = ref('') // 二次点击确认态：记录待删除插件名
+const uninstallTarget = ref(null) // 弹窗确认态：待卸载插件
 
 function toggleExt(p) { openExt.value[p.name] = !openExt.value[p.name]; }
 
 const groupMeta = [
   { kind: 'scrape', key: 'srcPlugins', hint: 'srcPluginsHint' },
   { kind: 'tool', key: 'ffPlugins', hint: 'ffPluginsHint' },
+  { kind: 'protocol', key: 'protoPlugins', hint: 'protoPluginsHint' },
   { kind: 'third', key: 'extPlugins', hint: 'extPluginsHint' },
 ]
 
 // 第三方插件 = 所有非内置插件（导入的 ZIP 插件包），统一在「第三方插件」组管理
 const groups = computed(() => {
-  const g = { scrape: [], tool: [], third: [] }
+  const g = { scrape: [], tool: [], third: [], protocol: [] }
   for (const p of plugins.value) {
     if (p.builtin) { if (g[p.kind]) g[p.kind].push(p) }
     else g.third.push(p)
   }
   return g
 })
+
+// Subsonic 连接信息（插件页展示，方便客户端配置）
+const serverBase = computed(() => `${location.protocol}//${location.host}`)
 
 function ffPlugin() { return plugins.value.find(p => p.name === 'tool.ffmpeg') }
 
@@ -78,14 +82,10 @@ const ffPath = computed({
   set: v => { const fp = ffPlugin(); if (fp) { fp.config = fp.config || {}; fp.config.path = v; } },
 });
 
-async function deletePlugin(p) {
-  // 二次点击确认：第一次点击进入确认态，4 秒内再点一次才执行删除（无原生弹窗，兼容移动端）
-  if (confirmDel.value !== p.name) {
-    confirmDel.value = p.name;
-    setTimeout(() => { if (confirmDel.value === p.name) confirmDel.value = ''; }, 4000);
-    return;
-  }
-  confirmDel.value = '';
+// 卸载第三方插件：弹窗确认后删除（文件/注册/配置一并清理）
+function askUninstall(p) { uninstallTarget.value = p; }
+async function doUninstall(p) {
+  uninstallTarget.value = null;
   busy.value = true;
   try {
     await api('/api/plugins/' + encodeURIComponent(p.name), { method: 'DELETE' });
@@ -201,7 +201,7 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
                 <input type="checkbox" :checked="p.enabled" :disabled="busy || (p.needsKey && !p.keyConfigured) || p.name === 'scrape.auto'" @change="togglePlugin(p)" />
                 <span class="slider"></span>
               </label>
-              <button v-if="!p.builtin" class="sm ghost danger" :class="{ confirm: confirmDel === p.name }" @click="deletePlugin(p)">{{ confirmDel === p.name ? t('pluginDeleteAsk') : t('pluginDelete') }}</button>
+              <button v-if="!p.builtin" class="sm ghost danger" @click="askUninstall(p)">{{ t('pluginDelete') }}</button>
               <span v-if="!p.builtin" class="chev small">{{ openExt[p.name] ? '▲' : '▼' }}</span>
             </span>
           </div>
@@ -209,6 +209,12 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
           <!-- 第三方插件配置区可折叠（默认折叠，点卡片头展开）；内置插件直接展开 -->
           <div class="pdetail" v-show="p.builtin || openExt[p.name]">
             <p v-if="p.hint" class="muted small" style="margin:10px 0 6px">{{ t(p.hint) }}</p>
+
+            <!-- Subsonic 协议：连接地址提示 -->
+            <div v-if="p.name === 'protocol.subsonic'" class="muted small" style="margin:4px 0 8px;line-height:1.6">
+              {{ t('subsonicEndpoint', { url: serverBase + '/rest' }) }}<br />
+              {{ t('subsonicUserHint') }}
+            </div>
 
             <!-- FFmpeg 实时状态 -->
             <div v-if="p.name === 'tool.ffmpeg'" class="ff-status" :class="{ ok: ffStatus.available }" style="margin:10px 0 4px">
@@ -242,6 +248,18 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 
     <div class="panel" v-if="msg">
       <p class="muted">{{ msg }}</p>
+    </div>
+
+    <!-- 卸载确认弹窗 -->
+    <div v-if="uninstallTarget" class="modal-mask" @click.self="uninstallTarget = null">
+      <div class="modal small">
+        <div class="h3">🗑 {{ t('pluginUninstallTitle') }} · {{ uninstallTarget.label }}</div>
+        <p class="muted" style="margin:10px 0 0;line-height:1.7">{{ t('pluginUninstallMsg') }}</p>
+        <div class="modal-foot">
+          <button class="ghost" @click="uninstallTarget = null">{{ t('cancel') }}</button>
+          <button class="danger" @click="doUninstall(uninstallTarget)">{{ t('pluginDelete') }}</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -283,7 +301,6 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .ff-status .dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; }
 .ff-status.ok .dot { background: #30a46c; }
 button.danger { color: #e34d59; }
-button.danger.confirm { background: #e34d59; color: #fff; }
 .btn-upload { display: inline-block; padding: 6px 12px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line, rgba(128,128,128,.35)); background: var(--panel2, rgba(128,128,128,.12)); color: var(--text); font-size: 13px; }
 .btn-upload.disabled { opacity: .5; pointer-events: none; }
 </style>

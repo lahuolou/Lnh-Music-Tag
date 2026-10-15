@@ -43,6 +43,8 @@ func pluginKeyFields(p *Plugin) []string {
 		return []string{"acoustid_key"}
 	case "scrape.spotify":
 		return []string{"spotify_id", "spotify_secret"}
+	case "protocol.subsonic":
+		return []string{"subsonic_pass"}
 	}
 	if p.KeyField != "" {
 		return []string{p.KeyField}
@@ -118,9 +120,24 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 		KeyField: "acoustid_key",
 		Fields:   []PluginField{{Key: "acoustid_key", Label: "fAcoustid", Type: "password"}},
 	}, nil)
+	// Subsonic 协议插件：对外暴露 /rest/* API，供 Subsonic 客户端
+	// （音流/Symfonium/Ultrasonic 等）直连播放本音乐库。
+	// 专用密码（可选明文）：配置后客户端可用 token / 明文 / Basic 三种
+	// 认证连接；留空则回退到后台管理员密码（仅支持明文/Basic）。
+	registerPlugin(&Plugin{
+		Name:     "protocol.subsonic",
+		Label:    "Subsonic",
+		Kind:     PluginProtocol,
+		Enabled:  true,
+		Builtin:  true,
+		Hint:     "subsonicHint",
+		KeyField: "subsonic_pass",
+		Fields: []PluginField{
+			{Key: "subsonic_pass", Label: "fSubsonicPass", Type: "password", Placeholder: "subsonicPassPlaceholder"},
+		},
+	}, nil)
 	// 预留类型注册示例（后续实现时在此补充）：
 	//   registerPlugin(&Plugin{Name:"download.example", Label:"…", Kind:PluginDownload,...})
-	//   registerPlugin(&Plugin{Name:"protocol.subsonic", Label:"Subsonic", Kind:PluginProtocol,...})
 	_ = cfg
 }
 
@@ -157,6 +174,7 @@ type pluginImportDecl struct {
 	Version string        `json:"version,omitempty"`
 	Hint    string        `json:"hint,omitempty"`
 	Fields  []PluginField `json:"fields,omitempty"`
+	KeyField string       `json:"keyField,omitempty"`
 }
 
 // pluginsImportHandler POST /api/plugins/import 导入第三方插件。
@@ -238,9 +256,10 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 				Version: d.Version,
 				Hint:    d.Hint,
 				Fields:  d.Fields,
+				KeyField: d.KeyField,
 				Config:  oldConfig,
 			}, nil)
-			imported = append(imported, Plugin{Name: d.Name, Label: d.Label, Kind: kind, Enabled: true, Version: d.Version, Hint: d.Hint, Fields: d.Fields, Config: oldConfig})
+			imported = append(imported, Plugin{Name: d.Name, Label: d.Label, Kind: kind, Enabled: true, Version: d.Version, Hint: d.Hint, Fields: d.Fields, KeyField: d.KeyField, Config: oldConfig})
 			addLog("act_plugin_import", true, 1, 0, 0, "导入插件 "+d.Label+"（"+d.Name+"）")
 		}
 		savePluginsToDB(cfg)
@@ -270,6 +289,11 @@ func pluginsDeleteHandler(cfg *cstore.Config) http.HandlerFunc {
 		}
 		savePluginsToDB(cfg)
 		deletePluginZip(p)
+		// 卸载无残留：清掉该插件同步到设置库的 API Key 字段（acoustid_key /
+		// spotify_id / secret 及第三方声明 KeyField），避免卸载后配置残留。
+		for _, k := range pluginKeyFields(p) {
+			_ = cfg.Del(k)
+		}
 		addLog("act_plugin_delete", true, 1, 0, 0, "删除插件 "+p.Label+"（"+p.Name+"）")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": name, "plugins": pluginsSnapshot()})
 	}
@@ -362,6 +386,10 @@ func pluginsUpdateHandler(cfg *cstore.Config, ms *scrape.MultiSource) http.Handl
 				}
 			}
 			for k, v := range upd.Config {
+				// 前端未改动的 API Key（脱敏占位符）：跳过，避免把 "********" 误写回
+				if v == keyRedacted && isKeyField(p, k) {
+					continue
+				}
 				// API Key 类字段的值不写入日志（避免密钥明文泄露）
 				val := v
 				for _, kf := range pluginKeyFields(p) {

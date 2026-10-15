@@ -420,6 +420,10 @@ func main() {
 	pm.HandleFunc("POST /api/logs/clear", logsClearHandler(cfg.DB()))
 	mux.Handle("/api/", sessions.requireAuth(csrfGuard(limitBody(pm))))
 
+	// Subsonic API 协议输出（内置插件 protocol.subsonic）：独立于后台鉴权，
+	// 由 Subsonic 客户端以自己的凭据（token/明文/Basic）访问 /rest/*。
+	mux.HandleFunc("GET /rest/{rest...}", subsonicHandler(cfg, store))
+
 	// Static UI (Vue SPA built into web/dist; /api/... routes win over this)
 	dist, _ := fs.Sub(webFS, "web/dist")
 	mux.Handle("/", cacheControl(http.FileServer(http.FS(dist))))

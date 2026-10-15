@@ -42,11 +42,8 @@ const filtered = computed(() => {
   }
   if (filter.value === 'garbled') list = list.filter(isGarbled);
   else if (filter.value === 'trad') list = list.filter(isTrad);
-  else if (filter.value === 'lyric') list = list.filter(t => t.hasLyrics || t.hasLrcFile);
   else if (filter.value === 'nolyric') list = list.filter(t => !t.hasLyrics && !t.hasLrcFile);
-  else if (filter.value === 'cover') list = list.filter(t => t.hasCover);
   else if (filter.value === 'nocover') list = list.filter(t => !t.hasCover);
-  else if (filter.value === 'noartist') list = list.filter(t => !(t.tags.ARTIST || '').trim());
   else if (filter.value === 'needsid') list = list.filter(t => t.needsIdentify);
   return list;
 });
@@ -54,11 +51,8 @@ const filterOpts = [
   { id: 'all', label: () => t('filterAll') },
   { id: 'garbled', label: () => t('filterMoji') },
   { id: 'trad', label: () => t('filterTrad') },
-  { id: 'lyric', label: () => t('filterLyric') },
   { id: 'nolyric', label: () => t('filterNoLyric') },
-  { id: 'cover', label: () => t('filterCover') },
   { id: 'nocover', label: () => t('filterNoCover') },
-  { id: 'noartist', label: () => t('filterNoArtist') },
   { id: 'needsid', label: () => t('filterNeedIdentify') }
 ];
 const filtering = computed(() => q.value.trim() !== '' || filter.value !== 'all');
@@ -281,30 +275,25 @@ onBeforeUnmount(stopPoll);
             <th class="th-sort" @click="setSort('title')">{{ t('hTitle') }} {{ sortIcon('title') }}</th>
             <th class="th-sort" @click="setSort('artist')">{{ t('hArtist') }} {{ sortIcon('artist') }}</th>
             <th class="th-sort" @click="setSort('album')">{{ t('hAlbum') }} {{ sortIcon('album') }}</th>
-            <th class="th-sort" @click="setSort('albumartist')">{{ t('hAlbumArtist') }} {{ sortIcon('albumartist') }}</th>
-            <th class="th-sort" @click="setSort('genre')">{{ t('hGenre') }} {{ sortIcon('genre') }}</th>
-            <th class="th-sort" style="width:60px" @click="setSort('year')">{{ t('hYear') }} {{ sortIcon('year') }}</th>
-            <th class="th-sort" style="width:56px" @click="setSort('tracknumber')">{{ t('bTrack') }} {{ sortIcon('tracknumber') }}</th>
             <th style="width:52px" :title="t('lyrTitle')">{{ t('hLyric') }}</th>
-            <th>{{ t('bFileName') }}</th>
-            <th>{{ t('bComposer') }}</th>
-            <th>{{ t('bLyricist') }}</th>
-            <th>{{ t('bAlbumType') }}</th>
-            <th>{{ t('bLanguage') }}</th>
-            <th>{{ t('bComment') }}</th>
-            <th>{{ t('bDiscNumber') }}</th>
-            <th>{{ t('bDiscTotal') }}</th>
-            <th>{{ t('bTrackTotal') }}</th>
-            <th>{{ t('bTrackGain') }}</th>
-            <th>{{ t('bAlbumGain') }}</th>
-            <th>{{ t('bTrackPeak') }}</th>
-            <th>{{ t('bAlbumPeak') }}</th>
-            <th class="th-sort" style="width:64px" @click="setSort('bitrate')">{{ t('bBitrate') }} {{ sortIcon('bitrate') }}</th>
-            <th>{{ t('bSampleRate') }}</th>
-            <th>{{ t('bBitDepth') }}</th>
-            <th>{{ t('bChannels') }}</th>
-            <th class="th-sort" style="width:56px" @click="setSort('duration')">{{ t('bDuration') }} {{ sortIcon('duration') }}</th>
-            <th class="th-sort" style="width:64px" @click="setSort('size')">{{ t('hSize') }} {{ sortIcon('size') }}</th>
+            <th class="th-sort col-extra" @click="setSort('albumartist')">{{ t('hAlbumArtist') }} {{ sortIcon('albumartist') }}</th>
+            <th class="th-sort col-extra" @click="setSort('genre')">{{ t('hGenre') }} {{ sortIcon('genre') }}</th>
+            <th class="th-sort col-extra" style="width:60px" @click="setSort('year')">{{ t('hYear') }} {{ sortIcon('year') }}</th>
+            <th class="th-sort col-extra" style="width:56px" @click="setSort('tracknumber')">{{ t('bTrack') }} {{ sortIcon('tracknumber') }}</th>
+            <th class="col-extra">{{ t('bFileName') }}</th>
+            <th class="col-extra">{{ t('bComposer') }}</th>
+            <th class="col-extra">{{ t('bLyricist') }}</th>
+            <th class="col-extra">{{ t('bAlbumType') }}</th>
+            <th class="col-extra">{{ t('bLanguage') }}</th>
+            <th class="col-extra">{{ t('bComment') }}</th>
+            <th class="col-extra">{{ t('bDiscNumber') }}</th>
+            <th class="col-extra">{{ t('bDiscTotal') }}</th>
+            <th class="col-extra">{{ t('bTrackTotal') }}</th>
+            <th class="th-sort col-extra" style="width:64px" @click="setSort('bitrate')">{{ t('bBitrate') }} {{ sortIcon('bitrate') }}</th>
+            <th class="col-extra">{{ t('bSampleRate') }}</th>
+            <th class="col-extra">{{ t('bBitDepth') }}</th>
+            <th class="th-sort col-extra" style="width:56px" @click="setSort('duration')">{{ t('bDuration') }} {{ sortIcon('duration') }}</th>
+            <th class="th-sort col-extra" style="width:64px" @click="setSort('size')">{{ t('hSize') }} {{ sortIcon('size') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -317,33 +306,28 @@ onBeforeUnmount(stopPoll);
             <td :title="item.tags.TITLE ? item.tags.TITLE : baseName(item)">{{ displayTitle(item) }}</td>
             <td :title="item.tags.ARTIST ? item.tags.ARTIST : nameArtist(item)">{{ displayArtist(item) }}</td>
             <td>{{ tag(item, 'ALBUM') }}</td>
-            <td>{{ tag(item, 'ALBUMARTIST') }}</td>
-            <td>{{ tag(item, 'GENRE') }}</td>
-            <td>{{ tag(item, 'DATE') }}</td>
-            <td>{{ tag(item, 'TRACKNUMBER') }}</td>
             <td :title="item.hasLrcFile || hasLyrics(item) ? t('lyrTitle') : ''">{{ lrcMark(item) }}</td>
-            <td :title="item.fileName">{{ item.fileName }}</td>
-            <td>{{ tag(item, 'COMPOSER') }}</td>
-            <td>{{ tag(item, 'LYRICIST') }}</td>
-            <td>{{ tag(item, 'RELEASETYPE') }}</td>
-            <td>{{ tag(item, 'LANGUAGE') }}</td>
-            <td :title="tag(item, 'COMMENT')">{{ tag(item, 'COMMENT') }}</td>
-            <td>{{ tag(item, 'DISCNUMBER') }}</td>
-            <td>{{ tag(item, 'DISCTOTAL') }}</td>
-            <td>{{ tag(item, 'TRACKTOTAL') }}</td>
-            <td>{{ tag(item, 'REPLAYGAIN_TRACK_GAIN') }}</td>
-            <td>{{ tag(item, 'REPLAYGAIN_ALBUM_GAIN') }}</td>
-            <td>{{ tag(item, 'REPLAYGAIN_TRACK_PEAK') }}</td>
-            <td>{{ tag(item, 'REPLAYGAIN_ALBUM_PEAK') }}</td>
-            <td>{{ item.bitrate || '' }}</td>
-            <td>{{ fmtKHz(item.sampleRate) }}</td>
-            <td>{{ item.bitDepth || '' }}</td>
-            <td>{{ item.channels || '' }}</td>
-            <td>{{ fmtDur(item.duration) }}</td>
-            <td class="muted">{{ fmtSize(item.size) }}</td>
+            <td class="col-extra">{{ tag(item, 'ALBUMARTIST') }}</td>
+            <td class="col-extra">{{ tag(item, 'GENRE') }}</td>
+            <td class="col-extra">{{ tag(item, 'DATE') }}</td>
+            <td class="col-extra">{{ tag(item, 'TRACKNUMBER') }}</td>
+            <td class="col-extra" :title="item.fileName">{{ item.fileName }}</td>
+            <td class="col-extra">{{ tag(item, 'COMPOSER') }}</td>
+            <td class="col-extra">{{ tag(item, 'LYRICIST') }}</td>
+            <td class="col-extra">{{ tag(item, 'RELEASETYPE') }}</td>
+            <td class="col-extra">{{ tag(item, 'LANGUAGE') }}</td>
+            <td class="col-extra" :title="tag(item, 'COMMENT')">{{ tag(item, 'COMMENT') }}</td>
+            <td class="col-extra">{{ tag(item, 'DISCNUMBER') }}</td>
+            <td class="col-extra">{{ tag(item, 'DISCTOTAL') }}</td>
+            <td class="col-extra">{{ tag(item, 'TRACKTOTAL') }}</td>
+            <td class="col-extra">{{ item.bitrate || '' }}</td>
+            <td class="col-extra">{{ fmtKHz(item.sampleRate) }}</td>
+            <td class="col-extra">{{ item.bitDepth || '' }}</td>
+            <td class="col-extra">{{ fmtDur(item.duration) }}</td>
+            <td class="muted col-extra">{{ fmtSize(item.size) }}</td>
           </tr>
           <tr v-if="!shown.length">
-            <td colspan="29" class="muted" style="padding:16px;text-align:center">
+            <td colspan="24" class="muted" style="padding:16px;text-align:center">
               {{ state.tracks.length ? t('noMatch') : t('noTracks') }}
             </td>
           </tr>

@@ -35,6 +35,7 @@ type pluginZipDecl struct {
 	Version string            `json:"version,omitempty"`
 	Hint    string            `json:"hint,omitempty"`
 	Fields  []PluginField     `json:"fields,omitempty"`
+	KeyField string           `json:"keyField,omitempty"`
 	Entries map[string]string `json:"entries"`         // 平台 -> 相对入口（bin/xxx）
 	Panel   string            `json:"panel,omitempty"` // Web 面板入口（zip 内相对路径，如 ui/index.html）
 }
@@ -197,6 +198,7 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 		Version: decl.Version,
 		Hint:    decl.Hint,
 		Fields:  decl.Fields,
+		KeyField: decl.KeyField,
 		ZipDir:  cleanDest,
 		Entries: decl.Entries,
 		ZipName: zipName,

@@ -29,6 +29,7 @@ LNH-MusicTag 是一款自托管音乐库标签管理工具。系统扫描本地�
 - 文件处理：格式转换、文件后缀修正、简繁转换、乱码修复。
 - 任务与日志：异步进度（含阶段进度）、成功/失败/跳过统计、取消任务、操作日志；任务详情接口瘦身（只回失败项 + 计数）。
 - 插件生态：内置刮削源插件组与工具插件组（FFmpeg/AcoustID），支持导入第三方 ZIP 插件并动态挂载 Web 面板；**同名重复导入 = 覆盖升级且保留已填配置**；插件卡片可折叠。
+- **Subsonic 协议输出（v1.6.0）**：内置 `protocol.subsonic` 插件，在 `/rest/*` 提供标准 Subsonic 服务端 API（XML/JSON），音流 / Symfonium / Ultrasonic / DSub 等播放器可直接连接本音乐库（浏览/搜索/在线播放含 Range/下载/封面/歌词/收藏评分）。
 - 部署与更新：Docker Compose、FFmpeg 可选安装/卸载、**一键安装后持久化到配置卷（`/config/ffmpeg`，镜像更新重建容器无需重装）**、多个更新源容错、单一版本源与 CI 校验。
 
 ## 2. 技术架构与模块边界
@@ -51,7 +52,8 @@ LNH-MusicTag 是一款自托管音乐库标签管理工具。系统扫描本地�
 | --- | --- |
 | main.go | 程序入口、路由、中间件、静态资源、AppVersion（embed VERSION）、ensureHashes 并发哈希去重、/api/settings 编辑字段配置（editFields） |
 | auth.go / security.go | 会话鉴权、CSRF、请求体限制、登录失败限流 |
-| plugin.go / plugins_api.go / plugin_runner.go | 插件注册表（registerPlugin/replacePlugin）、插件 API、启停和配置、ZIP 导入解压与安全校验、覆盖导入保留配置、面板静态路由 |
+| plugin.go / plugins_api.go / plugin_runner.go | 插件注册表（registerPlugin/replacePlugin）、插件 API、启停和配置、ZIP 导入解压与安全校验、覆盖导入保留配置、面板静态路由；**API Key 脱敏（keyRedacted）** |
+| subsonic.go | **Subsonic API 协议输出（内置插件 protocol.subsonic）**：/rest/* 路由、三种认证（token/明文/Basic）、XML/JSON 响应树、曲目/艺术家/专辑索引、搜索、stream/download（Range）、封面、歌词等端点 |
 | scrapejob.go | 统一异步任务、进度（含阶段/哈希进度）、结果统计、取消、任务持久化与保留策略；一键刮削阶段编排；pickBest 跨源最佳匹配 |
 | pipeline.go | 一键刮削的阶段编排与阶段内进度上报 |
 | identify.go | 音频指纹识别与元数据补全 |
@@ -225,6 +227,17 @@ LNH-MusicTag 是一款自托管音乐库标签管理工具。系统扫描本地�
 - 卸载：删除配置与解压目录；前端列表页刷新后 tab 消失。
 - 宿主不侵入插件内部实现，插件逻辑全部在 ZIP 内，宿主只提供注册、运行、面板与通用文件接口。
 
+### 5.4 内置协议插件：Subsonic API 输出（v1.6.0）
+
+`protocol.subsonic` 是内置（Builtin、不可卸载）协议类插件，用预留的 `PluginProtocol` 接口在现有 Web 服务上挂载 `/rest/*` 端点，对外提供标准 Subsonic 服务端 API，使空壳播放器（音流 / Symfonium / Ultrasonic / DSub 等）可直连本音乐库。
+
+- **注册**：`plugins_api.go` 的 `registerBuiltinPlugins` 中注册（Kind=PluginProtocol，KeyField=`subsonic_pass`）；`pluginKeyFields` 同步该键（保存/卸载时与 cstore 同步）。路由在 `main.go`：`GET /rest/{rest...}` 挂载于 requireAuth 之外（Subsonic 客户端自带凭据，不走后台会话）。
+- **认证**：专用密码 `subsonic_pass`（插件页配置，明文，可选）配置后支持三种——token（`md5(pass+salt)`）、明文 `p=`（含 `enc:` 十六进制前缀）、HTTP Basic；留空回退后台 `admin_pass`（加盐 SHA-256，不可逆）→ 仅支持明文/Basic（不支持 token）。认证失败返回 error code 40，未找到返回 70。
+- **响应**：XML 缺省 + `format=json`（对齐 OpenSubsonic JSON 结构：列表型元素如 musicFolder/artist/album/song/child 恒为数组字段；根响应层单对象）。根元素 `subsonic-response` 带 status/version(1.16.1)/type(lnh-musictag)/serverVersion(AppVersion())/openSubsonic。
+- **ID 规则**：曲目 `t-<trackID>`、艺术家 `r-sha256(name)[:12]`、专辑 `a-sha256(artist\x00album)[:12]`；音乐文件夹固定 id=1。曲目标签读取统一走 `ssTag`（大小写不敏感，库内存储为大写键）。
+- **端点**：ping/getLicense/getMusicFolders/getIndexes/getArtists/getArtist/getAlbum/getSong/getAlbumList(2)/getMusicDirectory/getGenres/getSongsByGenre/search/search2/search3/stream（http.ServeFile 自带 Range）/download/getCoverArt/getLyrics/getUser/getPlaylists/getPlaylist/getStarred(2)/getNowPlaying/scrobble/star/unstar/setRating/getTopSongs/getSimilarSongs(2)/getArtistInfo(2)/getAvatar；未知方法返回 status=ok。
+- **安全**：pluginsSnapshot 对 API Key 字段（含 subsonic_pass/acoustid_key/spotify 等）统一脱敏为 `********`，保存时跳过该占位符防误写回。
+
 ### 5.3 新增插件建议流程
 
 1. 实现所需的统一接口（plugin.json + 入口），明确输入、输出、超时和错误处理。
@@ -262,6 +275,7 @@ LNH-MusicTag 是一款自托管音乐库标签管理工具。系统扫描本地�
 | FFmpeg | GET /api/ffmpeg/status；POST /api/ffmpeg/install；POST /api/ffmpeg/uninstall | 检测、安装、卸载 FFmpeg。一键安装后自动把二进制与动态库持久化到配置卷 `$LNH_CONFIG_DIR/ffmpeg/` 并生成 wrapper，镜像更新重建容器后自动认领，无需重装 |
 | 日志 | GET /api/logs；POST /api/logs/delete；POST /api/logs/clear | 操作日志读取、删除条目、清空 |
 | 版本 | GET /api/version；GET /api/version/check | 读取缓存版本状态、强制实时检查 |
+| Subsonic | GET /rest/{method}.view（含 stream/download/getCoverArt） | **协议插件 protocol.subsonic**：标准 Subsonic 服务端 API（XML/JSON），客户端自带凭据（token/明文/Basic），不走后台会话；详见 5.4 |
 
 ## 7. 部署与配置
 

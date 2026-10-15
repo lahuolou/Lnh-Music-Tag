@@ -108,6 +108,18 @@ func (c *Config) Set(key, value string) error {
 	return nil
 }
 
+// Del removes a key from the settings store (persisting to SQLite and
+// updating the cache). Used by plugin uninstall to leave no residue.
+func (c *Config) Del(key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.db.Exec(`DELETE FROM settings WHERE key=?`, key); err != nil {
+		return err
+	}
+	delete(c.cache, key)
+	return nil
+}
+
 // All returns a snapshot of the whole settings map.
 func (c *Config) All() map[string]string {
 	c.mu.RLock()

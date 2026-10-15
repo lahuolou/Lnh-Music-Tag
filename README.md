@@ -97,7 +97,8 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 12 | Theme | Dark/light modern flat UI, language toggle 中/EN |
 | 13 | Security | Salted password hashing (auto-migrates legacy plaintext), login rate limiting, CSRF guard, security headers (CSP/nosniff/X-Frame), request size limits, parameterized SQL, no shell command injection |
 | 14 | Slim job API | `/api/jobs/{id}` returns only failed items + summary counts (588-track job: 170KB → 263B); lyrics fetched on demand via `GET /api/track/{id}` |
-| 15 | Plugin system | Built-in plugins (scrape sources / FFmpeg / AcoustID) are toggle-only & undeletable; **3rd-party plugins import as ZIP packages** (extract & ready, `plugin.json` + executable entry, cross-platform, JSON run protocol, persistent after restart); **re-importing the same name upgrades in place and keeps your saved config** (Cookie/Key untouched); **plugin cards are collapsible** on the Plugins page; generic plugin API reserves `download` / `protocol` kinds |
+| 15 | Plugin system | Built-in plugins (scrape sources / FFmpeg / AcoustID / **Subsonic protocol output**) are toggle-only & undeletable; **3rd-party plugins import as ZIP packages** (extract & ready, `plugin.json` + executable entry, cross-platform, JSON run protocol, persistent after restart); **re-importing the same name upgrades in place and keeps your saved config** (Cookie/Key untouched); **plugin cards are collapsible** on the Plugins page; generic plugin API ships the `protocol` kind (Subsonic) and reserves `download` |
+| 16 | **Subsonic API output** | Built-in plugin `protocol.subsonic` exposes a standard Subsonic server API at `/rest/*` (XML/JSON) so **StreamMusic, Symfonium, Ultrasonic, DSub and other shell players can connect to this library directly** — browse artists/albums/tracks, search, online playback (stream with Range), download, covers, lyrics, starred/rating/scrobble; three auth methods (token / plain / HTTP Basic; dedicated password configurable on the plugin page, falls back to the admin password when empty) |
 
 ### Scraping sources
 
@@ -245,7 +246,8 @@ docker run -d --name lnh-musictag --restart unless-stopped \
 | 12 | 主题与语言 | 黑/白现代扁平主题；界面中英双语一键切换 |
 | 13 | 安全加固 | 密码加盐哈希存储（旧明文自动迁移）、登录失败限流、CSRF 防护、安全响应头（CSP/nosniff/X-Frame）、请求体大小限制、SQL 全参数化、命令无注入风险 |
 | 14 | 任务接口瘦身 | `/api/jobs/{id}` 只返回失败项 + summary 计数（588 首任务 170KB → 263B）；歌词正文经 `GET /api/track/{id}` 按需拉取 |
-| 15 | 插件系统 | 内置插件（刮削源 / FFmpeg / AcoustID）只有开关、不可删除；**第三方插件以 ZIP 插件包导入**（解压即用：plugin.json + 可执行入口、跨平台、JSON 调用协议、重启保留）；**重复导入同名插件 = 覆盖升级，已填配置（Cookie/Key）原样保留**；**插件卡片可折叠**（配置区默认收起，点卡片头展开）；通用插件接口预留 download/protocol 两类 |
+| 15 | 插件系统 | 内置插件（刮削源 / FFmpeg / AcoustID / **Subsonic 协议输出**）只有开关、不可删除；**第三方插件以 ZIP 插件包导入**（解压即用：plugin.json + 可执行入口、跨平台、JSON 调用协议、重启保留）；**重复导入同名插件 = 覆盖升级，已填配置（Cookie/Key）原样保留**；**插件卡片可折叠**（配置区默认收起，点卡片头展开）；通用插件接口已落地 `protocol` 类（Subsonic）并预留 `download` 类 |
+| 16 | **Subsonic API 输出** | 内置插件 `protocol.subsonic`：在 `/rest/*` 提供标准 Subsonic 服务端 API（XML/JSON），**音流 / Symfonium / Ultrasonic / DSub 等空壳播放器可直接连接本音乐库**——浏览艺术家/专辑/曲目、搜索、在线播放（stream 含 Range）、下载、封面、歌词、收藏/评分/播放记录；三种认证（token / 明文 / HTTP Basic，可在插件页配置专用密码，留空回退后台密码） |
 
 ### 刮削源清单
 

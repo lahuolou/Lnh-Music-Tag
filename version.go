@@ -134,13 +134,16 @@ func fetchGitHubLatest(repo string) (latest, html string, ok bool) {
 	return strings.TrimPrefix(strings.TrimSpace(rel.TagName), "v"), rel.HTMLURL, true
 }
 
-// fetchVersionFile 依次尝试 jsDelivr 多域名与 raw.githubusercontent 读取 VERSION 文件。
+// fetchVersionFile 依次尝试 jsDelivr 多域名与 raw.githubusercontent 读取 VERSION 文件，
+// 取所有成功源中的**数值最新**版本（jsDelivr CDN 缓存最长 12h、可能返回陈旧值，
+// raw 实时但可能不通——二者都成功时以较新者为准，避免 CDN 旧缓存压低版本号）。
 func fetchVersionFile(repo string) (latest string, ok bool) {
 	urls := make([]string, 0, len(cdnHosts)+1)
 	for _, h := range cdnHosts {
 		urls = append(urls, "https://"+h+"/gh/"+repo+"@main/VERSION")
 	}
 	urls = append(urls, strings.Replace(rawVersionURL, "%s", repo, 1))
+	best := ""
 	for _, u := range urls {
 		client := &http.Client{Timeout: 8 * time.Second}
 		req, err := http.NewRequest(http.MethodGet, u, nil)
@@ -161,9 +164,11 @@ func fetchVersionFile(repo string) (latest string, ok bool) {
 		if v == "" || !looksLikeVersion(v) {
 			continue
 		}
-		return v, true
+		if best == "" || hasUpdate(v, best) {
+			best = v
+		}
 	}
-	return "", false
+	return best, best != ""
 }
 
 func releasePage(repo string) string { return strings.Replace(releasePageURL, "%s", repo, 1) }
