@@ -92,7 +92,7 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 		{"scrape", "刮削元素", stageScrape(s, ms, cfg)},
 	}
 	if dedup {
-		stages = append([]pipelineStage{{"dedup", "自动去重", stageDedup(s, cfg)}}, stages...)
+		stages = append([]pipelineStage{{"dedup", "自动去重", stageDedup(s, cfg, job)}}, stages...)
 	}
 
 	for si, st := range stages {
@@ -156,13 +156,36 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 // （完全相同的副本）。每组保留质量最好的一首（无损优先；hash 组保留第一首），
 // 其余移入配置目录 trash/ 回收站并从列表移除（不永久删除，可人工恢复）。
 // 仅当一键刮削勾选"自动去重"时启用；默认不勾选。
-func stageDedup(s *store, cfg *cstore.Config) stageFunc {
+// job 用于：① 哈希阶段把进度（hashDone/hashTotal）与当前文件写回任务，
+//    让用户在慢盘上看到"在动"而不是 0/947 假死；② 每文件哈希后检查取消，
+//    使"取消"在去重阶段立即生效（此前 ensureHashes 同步阻塞，取消无效）。
+func stageDedup(s *store, cfg *cstore.Config, job *scrapeJob) stageFunc {
 	var once sync.Once
 	remove := map[string]bool{} // track id → 待删除
 	init := func() {
 		tracks := s.all()
-		// hash 分组依赖 SHA256：扫描时为轻量读未计算，先去重前补齐
-		s.ensureHashes(tracks)
+		// hash 分组依赖 SHA256：扫描时为轻量读未计算，先去重前补齐。
+		// 提前暴露哈希总量，并把每文件进度写回 job（可中断）。
+		need := 0
+		for _, t := range tracks {
+			if t.SHA256 == "" {
+				need++
+			}
+		}
+		if need > 0 {
+			job.mu.Lock()
+			job.HashTotal = need
+			job.mu.Unlock()
+		}
+		s.ensureHashes(tracks, func(cur string, done int) {
+			job.mu.Lock()
+			job.HashDone = done
+			job.Current = cur
+			job.mu.Unlock()
+		}, func() bool { return jobCanceled(job) })
+		if jobCanceled(job) {
+			return // 已被取消：remove 为空，逐首走"保留"分支，外层循环随即停止
+		}
 		tracks = s.all() // ensureHashes 可能替换了 Track 引用（写入新 SHA256）
 		groups := append(append(dedup.GroupByArtistTitle(tracks), dedup.GroupBySameName(tracks)...), dedup.GroupByHash(tracks)...)
 		// 先汇总所有组的保留者（一个曲目可能同时在多个组出现，任一组的

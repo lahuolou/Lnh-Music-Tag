@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lnh-musictag/internal/dedup"
@@ -108,8 +109,13 @@ func (s *store) byPathID(path string) string {
 
 // ensureHashes computes and caches SHA256 for tracks that lack one (scanned
 // with the light read). Hashing is I/O heavy, so it runs on a small worker
-// pool and each file is hashed at most once per process.
-func (s *store) ensureHashes(tracks []*model.Track) {
+// pool and each file is hashed at most once per process. prog (if non-nil)
+// reports progress (current file name + completed count) after every file;
+// cancel (if non-nil) is checked per file so a one-key dedup stage can be
+// cancelled while hashing — without this, a large/slow library appears stuck
+// at 0 progress and ignores cancel. Each file has a timeout so one stuck
+// file (e.g. on a slow network mount) cannot block the whole pool.
+func (s *store) ensureHashes(tracks []*model.Track, prog func(cur string, done int), cancel func() bool) int {
 	var jobs []*model.Track
 	s.mu.RLock()
 	for _, t := range tracks {
@@ -119,7 +125,7 @@ func (s *store) ensureHashes(tracks []*model.Track) {
 	}
 	s.mu.RUnlock()
 	if len(jobs) == 0 {
-		return
+		return 0
 	}
 	workers := runtime.NumCPU()
 	if workers > 8 {
@@ -128,14 +134,20 @@ func (s *store) ensureHashes(tracks []*model.Track) {
 	if workers < 2 {
 		workers = 2
 	}
+	const fileTimeout = 120 * time.Second // 单文件兜底：慢盘/网络盘防止一个文件卡死全部 worker
 	ch := make(chan *model.Track)
 	var wg sync.WaitGroup
+	var done atomic.Int64
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for t := range ch {
-				if h, err := taglibx.HashFile(t.Path); err == nil && h != "" {
+				if cancel != nil && cancel() {
+					continue // drain channel so the feeder can exit
+				}
+				h := hashFileTimeout(t.Path, fileTimeout)
+				if h != "" {
 					s.mu.Lock()
 					if cur := s.tracks[t.ID]; cur != nil && cur.SHA256 == "" {
 						cur.SHA256 = h
@@ -143,18 +155,46 @@ func (s *store) ensureHashes(tracks []*model.Track) {
 						db := s.db
 						s.mu.Unlock()
 						upsertTrackDB(db, s, curPtr)
-						continue
+					} else {
+						s.mu.Unlock()
 					}
-					s.mu.Unlock()
+				}
+				n := done.Add(1)
+				if prog != nil {
+					prog(t.FileName, int(n))
 				}
 			}
 		}()
 	}
 	for _, t := range jobs {
+		if cancel != nil && cancel() {
+			break
+		}
 		ch <- t
 	}
 	close(ch)
 	wg.Wait()
+	return int(done.Load())
+}
+
+// hashFileTimeout 计算文件 SHA256，超过 timeout 则返回空串（跳过该文件，
+// 不阻塞哈希池）。哈希 goroutine 超时后仍会完成并写入 buffered channel。
+func hashFileTimeout(path string, timeout time.Duration) string {
+	out := make(chan string, 1)
+	go func() {
+		h, err := taglibx.HashFile(path)
+		if err != nil {
+			out <- ""
+			return
+		}
+		out <- h
+	}()
+	select {
+	case h := <-out:
+		return h
+	case <-time.After(timeout):
+		return ""
+	}
 }
 
 func (s *store) exists(path string) bool {
@@ -516,7 +556,7 @@ func main() {
 		tracks := store.all()
 		// SHA256 按需计算：扫描时不哈希（快），打开去重页时才对缺失的
 		// 曲目并发计算一次并缓存回 store。
-		store.ensureHashes(tracks)
+		store.ensureHashes(tracks, nil, nil)
 		groups := dedup.GroupByHash(tracks)
 		groups = append(groups, dedup.GroupBySameName(tracks)...)
 		groups = append(groups, dedup.GroupByArtistTitle(tracks)...)

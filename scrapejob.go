@@ -308,6 +308,11 @@ type scrapeJob struct {
 	// StageLabel 是该阶段面向用户的中文/英文文案（由后端按请求语言给出）。
 	Stage      string `json:"stage,omitempty"`
 	StageLabel string `json:"stageLabel,omitempty"`
+	// HashDone/HashTotal 一键刮削「自动去重」阶段的 SHA256 哈希进度：
+	// 哈希期间曲目 Done 不推进（哈希完才逐首去重），前端据此显示
+	// "哈希 x/n" 而不是 0/947 假死。
+	HashDone  int `json:"hashDone,omitempty"`
+	HashTotal int `json:"hashTotal,omitempty"`
 	// Duration 任务已耗时（秒，进度轮询时按 CreatedAt 计算；历史任务无创建时间时为 0）。
 	Duration int `json:"duration,omitempty"`
 	// Updated carries tracks whose tags/cover changed since the last poll.
@@ -676,6 +681,8 @@ func jobProgressHandler(js *jobStore) http.HandlerFunc {
 			Status:     j.Status,
 			Stage:      j.Stage,
 			StageLabel: j.StageLabel,
+			HashDone:   j.HashDone,
+			HashTotal:  j.HashTotal,
 			// 大任务瘦身：只回问题项（失败/跳过），成功项仅进 summary 计数。
 			Results: failResults(j.Results),
 			Summary: summarize(j.Results),

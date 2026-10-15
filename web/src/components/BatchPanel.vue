@@ -254,18 +254,25 @@ async function oneKey() {
 
   <!-- 统一任务进度：批量刮削与工具任务共用一个进度条（curJob 优先显示运行中的任务） -->
   <div v-if="curJob" style="margin-top:12px">
-    <div class="progbar"><div class="progfill" :style="{ width: (curJob.total ? Math.round(curJob.done / curJob.total * 100) : 0) + '%' }"></div></div>
+    <div class="progbar"><div class="progfill" :style="{ width: (curJob.status === 'running' && curJob.hashTotal
+      ? Math.round((curJob.hashDone || 0) / curJob.hashTotal * 100)
+      : (curJob.total ? Math.round(curJob.done / curJob.total * 100) : 0)) + '%' }"></div></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <div class="muted" style="flex:1;min-width:0">
-        {{ curJob.status === 'done'
-          ? (curIsBatch
-              ? t('batchDone', { ok: (curJob.summary || {}).ok || 0, t: curJob.total })
-              : t('jobDone', { ok: curJob.ok, fail: curJob.fail, skip: curJob.skip, t: curJob.total }))
-          : (curJob.status === 'cancelled'
-              ? t('jobCancelled')
-              : (curIsBatch
-                  ? t('batchProgressBar', { d: curJob.done, t: curJob.total, c: curJob.current || t('processing') })
-                  : t('jobRunning', { d: curJob.done, t: curJob.total, c: curJob.current || t('processing') }))) }}
+        <template v-if="curJob.status === 'running' && curJob.hashTotal">
+          {{ t('hashProgress', { d: curJob.hashDone || 0, t: curJob.hashTotal, c: curJob.current || t('processing') }) }}
+        </template>
+        <template v-else-if="curJob.status === 'done'">
+          {{ curIsBatch
+            ? t('batchDone', { ok: (curJob.summary || {}).ok || 0, t: curJob.total })
+            : t('jobDone', { ok: curJob.ok, fail: curJob.fail, skip: curJob.skip, t: curJob.total }) }}
+        </template>
+        <template v-else-if="curJob.status === 'cancelled'">{{ t('jobCancelled') }}</template>
+        <template v-else>
+          {{ curIsBatch
+            ? t('batchProgressBar', { d: curJob.done, t: curJob.total, c: curJob.current || t('processing') })
+            : t('jobRunning', { d: curJob.done, t: curJob.total, c: curJob.current || t('processing') }) }}
+        </template>
       </div>
       <button v-if="curJob.status === 'running'" class="ghost sm danger" :disabled="canceling" @click="doCancel">{{ canceling ? t('canceling') : t('cancel') }}</button>
     </div>
