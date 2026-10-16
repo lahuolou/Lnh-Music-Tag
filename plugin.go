@@ -1,7 +1,7 @@
-// 通用插件框架：统一管理「刮削源 / 工具 / 下载 / 服务协议」四类插件。
+// 通用插件框架：统一管理「刮削源 / 工具」两类插件。
 //   - 插件声明：名称、展示名、类型、配置字段、是否内置、是否可安装；
 //   - 启停与配置：通过 /api/plugins 统一读写，持久化到 SQLite（plugins 键）；
-//   - 扩展点：后续音源、下载器、自动换源策略、Subsonic 等协议插件都按
+//   - 扩展点：后续音源、自动换源策略等插件都按
 //     同一套注册表接入，前端设置页按类型自动渲染，无需改页面。
 package main
 
@@ -18,10 +18,8 @@ import (
 type PluginKind string
 
 const (
-	PluginScrape   PluginKind = "scrape"   // 刮削/音源（元数据、歌词、封面）
-	PluginTool     PluginKind = "tool"     // 工具（FFmpeg 等）
-	PluginDownload PluginKind = "download" // 下载器（预留）
-	PluginProtocol PluginKind = "protocol" // 服务端协议（Subsonic 等，预留）
+	PluginScrape PluginKind = "scrape" // 刮削/音源（元数据、歌词、封面）
+	PluginTool   PluginKind = "tool"   // 工具（FFmpeg 等）
 )
 
 // PluginField 插件的可配置字段（前端据此渲染表单）。
@@ -117,6 +115,28 @@ func pluginsSnapshot() []Plugin {
 			}
 		} else {
 			np.Config = map[string]string{} // 保证前端始终拿到非空 config，避免渲染崩溃
+		}
+		out = append(out, np)
+	}
+	return out
+}
+
+// pluginsRawSnapshot 返回插件注册快照（不做 Key 脱敏，保留明文），
+// 仅用于持久化（savePluginsToDB）与恢复链路，避免脱敏占位符写回存储。
+func pluginsRawSnapshot() []Plugin {
+	reg.mu.RLock()
+	defer reg.mu.RUnlock()
+	out := make([]Plugin, 0, len(reg.order))
+	for _, n := range reg.order {
+		p := reg.plugins[n]
+		np := *p
+		if p.Config != nil {
+			np.Config = make(map[string]string, len(p.Config))
+			for k, v := range p.Config {
+				np.Config[k] = v
+			}
+		} else {
+			np.Config = map[string]string{}
 		}
 		out = append(out, np)
 	}
@@ -244,7 +264,7 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSou
 		}
 		kind := PluginKind(r.Kind)
 		switch kind {
-		case PluginScrape, PluginTool, PluginDownload, PluginProtocol:
+		case PluginScrape, PluginTool:
 		default:
 			continue
 		}
@@ -284,7 +304,7 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSou
 		// Key 字段同步回设置库（cstore）：重启后 AcoustID/刮削源使用点
 		// （cfg.Get 读取）与插件页 KeyConfigured 状态保持一致。
 		for _, k := range pluginKeyFields(&p) {
-			if v, ok := r.Config[k]; ok && v != "" {
+			if v, ok := r.Config[k]; ok && v != "" && v != keyRedacted {
 				cfg.Set(k, v)
 			}
 		}
@@ -302,7 +322,7 @@ func savePluginsToDB(cfg *cstore.Config) {
 	out := map[string]any{}
 	srcMap := map[string]bool{}
 	ffPath := ""
-	for _, p := range pluginsSnapshot() {
+	for _, p := range pluginsRawSnapshot() {
 		rec := map[string]any{
 			"enabled": p.Enabled,
 			"name":    p.Name,

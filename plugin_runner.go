@@ -89,9 +89,9 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	}
 	kind := PluginKind(decl.Kind)
 	switch kind {
-	case PluginScrape, PluginTool, PluginDownload, PluginProtocol:
+	case PluginScrape, PluginTool:
 	default:
-		return nil, errors.New("非法插件类型 kind: " + decl.Kind + "（可选 scrape/tool/download/protocol）")
+		return nil, errors.New("非法插件类型 kind: " + decl.Kind + "（可选 scrape/tool）")
 	}
 	if len(decl.Entries) == 0 {
 		return nil, errors.New("plugin.json 缺少 entries（平台 -> 入口文件映射）")

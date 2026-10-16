@@ -1,6 +1,6 @@
 // 插件设置接口：GET /api/plugins 列出全部插件（前端按类型分组渲染），
 // POST /api/plugins 批量启停/配置并持久化、即时生效。
-// 后续新增音源/下载/自动换源/Subsonic 协议等插件时，只需在启动时
+// 后续新增音源/下载/自动换源/协议类插件时，只需在启动时
 // registerPlugin 注册描述与生效回调，前端与接口无需改动。
 package main
 
@@ -43,8 +43,6 @@ func pluginKeyFields(p *Plugin) []string {
 		return []string{"acoustid_key"}
 	case "scrape.spotify":
 		return []string{"spotify_id", "spotify_secret"}
-	case "protocol.subsonic":
-		return []string{"subsonic_pass"}
 	}
 	if p.KeyField != "" {
 		return []string{p.KeyField}
@@ -70,8 +68,8 @@ func syncClientKeys(cfg *cstore.Config, ms *scrape.MultiSource) {
 // registerBuiltinPlugins 注册内置插件：
 //   - scrape.*：现有刮削/音源（auto 内置不可停用；需 Key 的源默认关闭）
 //   - tool.ffmpeg：FFmpeg 工具（可配置路径、可一键安装）
-//     download / protocol 类型预留：后续插件直接在此追加注册。
-func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
+//   - tool.acoustid：AcoustID 录音识别 Key 配置
+func registerBuiltinPlugins(ms *scrape.MultiSource) {
 	for _, s := range ms.Sources() {
 		name := "scrape." + s.Name
 		// 内置插件（内部）：只有开关，不可删除
@@ -120,25 +118,6 @@ func registerBuiltinPlugins(cfg *cstore.Config, ms *scrape.MultiSource) {
 		KeyField: "acoustid_key",
 		Fields:   []PluginField{{Key: "acoustid_key", Label: "fAcoustid", Type: "password"}},
 	}, nil)
-	// Subsonic 协议插件：对外暴露 /rest/* API，供 Subsonic 客户端
-	// （音流/Symfonium/Ultrasonic 等）直连播放本音乐库。
-	// 专用密码（可选明文）：配置后客户端可用 token / 明文 / Basic 三种
-	// 认证连接；留空则回退到后台管理员密码（仅支持明文/Basic）。
-	registerPlugin(&Plugin{
-		Name:     "protocol.subsonic",
-		Label:    "Subsonic",
-		Kind:     PluginProtocol,
-		Enabled:  true,
-		Builtin:  true,
-		Hint:     "subsonicHint",
-		KeyField: "subsonic_pass",
-		Fields: []PluginField{
-			{Key: "subsonic_pass", Label: "fSubsonicPass", Type: "password", Placeholder: "subsonicPassPlaceholder"},
-		},
-	}, nil)
-	// 预留类型注册示例（后续实现时在此补充）：
-	//   registerPlugin(&Plugin{Name:"download.example", Label:"…", Kind:PluginDownload,...})
-	_ = cfg
 }
 
 // pluginsHandler GET 列出全部插件（含启停/配置/Key 状态），供插件页动态渲染。
@@ -234,9 +213,9 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 			}
 			kind := PluginKind(d.Kind)
 			switch kind {
-			case PluginScrape, PluginTool, PluginDownload, PluginProtocol:
+			case PluginScrape, PluginTool:
 			default:
-				writeErr(w, http.StatusBadRequest, "非法插件类型 kind: " + d.Kind + "（可选 scrape/tool/download/protocol）")
+				writeErr(w, http.StatusBadRequest, "非法插件类型 kind: " + d.Kind + "（可选 scrape/tool）")
 				return
 			}
 			if old, ok := reg.plugins[d.Name]; ok && old.Builtin {
@@ -402,8 +381,9 @@ func pluginsUpdateHandler(cfg *cstore.Config, ms *scrape.MultiSource) http.Handl
 			}
 			applyPluginState(name, enabled, upd.Config)
 			// Key 字段同步到设置库（cstore）：AcoustID/刮削源使用点直接生效
+			// （脱敏占位符跳过，防止 "********" 覆盖真实密码）
 			for _, k := range pluginKeyFields(p) {
-				if v, ok := upd.Config[k]; ok {
+				if v, ok := upd.Config[k]; ok && v != "" && v != keyRedacted {
 					cfg.Set(k, strings.TrimSpace(v))
 				}
 			}

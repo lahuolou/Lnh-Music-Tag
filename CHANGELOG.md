@@ -11,7 +11,8 @@
 - **移除 MusicBridge 内置插件**（`internal/musicbridge/` 全目录、`musicbridge.go` / `mb_restapi.go` / `mb_ssapi.go`、`/api/musicbridge/v1` 统一 REST、`/mb/rest/*` Subsonic 兼容入口），并清理前端管理面板、i18n 文案与数据库表。
 - **移除本地四协议输出**（`subsonic.go` / `navidrome.go` / `jellyfin.go` / `protodebug.go` 与 `/rest/*`、`/emby/*`、`/jellyfin/*`、Navidrome `/api/*` 路由及 `protocol.subsonic` / `protocol.media` 内置插件注册），项目恢复为不含协议输出的纯标签管理工具。
 - **清理**：数据库协议插件记录、`subsonic_pass`/`media_pass` 凭证键、`dataRev` 死代码、协议相关注释；插件页与 README / 开发文档 / 插件开发指南同步重写（删除协议章节）。
-- 交互/渲染冒烟、`go vet`、`go test ./...`、`npm run build`、双实例回归全部通过；协议入口确认返回 404。
+- **移除 download / protocol 预留类型**：插件框架只保留 `scrape` / `tool` 两类（`plugin.go` 枚举、导入校验、错误文案、i18n 注释同步删除）；删除从未使用的 `registerBuiltinPlugins` `cfg` 参数；删除前端旧 `web/src/ext-unlock` 内置面板残留（解锁已由第三方插件承载）；开发文档与插件开发指南同步更新。
+- 交互/渲染冒烟、`go vet`、`go test ./...`、`npm run build`、双实例回归全部通过；协议入口确认返回 404；无封面曲目的 cover 404 确认为正常业务行为。
 
 ## v1.6.1
 

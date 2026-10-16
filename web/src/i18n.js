@@ -81,7 +81,6 @@ const dict = {
     actSkip: '，跳过 {s}',
     pluginsEmpty: '暂无插件数据，请稍后刷新重试。',
     pluginDelete: '卸载',
-    pluginDeleteAsk: '再次点击确认卸载',
     pluginDeleted: '插件「{label}」已卸载',
     pluginDeleteFail: '卸载失败: {m}',
     pluginUninstallTitle: '卸载插件',
@@ -147,12 +146,9 @@ const dict = {
     // 筛选
     filterAll: '全部',
     filterNeedIdentify: '待识别',
-    filterNoArtist: '无艺术家',
     filterTrad: '繁体',
     filterMoji: '乱码',
-    filterLyric: '有歌词',
     filterNoLyric: '无歌词',
-    filterCover: '有海报',
     filterNoCover: '无海报',
     // 编辑
     saveTags: '保存标签',
@@ -185,13 +181,6 @@ const dict = {
     scrapeFail: '刮削失败: {m}',
     unknown: '未知',
     selectTrackHint: '在左侧列表点击某一行曲目，在此编辑标签、获取歌词或刮削。',
-    fTitle: '标题 TITLE',
-    fArtist: '艺术家 ARTIST',
-    fAlbum: '专辑 ALBUM',
-    fAlbumArtist: '专辑艺术家 ALBUMARTIST',
-    fGenre: '流派 GENRE',
-    fDate: '年份 DATE',
-    fTrack: '曲目号 TRACKNUMBER',
     fLyrics: '歌词 LYRICS',
     fTrackTotal: '总曲目数 TRACKTOTAL',
     fComposer: '作曲家 COMPOSER',
@@ -366,13 +355,6 @@ const dict = {
     ffPluginsHint: '工具类插件：内置 FFmpeg（格式转换）等，每个插件独立开关。',
     extPlugins: '🧩 第三方插件',
     extPluginsHint: '导入的第三方插件包统一在此管理，可开关、可删除。',
-    protoPlugins: '📡 协议插件',
-    protoPluginsHint: '对外输出标准协议（如 Subsonic），供手机/桌面播放器直连本音乐库。',
-    subsonicHint: '对外提供 Subsonic API（/rest/*），音流 / Symfonium / Ultrasonic 等播放器可直接连接本音乐库。配置专用密码后支持 token / 明文 / HTTP Basic 三种认证；留空则用后台管理员密码（仅明文/Basic）。',
-    fSubsonicPass: 'Subsonic 专用密码（可选）',
-    subsonicPassPlaceholder: '留空 = 使用后台账号密码（仅支持明文/Basic 认证）',
-    subsonicEndpoint: '客户端连接地址: {url}',
-    subsonicUserHint: '用户名使用后台账号（设置 → 系统设置可查看）。',
     extEmpty: '还没有导入第三方插件：点击上方「导入 ZIP 插件」选择插件包，导入后即可使用与删除。',
     extImportZip: '导入 ZIP 插件',
     extImporting: '导入中…',
@@ -392,7 +374,7 @@ my-plugin.zip
 {
   "name": "my.plugin",          // 唯一标识；重复导入同名插件将覆盖升级（保留已填配置）
   "label": "我的插件",            // 插件页显示名，也是主界面插件 tab 名
-  "kind": "tool",               // 类型：scrape=刮削源 / tool=工具 / download=下载器（预留）/ protocol=协议（预留）
+  "kind": "tool",               // 类型：scrape=刮削源 / tool=工具
   "version": "1.0.0",           // 版本号
   "hint": "一句话说明",           // 插件页提示文案
   "entries": {                   // 各平台可执行入口（zip 内相对路径）
@@ -526,7 +508,6 @@ my-plugin.zip
     actSkip: ', {s} skipped',
     pluginsEmpty: 'No plugin data, please refresh and retry.',
     pluginDelete: 'Uninstall',
-    pluginDeleteAsk: 'Click again to confirm uninstall',
     pluginDeleted: 'Plugin "{label}" uninstalled',
     pluginDeleteFail: 'Uninstall failed: {m}',
     pluginUninstallTitle: 'Uninstall Plugin',
@@ -588,12 +569,9 @@ my-plugin.zip
     none: 'No',
     filterAll: 'All',
     filterNeedIdentify: 'To identify',
-    filterNoArtist: 'No artist',
     filterTrad: 'Traditional',
     filterMoji: 'Mojibake',
-    filterLyric: 'With lyrics',
     filterNoLyric: 'No lyrics',
-    filterCover: 'With cover',
     filterNoCover: 'No cover',
     saveTags: 'Save tags',
     clearCover: 'Clear cover',
@@ -625,13 +603,6 @@ my-plugin.zip
     scrapeFail: 'Scrape failed: {m}',
     unknown: 'Unknown',
     selectTrackHint: 'Click a track in the left list to edit its tags, fetch lyrics or scrape metadata.',
-    fTitle: 'Title TITLE',
-    fArtist: 'Artist ARTIST',
-    fAlbum: 'Album ALBUM',
-    fAlbumArtist: 'Album Artist ALBUMARTIST',
-    fGenre: 'Genre GENRE',
-    fDate: 'Year DATE',
-    fTrack: 'Track No. TRACKNUMBER',
     fLyrics: 'Lyrics LYRICS',
     fTrackTotal: 'Track total TRACKTOTAL',
     fComposer: 'Composer COMPOSER',
@@ -802,13 +773,6 @@ my-plugin.zip
     ffPluginsHint: 'Tool plugins: built-in FFmpeg (format conversion), each with its own toggle.',
     extPlugins: '🧩 Third-party Plugins',
     extPluginsHint: 'Imported third-party plugin packages are managed here: toggle and delete.',
-    protoPlugins: '📡 Protocol Plugins',
-    protoPluginsHint: 'Expose standard protocols (e.g. Subsonic) so mobile/desktop players can connect to this library directly.',
-    subsonicHint: 'Exposes the Subsonic API at /rest/* so StreamMusic, Symfonium, Ultrasonic and other players can connect directly. Set a dedicated password to enable token/plain/Basic auth; leave empty to fall back to the admin password (plain/Basic only).',
-    fSubsonicPass: 'Subsonic password (optional)',
-    subsonicPassPlaceholder: 'Leave empty = use the admin password (plain/Basic auth only)',
-    subsonicEndpoint: 'Client server URL: {url}',
-    subsonicUserHint: 'Use your admin account as the username (see Settings → System).',
     extEmpty: 'No third-party plugins yet: click "Import ZIP Plugin" above to install one.',
     extImportZip: 'Import ZIP Plugin',
     extImporting: 'Importing…',
@@ -828,7 +792,7 @@ my-plugin.zip
 {
   "name": "my.plugin",          // unique id; re-importing the same name upgrades it (keeps saved config)
   "label": "My Plugin",         // display name on the plugin page, also the plugin tab label
-  "kind": "tool",               // scrape=scrape source / tool=tool / download=downloader (reserved) / protocol=protocol (reserved)
+  "kind": "tool",               // scrape=scrape source / tool=tool
   "version": "1.0.0",           // version
   "hint": "One-line description",
   "entries": {                  // per-platform executable entry (relative path inside zip)

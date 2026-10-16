@@ -141,7 +141,7 @@ LNH-MusicTag 是自托管的音乐库标签管理 Web 工具：标签读写、�
 详见 [PLUGINS.md](PLUGINS.md)。要点：
 
 - 插件注册表：内置（`registerBuiltinPlugins`）只开关；第三方 ZIP/JSON 可导入覆盖升级；
-- 四类 `kind`：`scrape` / `tool` / `download`（预留）/ `protocol`（预留，v1.6.2 无内置实例）；
+- 两类 `kind`：`scrape` / `tool`（`download` / `protocol` 预留类型已随 v1.6.2 移除）；
 - 启停与配置持久化在 `settings.plugins`；Key 配置保存脱敏；
 - 第三方插件运行协议：`<entry> run --input in.json --output out.json`，无 shell 注入；
 - ZIP 包防 zip-slip，解压到 `/config/plugins/<name>/`。

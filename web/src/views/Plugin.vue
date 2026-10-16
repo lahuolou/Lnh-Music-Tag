@@ -12,8 +12,8 @@ const msg = ref('')
 const ffStatus = ref({ available: false, path: '', version: '' })
 const ffInstalling = ref(false)
 
-// 每类卡片独立展开状态（默认：刮削源折叠，工具组、第三方插件组、协议组展开）
-const openGroups = ref({ scrape: false, tool: true, third: true, protocol: true })
+// 每类卡片独立展开状态（默认：刮削源折叠，工具组、第三方插件组展开）
+const openGroups = ref({ scrape: false, tool: true, third: true })
 // 第三方插件逐卡片折叠：卡片头（名称+开关+卸载）常驻，配置区默认折叠
 const openExt = ref({})
 const uninstallTarget = ref(null) // 弹窗确认态：待卸载插件
@@ -23,22 +23,18 @@ function toggleExt(p) { openExt.value[p.name] = !openExt.value[p.name]; }
 const groupMeta = [
   { kind: 'scrape', key: 'srcPlugins', hint: 'srcPluginsHint' },
   { kind: 'tool', key: 'ffPlugins', hint: 'ffPluginsHint' },
-  { kind: 'protocol', key: 'protoPlugins', hint: 'protoPluginsHint' },
   { kind: 'third', key: 'extPlugins', hint: 'extPluginsHint' },
 ]
 
 // 第三方插件 = 所有非内置插件（导入的 ZIP 插件包），统一在「第三方插件」组管理
 const groups = computed(() => {
-  const g = { scrape: [], tool: [], third: [], protocol: [] }
+  const g = { scrape: [], tool: [], third: [] }
   for (const p of plugins.value) {
     if (p.builtin) { if (g[p.kind]) g[p.kind].push(p) }
     else g.third.push(p)
   }
   return g
 })
-
-// Subsonic 连接信息（插件页展示，方便客户端配置）
-const serverBase = computed(() => `${location.protocol}//${location.host}`)
 
 function ffPlugin() { return plugins.value.find(p => p.name === 'tool.ffmpeg') }
 
@@ -209,12 +205,6 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
           <!-- 第三方插件配置区可折叠（默认折叠，点卡片头展开）；内置插件直接展开 -->
           <div class="pdetail" v-show="p.builtin || openExt[p.name]">
             <p v-if="p.hint" class="muted small" style="margin:10px 0 6px">{{ t(p.hint) }}</p>
-
-            <!-- Subsonic 协议：连接地址提示 -->
-            <div v-if="p.name === 'protocol.subsonic'" class="muted small" style="margin:4px 0 8px;line-height:1.6">
-              {{ t('subsonicEndpoint', { url: serverBase + '/rest' }) }}<br />
-              {{ t('subsonicUserHint') }}
-            </div>
 
             <!-- FFmpeg 实时状态 -->
             <div v-if="p.name === 'tool.ffmpeg'" class="ff-status" :class="{ ok: ffStatus.available }" style="margin:10px 0 4px">

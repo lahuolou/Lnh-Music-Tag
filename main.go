@@ -50,6 +50,7 @@ type store struct {
 	byPath map[string]string // path -> id
 	order  map[string]int64  // id -> 扫描（插入）序号，保证 /api/tracks 按扫描顺序稳定返回
 	seq    int64
+	rev    int64 // 数据变更计数：add/remove/update 递增（插件/缓存失效锚点）
 	db     *sql.DB // 曲目持久化（可能为 nil：配置库不可用时退化为纯内存）
 
 	coverMu    sync.RWMutex
@@ -78,6 +79,7 @@ func (s *store) add(t *model.Track) {
 	s.byPath[t.Path] = t.ID
 	s.seq++
 	s.order[t.ID] = s.seq
+	s.rev++
 	db := s.db
 	s.mu.Unlock()
 	upsertTrackDB(db, s, t)
@@ -209,6 +211,7 @@ func (s *store) remove(id string) {
 	if t, ok := s.tracks[id]; ok {
 		delete(s.tracks, id)
 		delete(s.byPath, t.Path)
+		s.rev++
 		s.mu.Unlock()
 		deleteTrackDB(s.db, s, id, t.Path)
 		return
@@ -221,6 +224,7 @@ func (s *store) removeByPath(p string) {
 	if id, ok := s.byPath[p]; ok {
 		delete(s.tracks, id)
 		delete(s.byPath, p)
+		s.rev++
 		s.mu.Unlock()
 		deleteTrackDB(s.db, s, id, p)
 		return
@@ -340,7 +344,7 @@ func main() {
 	ms := scrape.NewMultiSource()
 	// 插件框架：注册内置插件（刮削源 + FFmpeg），再从设置库恢复启停/配置
 	// （首次启动自动迁移旧的 sources_enabled / ffmpeg_path 键）
-	registerBuiltinPlugins(cfg, ms)
+	registerBuiltinPlugins(ms)
 	loadPluginsFromDB(cfg, configDir, ms)
 
 	adminUser, adminPass, generated, err := bootstrapAdmin(cfg, os.Getenv("LNH_ADMIN_USER"), os.Getenv("LNH_ADMIN_PASS"))
@@ -411,7 +415,6 @@ func main() {
 	pm.HandleFunc("POST /api/convert-script", convertScriptHandler(jobs, store))
 	pm.HandleFunc("POST /api/rename-clean", renameCleanHandler(jobs, store))
 	pm.HandleFunc("POST /api/identify", identifyHandler(jobs, store, ms, cfg))
-	pm.HandleFunc("GET /api/version", updates.versionHandler)
 	pm.HandleFunc("GET /api/version/check", updates.versionCheckHandler)
 
 	// 操作日志：列表 / 勾选删除 / 清空
@@ -420,9 +423,19 @@ func main() {
 	pm.HandleFunc("POST /api/logs/clear", logsClearHandler(cfg.DB()))
 	mux.Handle("/api/", sessions.requireAuth(csrfGuard(limitBody(pm))))
 
-	// Subsonic API 协议输出（内置插件 protocol.subsonic）：独立于后台鉴权，
-	// 由 Subsonic 客户端以自己的凭据（token/明文/Basic）访问 /rest/*。
-	mux.HandleFunc("GET /rest/{rest...}", subsonicHandler(cfg, store))
+	// /api/version 免认证：供前台前端/外部工具探测服务器版本，返回 200
+	// 与后台前端版本显示所需字段（current/latest/status）。
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		v := AppVersion()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"version":    v,
+			"appName":    "LNH-MusicTag",
+			"appVersion": v,
+			"current":    v,
+			"latest":     "",
+			"status":     "ok",
+		})
+	})
 
 	// Static UI (Vue SPA built into web/dist; /api/... routes win over this)
 	dist, _ := fs.Sub(webFS, "web/dist")
@@ -1042,6 +1055,7 @@ func renameTrack(s *store, t *model.Track, newPath string) {
 		s.mu.Lock()
 		s.tracks[t.ID] = nt
 		s.byPath[newPath] = nt.ID
+		s.rev++
 		if _, ok := s.order[nt.ID]; !ok {
 			s.order[nt.ID] = order
 		}
@@ -1073,6 +1087,7 @@ func refreshTrack(s *store, path string) {
 	s.mu.Lock()
 	s.tracks[t.ID] = t
 	s.byPath[path] = t.ID
+	s.rev++
 	if _, ok := s.order[t.ID]; !ok {
 		s.seq++
 		s.order[t.ID] = s.seq
