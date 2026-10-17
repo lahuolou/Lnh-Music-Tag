@@ -1,0 +1,10 @@
+server.*.log
+*.log
+*.exe
+*.exe~
+.git
+.idea
+.vscode
+README.md
+web/node_modules
+web/dist

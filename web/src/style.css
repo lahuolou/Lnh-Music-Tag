@@ -1,0 +1,216 @@
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+  --text:#e6e8ee; --muted:#8b93a3; --accent:#4f8cff; --accent2:#2f6fe0;
+  --ok:#35c46a; --warn:#e5a63b; --err:#e05252;
+}
+/* 白天模式：现代扁平浅色 */
+:root[data-theme="light"]{
+  --bg:#f4f6f9; --panel:#ffffff; --panel2:#eef1f5; --line:#e2e6ec;
+  --text:#1b2230; --muted:#5b6474; --accent:#2f6fe0; --accent2:#2f6fe0;
+  --ok:#168a43; --warn:#b9790f; --err:#d33737;
+}
+.field-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:8px 12px}
+.h3{font-weight:600;font-size:14px;margin:0 0 4px}
+/* 单列竖排：顶部功能 tab + 主区整列音乐列表 */
+.page{max-width:1200px;margin:0 auto;padding:16px 20px}
+.pagebody{min-height:70vh}
+.music-list{display:flex;flex-direction:column;min-width:0}
+/* 列表区自身定高，滚动发生在 .tree-scroll 内部 → 表头 sticky 始终相对列表容器生效（下拉冻结） */
+.split .left .music-list{height:calc(100vh - 96px)}
+.ml-toolbar{display:flex;flex-direction:column;gap:0;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.ml-head{font-size:12px;color:var(--muted);padding:12px 4px 6px}
+.tree{max-height:calc(100vh - 260px);overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:6px}
+.tree-scroll{flex:1;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.mtbl{width:100%;border-collapse:collapse;font-size:13px;min-width:1100px}
+.mtbl{border-collapse:separate;border-spacing:0;overflow:visible;background:transparent}
+.mtbl th{position:sticky;top:0;background:var(--panel2);text-align:left;padding:8px 10px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);z-index:2;white-space:nowrap}
+.mtbl th.th-sort{cursor:pointer;user-select:none}
+.mtbl th.th-sort:hover{color:var(--text)}
+.mtbl td{padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+.mtbl tbody tr:hover{background:var(--panel2)}
+.mtbl tbody tr.on{background:var(--accent);color:#fff}
+.mtbl .fn{cursor:pointer;font-weight:500}
+.mtbl .fn:hover{color:var(--accent)}
+.cov{width:34px;height:34px;border-radius:4px;object-fit:cover;background:var(--panel2);cursor:pointer;display:block}
+.covph{width:34px;height:34px;border-radius:4px;background:var(--panel2);display:inline-flex;align-items:center;justify-content:center;color:var(--muted);font-size:16px}
+.tchk{cursor:pointer}
+.tnode{padding:3px 6px;border-radius:6px;font-size:13px;line-height:1.6}
+.tnode:hover{background:var(--panel2)}
+.tog{width:16px;text-align:center;color:var(--muted);cursor:pointer;display:inline-block}
+.di{display:inline-block}
+.dn{font-weight:600;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cnt{font-size:11px;display:inline-block}
+.tt{display:block;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:24px}
+.tt:hover{color:var(--accent)}
+.ar{display:block;font-size:11px;padding-left:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.tab{background:none;border:none;color:var(--muted);padding:8px 14px;font-size:14px;cursor:pointer;border-radius:8px 8px 0 0;border-bottom:2px solid transparent}
+.tab:hover{color:var(--text)}
+.tab.on{color:var(--text);font-weight:600;border-bottom-color:var(--accent)}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+header{padding:16px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--panel)}
+header h1{font-size:18px;margin:0;font-weight:600}
+.badge{font-size:12px;color:var(--muted);background:var(--panel2);padding:2px 8px;border-radius:10px}
+.badge.batch{color:var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent);cursor:pointer;animation:pulse 1.6s ease-in-out infinite}
+.badge.newver{color:#fff;background:var(--accent);cursor:pointer;text-decoration:none;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+.wrap{max-width:1200px;margin:0 auto;padding:20px 24px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+input[type=text],select{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:8px;font-size:14px;flex:1;min-width:200px}
+input[type=password]{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:8px;font-size:14px;width:100%}
+textarea{width:100%;box-sizing:border-box;resize:vertical;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px;font-size:13px;line-height:1.5;font-family:inherit}
+button{background:var(--accent2);border:none;color:#fff;padding:8px 14px;border-radius:8px;font-size:14px;cursor:pointer;white-space:nowrap}
+button:hover{background:var(--accent)}
+button:disabled{opacity:.55;cursor:not-allowed}
+button.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
+button.sm{padding:4px 10px;font-size:13px}
+button.danger{background:#7a2d2d}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card .num{font-size:26px;font-weight:700}
+.card .lab{color:var(--muted);font-size:13px;margin-top:4px}
+table{width:100%;border-collapse:collapse;background:var(--panel);border-radius:12px;overflow:hidden;font-size:14px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line)}
+th{background:var(--panel2);color:var(--muted);font-weight:600;position:sticky;top:0}
+tr:hover td{background:var(--panel2)}
+.thumb{width:40px;height:40px;border-radius:6px;object-fit:cover;background:var(--panel2)}
+.muted{color:var(--muted)}
+.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:8px;margin-right:4px}
+.tag.hash{background:#24344a;color:#7fb2ff}
+.tag.fp{background:#3a2f1e;color:#e5b45a}
+.tag.src{background:#1f3a2f;color:#7fe0a8}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:16px}
+.panel h2{font-size:15px;margin:0 0 12px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
+.res-item{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:var(--panel2)}
+.res-item .t{font-weight:600}
+.res-item .m{color:var(--muted);font-size:13px;margin-top:2px}
+.res-item .acts{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+.ro-val{font-size:13px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--muted);word-break:break-all;line-height:1.4}
+.dup{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.dup:last-child{border-bottom:none}
+.dupcol{display:flex;flex-direction:column;gap:3px}
+.duphead{font-size:13px}
+.dupitem{font-size:13px;display:flex;align-items:center;gap:6px}
+.tagx{font-size:11px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);color:var(--text);border:1px solid var(--line);padding:10px 16px;border-radius:10px;font-size:14px;z-index:50;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+.toast.err{border-color:var(--err)}
+.toast.ok{border-color:var(--ok)}
+.loading{color:var(--muted)}
+.cover-lg{max-width:140px;border-radius:8px}
+.login-overlay{position:fixed;inset:0;background:radial-gradient(1200px 600px at 50% -10%,#1b2a44 0%,rgba(8,10,14,.96) 60%);display:flex;align-items:center;justify-content:center;z-index:100}
+.login-box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:34px 36px;width:360px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.login-brand{font-size:44px;text-align:center;margin-bottom:6px}
+.login-box h2{margin:0 0 4px;font-size:20px;text-align:center}
+.login-sub{color:var(--muted);font-size:13px;margin:0 0 22px;text-align:center}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+.field input{width:100%;min-width:0}
+.pw-row{display:flex;gap:8px}
+.pw-row input{flex:1;min-width:0}
+.pw-row button{flex:0 0 auto;min-width:0}
+.login-btn{width:100%;margin-top:4px;padding:11px;font-size:15px;border-radius:9px}
+.login-msg{text-align:center;margin-top:12px;min-height:18px}
+.chk{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text);cursor:pointer;margin:0}
+.tchk{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.progbar{background:var(--panel2);border:1px solid var(--line);border-radius:8px;height:18px;overflow:hidden;margin:10px 0 6px}
+.progfill{background:linear-gradient(90deg,var(--accent2),var(--accent));height:100%;width:0%;transition:width .4s}
+.err{color:var(--err)}
+.navbar{flex:1}
+.topnav{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:6px;padding:10px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
+.topnav .brand{font-weight:700;font-size:15px;margin-right:8px;white-space:nowrap}
+.topnav .spacer{flex:1}
+/* 齿轮二级导航：悬停或点击弹出（设置/关于/检查更新/退出） */
+.gear{position:relative;display:inline-flex}
+.gear-btn{display:inline-flex;align-items:center;justify-content:center;padding:6px 9px;touch-action:manipulation}
+.gear-menu{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:150px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px;z-index:60}
+.gear.open .gear-menu{display:block}
+.gear-menu a,.gear-menu button{display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;color:var(--text);background:none;border:none;border-radius:7px;cursor:pointer;white-space:nowrap}
+.gear-menu a:hover,.gear-menu button:hover{background:var(--panel2)}
+.gear-menu a.danger,.gear-menu button.danger{color:#e34d59}
+.gear-menu a.danger:hover,.gear-menu button.danger:hover{background:color-mix(in srgb, #e34d59 12%, transparent)}
+.navlink{background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:4px 10px;border-radius:8px;white-space:nowrap}
+.navlink:hover{color:var(--text);background:var(--panel2)}
+.navlink.on{color:var(--text);background:var(--panel2);font-weight:600}
+
+/* 合并页：左列表 + 右功能区 */
+.page.merge{max-width:1600px}
+.split{display:flex;gap:16px;align-items:flex-start}
+.split .left{flex:1.4;min-width:0}
+.split .right{flex:1;min-width:0;position:sticky;top:60px;max-height:calc(100vh - 80px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;z-index:1}
+.subtabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
+@media(max-width:1080px){
+  .split{flex-direction:column}
+  .split .right{position:static;max-height:none}
+  .split .left .music-list{height:auto}
+  .tree-scroll{max-height:calc(100vh - 330px);flex:none}
+}
+
+/* 手机适配：窄屏隐藏低优先级列（col-extra），表格宽度收敛、禁止横向滚动
+   列序（24 列）：1勾选 2封面 3歌名 4歌手 5专辑 6歌词 7专辑艺术家 8风格 9年代
+   10曲目号 11文件名 12作曲家 13作词家 14专辑类型 15语言 16简介 17光盘编号
+   18总光盘数 19总音轨数 20比特率 21采样率 22位深度 23时长 24文件大小 */
+@media(max-width:1100px){
+  .page{padding:10px 12px}
+  .topnav{padding:8px 12px}
+  .split .right{padding:12px}
+  .ml-toolbar{padding:12px}
+  /* 顶栏精简：隐藏曲目数量徽标（保留新版本/任务进度徽标） */
+  .topnav .badge:not(.newver):not(.batch){display:none}
+  /* 子功能 tab 横向滚动（编辑/批量/去重/插件），不换行挤压 */
+  .subtabs{overflow-x:auto;scrollbar-width:none}
+  .subtabs::-webkit-scrollbar{display:none}
+  .subtabs .tab{flex:0 0 auto}
+  /* 表格：隐藏次要列，宽度收敛到容器内，不横向滚动 */
+  .mtbl{min-width:0;width:100%}
+  .mtbl th.col-extra,.mtbl td.col-extra{display:none}
+  .mtbl th:nth-child(3),.mtbl th:nth-child(4),.mtbl th:nth-child(5){max-width:160px}
+  .ml-toolbar .row input{min-width:0;flex:1 1 100%}
+  .field-grid{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
+}
+@media(max-width:600px){
+  .mtbl th:nth-child(3),.mtbl th:nth-child(4),.mtbl th:nth-child(5){max-width:110px}
+  .mtbl th:nth-child(3),.mtbl td:nth-child(3){max-width:100px}
+  .mtbl th:nth-child(4),.mtbl td:nth-child(4){max-width:90px}
+  .mtbl th:nth-child(5),.mtbl td:nth-child(5){max-width:80px}
+  .login-box{width:88vw;padding:26px 20px}
+  .fmt-grid{grid-template-columns:1fr}
+  /* 手机触控友好：按钮/下拉最小高度，避免点击困难 */
+  .ghost.sm, .chip, select, .mtbl .tchk{min-height:40px;touch-action:manipulation}
+  .ghost.sm{padding:6px 14px}
+  /* 窄屏细节：顶栏更紧凑、齿轮菜单防溢出、工作台全宽 */
+  .topnav .brand{font-size:13px}
+  .topnav{gap:4px;padding:6px 10px}
+  .page.merge{padding:8px}
+  .split{gap:10px}
+  .split .right{padding:10px;border-radius:10px}
+  .ml-toolbar{padding:10px}
+  .subtabs .tab{padding:8px 10px;font-size:13px}
+  .gear-menu{min-width:150px;right:-10px}
+  .badge.batch{max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .panel{padding:12px;margin-top:12px}
+  .tree-scroll{max-height:calc(100vh - 300px)}
+}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:3px 12px;border-radius:14px;font-size:12px;cursor:pointer;white-space:nowrap}
+.chip:hover{color:var(--text)}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.chip.on:hover{background:var(--accent)}
+button.danger{color:var(--err);border-color:var(--err)}
+button.danger:hover{background:var(--err);color:#fff}
+
+/* 弹窗（格式转换） */
+.modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:80}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;width:520px;max-width:92vw;max-height:86vh;overflow:auto;box-shadow:0 16px 50px rgba(0,0,0,.35)}
+.modal.small{width:380px}
+.modal .h4{font-weight:600;font-size:13px;margin:14px 0 6px;color:var(--text);border-top:1px solid var(--line);padding-top:12px}
+.modal .fl{font-size:13px;color:var(--text);margin:8px 0 2px;font-weight:500}
+.fmt-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px}
+.fmt-chips .chip{padding:4px 12px;font-size:12px}
+.fmt-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:560px){.fmt-grid{grid-template-columns:1fr}}
+.sel{width:100%;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:13px}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;align-items:center;margin-top:20px;padding-top:14px;border-top:1px solid var(--line)}

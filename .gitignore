@@ -1,0 +1,38 @@
+# Go 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+build/
+
+# Go workspace
+go.work
+go.work.sum
+
+# vendor 目录看你是否要提交，一般可以提交，看你选择
+# vendor/
+
+# 环境变量
+.env
+.env.*
+*.env
+
+# 日志
+*.log
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store
+
+# 上传/数据
+data/
+uploads/
+# Vue frontend
+web/node_modules/
+web/dist/
