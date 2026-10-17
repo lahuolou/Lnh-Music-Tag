@@ -188,7 +188,7 @@ func (s *sessionStore) changePasswordHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := s.cfg.Set("admin_pass", hashPassword(req.NewPass)); err != nil {
-		writeErr(w, http.StatusInternalServerError, "密码更新失败: " + err.Error())
+		writeErr(w, http.StatusInternalServerError, "密码更新失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "密码已修改"})

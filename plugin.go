@@ -223,18 +223,18 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSou
 		return
 	}
 	type record struct {
-		Enabled *bool             `json:"enabled"`
-		Config  map[string]string `json:"config,omitempty"`
-		Name    string            `json:"name,omitempty"`
-		Label   string            `json:"label,omitempty"`
-		Kind    string            `json:"kind,omitempty"`
-		Version string            `json:"version,omitempty"`
-		Hint    string            `json:"hint,omitempty"`
-		Fields  []PluginField     `json:"fields,omitempty"`
-		KeyField string           `json:"keyField,omitempty"`
-		ZipName string            `json:"zipName,omitempty"`
-		Entries map[string]string `json:"entries,omitempty"`
-		Panel   string            `json:"panel,omitempty"`
+		Enabled  *bool             `json:"enabled"`
+		Config   map[string]string `json:"config,omitempty"`
+		Name     string            `json:"name,omitempty"`
+		Label    string            `json:"label,omitempty"`
+		Kind     string            `json:"kind,omitempty"`
+		Version  string            `json:"version,omitempty"`
+		Hint     string            `json:"hint,omitempty"`
+		Fields   []PluginField     `json:"fields,omitempty"`
+		KeyField string            `json:"keyField,omitempty"`
+		ZipName  string            `json:"zipName,omitempty"`
+		Entries  map[string]string `json:"entries,omitempty"`
+		Panel    string            `json:"panel,omitempty"`
 	}
 	var all = map[string]record{}
 	if raw, ok := cfg.Get("plugins"); ok && raw != "" {
@@ -270,17 +270,17 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSou
 		}
 		enabled := r.Enabled != nil && *r.Enabled
 		registerPlugin(&Plugin{
-			Name:    name,
-			Label:   r.Label,
-			Kind:    kind,
-			Enabled: enabled,
-			Version: r.Version,
-			Hint:    r.Hint,
-			Fields:  r.Fields,
+			Name:     name,
+			Label:    r.Label,
+			Kind:     kind,
+			Enabled:  enabled,
+			Version:  r.Version,
+			Hint:     r.Hint,
+			Fields:   r.Fields,
 			KeyField: r.KeyField,
-			ZipName: r.ZipName,
-			Entries: r.Entries,
-			Panel:   r.Panel,
+			ZipName:  r.ZipName,
+			Entries:  r.Entries,
+			Panel:    r.Panel,
 			// 解压目录按 插件名 命名（与导入时一致），重启后据此重建，
 			// 使插件入口可用、删除时可清理。
 			ZipDir: pluginsRoot(cfg, configDir) + string(os.PathSeparator) + name,

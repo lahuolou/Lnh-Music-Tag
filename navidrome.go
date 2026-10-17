@@ -80,12 +80,13 @@ func (n *navidromeAPI) listJSON(w http.ResponseWriter, data []any, total int) {
 	w.Header().Set("x-total-count", strconv.Itoa(total))
 	_ = json.NewEncoder(w).Encode(data)
 }
-func (n *navidromeAPI) all() []*model.Track       { return n.library.all() }
+func (n *navidromeAPI) all() []*model.Track          { return n.library.all() }
 func (n *navidromeAPI) track(id string) *model.Track { return n.library.get(id) }
 
 func (n *navidromeAPI) wantUser() string {
 	return n.cfg.GetDefault("admin_user", "admin")
 }
+
 // token base: stream_pass 优先（可派生校验），否则用 admin_pass 哈希本身。
 func (n *navidromeAPI) tokenBase() string {
 	if p := strings.TrimSpace(n.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS"))); p != "" {
@@ -98,6 +99,7 @@ func (n *navidromeAPI) tokenFor(user string) string {
 	h := md5.Sum([]byte(n.tokenBase() + "|" + user + "|lnh-navidrome"))
 	return hex.EncodeToString(h[:])
 }
+
 // Navidrome auth/login 返回的 subsonicToken/subsonicSalt 供客户端回退到
 // Subsonic 认证（如 getCoverArt 带 t/s 参数）。Subsonic token = md5(password+salt)，
 // 只能由流媒体明文密码派生（管理员密码是单向哈希）。
@@ -350,13 +352,13 @@ func (n *navidromeAPI) albumJSON(a ndAlbum) map[string]any {
 		"artist": a.artist, "artistId": a.artistID,
 		"albumArtist": a.artist, "albumArtistId": a.artistID,
 		"allArtistIds": a.artistID,
-		"maxYear": a.year, "minYear": a.year, "date": ndDate(a.year),
+		"maxYear":      a.year, "minYear": a.year, "date": ndDate(a.year),
 		"maxOriginalYear": 0, "minOriginalYear": 0,
 		"releases": 1, "compilation": false,
 		"year": a.year, "genre": a.genre, "size": int(size),
-		"fullText": a.artist + " " + a.name,
+		"fullText":       a.artist + " " + a.name,
 		"orderAlbumName": a.name, "orderAlbumArtistName": a.artist,
-		"paths": albumPath(a),
+		"paths":     albumPath(a),
 		"createdAt": now, "updatedAt": now,
 		"playDate": yest, "play_date": yest,
 	}

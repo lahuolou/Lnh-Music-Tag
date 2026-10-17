@@ -340,6 +340,7 @@ func (a *subsonicAPI) respond(w http.ResponseWriter, r *http.Request, n sxNode) 
 	_ = enc.Encode(n)
 	_ = enc.Flush()
 }
+
 var sxJSONNumeric = map[string]bool{
 	"track": true, "year": true, "size": true, "duration": true, "bitRate": true,
 	"playCount": true, "discNumber": true, "songCount": true, "albumCount": true, "trackCount": true,
@@ -491,6 +492,7 @@ func (n sxNode) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	}
 	return e.EncodeToken(start.End())
 }
+
 var lrcLineRe = regexp.MustCompile(`^\s*\[(\d{1,3}):(\d{2})(?:\.\d{1,3})?\]\s*(.*)$`)
 
 func tag(t *model.Track, keys ...string) string {
@@ -1303,6 +1305,7 @@ func (a *subsonicAPI) star(r *http.Request, add bool) sxNode {
 	a.saveStarred(stars)
 	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion))
 }
+
 // getUser 返回单一内置用户（管理员），字段对齐 Subsonic API 的 user DTO。
 func (a *subsonicAPI) getUser(r *http.Request) sxNode {
 	user := r.URL.Query().Get("username")

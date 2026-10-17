@@ -426,7 +426,7 @@ func (j *scrapeJob) snapshot() persistedJob {
 	return persistedJob{
 		ID: j.ID, Kind: j.Kind, Total: j.Total, Done: j.Done,
 		Current: j.Current, Status: j.Status, Stage: j.Stage, StageLabel: j.StageLabel,
-		Results: append([]scrapeResult(nil), j.Results...),
+		Results:   append([]scrapeResult(nil), j.Results...),
 		CreatedAt: created.Format(time.RFC3339),
 		UpdatedAt: now.Format(time.RFC3339),
 	}

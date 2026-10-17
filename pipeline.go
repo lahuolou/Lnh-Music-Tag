@@ -169,8 +169,9 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 // 其余移入配置目录 trash/ 回收站并从列表移除（不永久删除，可人工恢复）。
 // 仅当一键刮削勾选"自动去重"时启用；默认不勾选。
 // job 用于：① 哈希阶段把进度（hashDone/hashTotal）与当前文件写回任务，
-//    让用户在慢盘上看到"在动"而不是 0/947 假死；② 每文件哈希后检查取消，
-//    使"取消"在去重阶段立即生效（此前 ensureHashes 同步阻塞，取消无效）。
+//
+//	让用户在慢盘上看到"在动"而不是 0/947 假死；② 每文件哈希后检查取消，
+//	使"取消"在去重阶段立即生效（此前 ensureHashes 同步阻塞，取消无效）。
 func stageDedup(s *store, cfg *cstore.Config, job *scrapeJob) stageFunc {
 	var once sync.Once
 	remove := map[string]bool{} // track id → 待删除

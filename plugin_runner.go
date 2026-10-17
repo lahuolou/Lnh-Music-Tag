@@ -29,15 +29,15 @@ const (
 
 // pluginZipDecl 是插件包内 plugin.json 的声明格式。
 type pluginZipDecl struct {
-	Name    string            `json:"name"`
-	Label   string            `json:"label"`
-	Kind    string            `json:"kind"`
-	Version string            `json:"version,omitempty"`
-	Hint    string            `json:"hint,omitempty"`
-	Fields  []PluginField     `json:"fields,omitempty"`
-	KeyField string           `json:"keyField,omitempty"`
-	Entries map[string]string `json:"entries"`         // 平台 -> 相对入口（bin/xxx）
-	Panel   string            `json:"panel,omitempty"` // Web 面板入口（zip 内相对路径，如 ui/index.html）
+	Name     string            `json:"name"`
+	Label    string            `json:"label"`
+	Kind     string            `json:"kind"`
+	Version  string            `json:"version,omitempty"`
+	Hint     string            `json:"hint,omitempty"`
+	Fields   []PluginField     `json:"fields,omitempty"`
+	KeyField string            `json:"keyField,omitempty"`
+	Entries  map[string]string `json:"entries"`         // 平台 -> 相对入口（bin/xxx）
+	Panel    string            `json:"panel,omitempty"` // Web 面板入口（zip 内相对路径，如 ui/index.html）
 }
 
 // pluginsRoot 返回插件包存放根目录（与配置库同级）。
@@ -191,19 +191,19 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	}
 	// 6. 注册（覆盖导入时替换旧定义，保留原配置）
 	p := &Plugin{
-		Name:    decl.Name,
-		Label:   decl.Label,
-		Kind:    kind,
-		Enabled: true,
-		Version: decl.Version,
-		Hint:    decl.Hint,
-		Fields:  decl.Fields,
+		Name:     decl.Name,
+		Label:    decl.Label,
+		Kind:     kind,
+		Enabled:  true,
+		Version:  decl.Version,
+		Hint:     decl.Hint,
+		Fields:   decl.Fields,
 		KeyField: decl.KeyField,
-		ZipDir:  cleanDest,
-		Entries: decl.Entries,
-		ZipName: zipName,
-		Panel:   decl.Panel,
-		Config:  oldConfig,
+		ZipDir:   cleanDest,
+		Entries:  decl.Entries,
+		ZipName:  zipName,
+		Panel:    decl.Panel,
+		Config:   oldConfig,
 	}
 	replacePlugin(p, nil)
 	savePluginsToDB(cfg)
