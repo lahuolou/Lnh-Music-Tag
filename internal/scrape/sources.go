@@ -190,9 +190,9 @@ func (m *MultiSource) Search(name, query string, limit int) ([]SearchResult, err
 }
 
 // SearchWithFallback 并发查询全部启用源：指定源（非 auto 时优先）+ 语言优先
-// 链其余源同时发请求，合并所有命中返回。调用方的 pickBest 可跨源比较挑全局
-// 最佳匹配（原实现串行，第一个有命中的源就停，其余源的结果全部浪费；且单个
-// 源挂起/限流时整条链等待）。批量刮削、歌词、海报查询均受益。
+// 链其余源同时发请求，合并所有命中返回，供调用方（scrapejob.go 的
+// fuseMetadata）跨源按字段择优融合。原实现串行，第一个有命中的源就停，其余
+// 源的结果全部浪费；且单个源挂起/限流时整条链等待。批量刮削、歌词、海报均受益。
 func (m *MultiSource) SearchWithFallback(name, query string, limit int) ([]SearchResult, error) {
 	order := []string{}
 	if name != "" && name != "auto" && m.IsEnabled(name) {

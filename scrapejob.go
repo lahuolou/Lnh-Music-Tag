@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -817,8 +818,14 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 				}
 			} else if len(results) > 0 {
 				searched = true
-				sr = pickBest(results, title)
-				ms.Enrich(&sr) // 补全专辑艺术家/流派/年代/曲目号/语言/专辑类型/总数
+				// 先对每个 MusicBrainz 候选补全发行详情（专辑艺术家/流派/年代/
+				// 语言/专辑类型/总数），再参与跨源按字段融合，避免只 enrich 单条。
+				for i := range results {
+					ms.Enrich(&results[i])
+				}
+				// 多源元数据融合：每个 ID3 字段独立从各候选按匹配度+完整度择优，
+				// 合并到一条结果上，替代"整条候选整体采用"。
+				sr = fuseMetadata(results, title)
 
 				// 部分源会把 GBK 编码字节按 Latin-1 塞进 JSON，得到
 				// "习惯了寂寞" → "Ï°¹ßÁË¼ÅÄ¯" 这类乱码。写入标签前统一修复，
@@ -1087,31 +1094,192 @@ func fileNameNeedsRename(t *model.Track) bool {
 	return stripAudioExt(t.FileName) != want
 }
 
-// pickBest 从搜索结果中挑出与目标标题最匹配的一条：按标题相似度评分
-// （归一化后去掉括号变体，Dice 二元组相似度），分数相同时优先带专辑的
-// 完整结果；若全部低于阈值（源没返回真正匹配的曲目），退回"第一个有
-// 专辑的结果，否则第一个"，避免拿完全无关的结果乱写标签。
-func pickBest(results []scrape.SearchResult, wantTitle string) scrape.SearchResult {
+// fusedRank 携带一条候选的标题匹配分与完整度，供跨源排序择优。
+type fusedRank struct {
+	sr     scrape.SearchResult
+	sim    float64 // 标题相似度（Dice 二元组，0~1）
+	filled int     // 非空字段数，同分并列时完整度高者优先
+}
+
+// fuseMetadata 对多源候选做 field-wise（按字段）融合：不再整条采用某一个源，
+// 而是让每个 ID3 字段独立从候选中按「标题匹配度优先、完整度次之」择优，再
+// 合并到一条结果上。代表源（封面下载、源ID、专辑ID、ReleaseMBID）取匹配度
+// 最高的候选；流派跨源去重合并，其余标量字段各取最佳非空值。
+func fuseMetadata(results []scrape.SearchResult, wantTitle string) scrape.SearchResult {
 	if len(results) == 0 {
 		return scrape.SearchResult{}
 	}
-	best, bestScore := results[0], -1.0
-	for i := range results {
-		sc := titleSimilar(results[i].Title, wantTitle)
-		hasAlbum := results[i].Album != ""
-		if sc > bestScore || (sc == bestScore && hasAlbum && best.Album == "") {
-			best, bestScore = results[i], sc
+	ranks := make([]fusedRank, 0, len(results))
+	for _, r := range results {
+		ranks = append(ranks, fusedRank{sr: r, sim: titleSimilar(r.Title, wantTitle), filled: countFilled(r)})
+	}
+	sort.SliceStable(ranks, func(a, b int) bool {
+		if ranks[a].sim != ranks[b].sim {
+			return ranks[a].sim > ranks[b].sim
+		}
+		return ranks[a].filled > ranks[b].filled
+	})
+
+	// pick 返回排序后第一个满足谓词的候选（匹配度高者先被命中）。
+	pick := func(ok func(scrape.SearchResult) bool) (scrape.SearchResult, bool) {
+		for _, rk := range ranks {
+			if ok(rk.sr) {
+				return rk.sr, true
+			}
+		}
+		return scrape.SearchResult{}, false
+	}
+
+	var out scrape.SearchResult
+	rep := ranks[0].sr
+	// 代表源：封面下载、源ID、专辑ID、ReleaseMBID 挂在匹配最佳的候选上。
+	out.Source = rep.Source
+	out.SourceID = rep.SourceID
+	out.AlbumID = rep.AlbumID
+	out.CoverURL = rep.CoverURL
+	out.ReleaseMBID = rep.ReleaseMBID
+	// 代表源非 MusicBrainz 时，仍从任一 MB 候选继承发行 ID（用于写 MB 专辑标签）。
+	if out.ReleaseMBID == "" {
+		if mb, ok := pick(func(s scrape.SearchResult) bool { return s.ReleaseMBID != "" }); ok {
+			out.ReleaseMBID = mb.ReleaseMBID
 		}
 	}
-	if bestScore >= 0.35 {
-		return best
+
+	// 标题：匹配分达标（≥0.35）用最佳；低分回落时优先带艺术家/专辑的完整
+	// 候选，仍找不到才退纯非空标题，避免拿孤立的无关标题乱写。
+	titleOK := func(s scrape.SearchResult) bool {
+		return stripAudioExt(strings.TrimSpace(s.Title)) != ""
 	}
-	for i := range results {
-		if results[i].Album != "" {
-			return results[i]
+	complete := func(s scrape.SearchResult) bool {
+		return titleOK(s) && (len(s.Artists) > 0 || albumUsable(s.Album))
+	}
+	switch {
+	case ranks[0].sim >= 0.35 && titleOK(ranks[0].sr):
+		out.Title = ranks[0].sr.Title
+	default:
+		if r, ok := pick(complete); ok {
+			out.Title = r.Title
+		} else if r, ok := pick(titleOK); ok {
+			out.Title = r.Title
 		}
 	}
-	return results[0]
+	// 艺术家：匹配最佳且非占位（Unknown/未知）。
+	if r, ok := pick(func(s scrape.SearchResult) bool {
+		return len(s.Artists) > 0 && !looksUnknown(s.Artists[0])
+	}); ok {
+		out.Artists = r.Artists
+	}
+	// 专辑：非空、非占位/Various。
+	if r, ok := pick(func(s scrape.SearchResult) bool { return albumUsable(s.Album) }); ok {
+		out.Album = r.Album
+	}
+	// 专辑艺术家：优先 MusicBrainz（Enrich 提供），其次非空。
+	if r, ok := pick(func(s scrape.SearchResult) bool {
+		return s.Source == "musicbrainz" && len(s.AlbumArtist) > 0
+	}); ok {
+		out.AlbumArtist = r.AlbumArtist
+	} else if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.AlbumArtist) > 0 }); ok {
+		out.AlbumArtist = r.AlbumArtist
+	}
+	// 流派：跨源按匹配度顺序去重合并（多源一致增强可信度）。
+	out.Genre = mergeUniqueFused(ranks, func(s scrape.SearchResult) []string { return s.Genre })
+	// 年代/日期：非空且含数字。
+	if r, ok := pick(func(s scrape.SearchResult) bool { return dateUsable(s.Date) }); ok {
+		out.Date = r.Date
+	}
+	// 曲目号。
+	if r, ok := pick(func(s scrape.SearchResult) bool { return s.TrackNumber > 0 }); ok {
+		out.TrackNumber = r.TrackNumber
+	}
+	// 作曲家 / 作词家。
+	if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.Composer) > 0 }); ok {
+		out.Composer = r.Composer
+	}
+	if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.Lyricist) > 0 }); ok {
+		out.Lyricist = r.Lyricist
+	}
+	// 语言 / 专辑类型 / 注释。
+	if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.Language) != "" }); ok {
+		out.Language = r.Language
+	}
+	if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.AlbumType) != "" }); ok {
+		out.AlbumType = r.AlbumType
+	}
+	if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.Comment) != "" }); ok {
+		out.Comment = r.Comment
+	}
+	// 光盘号 / 总音轨 / 总碟数。
+	if r, ok := pick(func(s scrape.SearchResult) bool { return s.DiscNumber > 0 }); ok {
+		out.DiscNumber = r.DiscNumber
+	}
+	if r, ok := pick(func(s scrape.SearchResult) bool { return s.TotalTracks > 0 }); ok {
+		out.TotalTracks = r.TotalTracks
+	}
+	if r, ok := pick(func(s scrape.SearchResult) bool { return s.TotalDiscs > 0 }); ok {
+		out.TotalDiscs = r.TotalDiscs
+	}
+	return out
+}
+
+// countFilled 统计候选非空字段数，作为同匹配分时的完整度tie-break。
+func countFilled(s scrape.SearchResult) int {
+	n := 0
+	for _, v := range []string{s.Title, s.Album, s.Date, s.Language, s.AlbumType, s.Comment} {
+		if strings.TrimSpace(v) != "" {
+			n++
+		}
+	}
+	for _, v := range [][]string{s.Artists, s.AlbumArtist, s.Genre, s.Composer, s.Lyricist} {
+		if len(v) > 0 {
+			n++
+		}
+	}
+	if s.TrackNumber > 0 {
+		n++
+	}
+	if s.ReleaseMBID != "" {
+		n++
+	}
+	return n
+}
+
+// albumUsable 报告专辑名是否为有效非占位值。
+func albumUsable(a string) bool {
+	a = strings.TrimSpace(a)
+	if a == "" || looksUnknown(a) {
+		return false
+	}
+	switch strings.ToLower(a) {
+	case "unknown album", "未知专辑", "various artists":
+		return false
+	}
+	return true
+}
+
+// dateUsable 报告日期是否非空且含数字（年份/完整日期）。
+func dateUsable(d string) bool {
+	d = strings.TrimSpace(d)
+	if d == "" || looksUnknown(d) {
+		return false
+	}
+	return strings.ContainsAny(d, "0123456789")
+}
+
+// mergeUniqueFused 按匹配度顺序收集某多值字段，大小写不敏感去重保序。
+func mergeUniqueFused(ranks []fusedRank, get func(scrape.SearchResult) []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, rk := range ranks {
+		for _, v := range get(rk.sr) {
+			v = strings.TrimSpace(v)
+			if v == "" || seen[strings.ToLower(v)] {
+				continue
+			}
+			seen[strings.ToLower(v)] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // titleSimilar 返回两个标题的相似度（0~1）。先归一化：小写、去空白、

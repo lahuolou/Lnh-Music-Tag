@@ -1,22 +1,59 @@
 # Lnh-Music-Tag
 
-自托管的本地音乐库标签管理工具，内置一套面向第三方播放器的多协议音乐网关。通过浏览器整理本地音频的标签、封面与歌词，并让支持 Subsonic、Navidrome、Jellyfin、Emby 协议的播放器直接读取和播放同一份曲库。
+自托管的**多源音乐元数据刮削与标签整理工具**：把本地目录里标题缺失、乱码、无封面、无歌词的曲目，通过聚合十几个国内外音源自动匹配并补全标题、艺术家、专辑、年份、流派、曲目号、封面与歌词，一键写回音频文件。内置一套可选的多协议音乐网关，让 Subsonic / Navidrome / Jellyfin / Emby 播放器直接读取同一份曲库。
 
 > 当前版本见根目录 [`VERSION`](VERSION)（三段语义化 `主.次.修订`）。流媒体网关是协议**适配子集**，不是完整的 Subsonic / Navidrome / Jellyfin / Emby 服务器，能力边界以 [docs/STREAMING_GATEWAY.md](docs/STREAMING_GATEWAY.md) 为准。
 
 技术栈：Go 1.27（纯 Go，SQLite 使用 modernc.org/sqlite，标签读写走 WASM 封装的 taglib，无 CGO 依赖）+ Vue 3 / Vite（构建产物经 `go:embed` 内嵌进单二进制）。
 
-## 功能概览
+## 多源刮削（核心）
 
-- **曲库扫描与浏览**：异步、可暂停地扫描本地目录， progressive 入库；左侧曲目树支持搜索与按「乱码 / 繁体 / 无歌词 / 无海报 / 待识别」筛选，扫描结果持久化到 SQLite，重启不丢。
-- **标签编辑**：在右侧编辑面板修改标题、艺术家、专辑、年份、音轨号、流派等字段，管理内嵌封面与外挂/内嵌歌词，写回音频文件。
-- **批量处理**：批量补全标签、乱码（GBK/拉丁误码）修复、繁简转换、文件名清理、重复曲目检测与删除。
-- **多源刮削**：聚合国内（网易云、QQ、酷狗、酷我、咪咕、B 站、汽水、波点、5sing）与海外（MusicBrainz、iTunes、ListenBrainz、Deezer、Last.fm、Spotify、Discogs、Jamendo）音源补全元数据与封面；需 Key 的源在插件页配置后启用。
-- **音频识别**：可选 AcoustID 指纹识别，为存疑曲目匹配元数据。
-- **格式转换**：可选 FFmpeg，把曲目批量转码为其他格式。
-- **插件机制**：内置刮削源、FFmpeg、AcoustID、音乐网关以插件形式管理；支持导入第三方 ZIP 插件包（带 Web 面板）。
-- **音乐网关**：同一端口提供 Subsonic/OpenSubsonic、Navidrome 风格 REST、Jellyfin、Emby 四种兼容接口，复用扫描曲库。
-- **双语界面**：中文 / 英文，明暗主题。
+### 内置音源
+
+刮削源以插件形式注册在 Web「插件」页，可单独启停。`auto` 是始终启用的聚合伪源。
+
+| 分组 | 音源 | 是否需要 API Key |
+|---|---|---|
+| 国内（免 Key） | 网易云、QQ 音乐、酷狗、酷我、咪咕、B 站、汽水音乐、波点、5sing | 否 |
+| 海外（免 Key） | iTunes、MusicBrainz、ListenBrainz、Deezer | 否 |
+| 海外（需 Key） | Last.fm、Spotify、Discogs、Jamendo | 是，配好后参与自动刮削 |
+
+### 匹配与聚合
+
+- **语言路由**：`auto` 模式下，含中文的查询先走国内链、再回落海外；拉丁字母查询先走海外链、再回落国内。
+- **并发聚合**：批量刮削并发查询全部启用源并合并命中，单源挂起或限流不会阻塞整条链。
+- **按字段融合（多源择优）**：不再整条采用某一个源。先对每个候选做标题归一化（小写、去空白、去掉伴奏/现场等括号变体）并用 Dice 二元组相似度评分，再让每个 ID3 字段独立从候选中择优——标题取匹配度最高（≥0.35 阈值，低于阈值不乱写），艺术家/专辑/年代/曲目号/作曲/作词/语言等取匹配度高且非占位（Unknown/未知/Various）的完整值，流派跨源去重合并，专辑艺术家优先取 MusicBrainz；同分并列时完整度（非空字段数）高者优先。
+- **详情补全**：对 MusicBrainz 候选先拉取发行详情（专辑艺术家、流派、发行日期、语言、专辑类型、碟数与曲目号）再参与融合。
+
+### 封面与歌词
+
+- **封面回退链**：先用命中源取封面，失败则按偏好源→语言链逐源尝试；完整「标题+艺术家」全失败后，用纯标题再查一轮（更易命中 iTunes / MusicBrainz）。下载带国内 CDN 的 Referer 防盗链头，并校验响应确实是图片（拦截 HTML 错误页/坏链），失败自动重试。
+- **歌词链路**：网易云 / QQ 按源歌曲 ID 取；取不到走 QQ、网易搜索兜底；海外曲目最终落到 lrclib。
+
+### 音频指纹识别（可选）
+
+配置 AcoustID API Key 后，存疑曲目（Unknown、乱码、缺艺术家）可先做音频指纹识别，再回写元数据；未配 Key 时该功能关闭，不影响普通刮削。
+
+## 批量整理
+
+在扫描结果上勾选曲目后，可按需要组合执行：
+
+- **一键补全**：批量刮削并写回勾选的字段（标题、艺术家、专辑、专辑艺术家、年份、流派、曲目号等）。
+- **乱码修复**：修正 GBK / 拉丁误码导致的标题、艺术家乱码。
+- **繁简转换**：统一繁简字。
+- **文件重命名**：按「艺术家 - 标题.后缀」规范命名。
+- **去重**：检测并删除重复曲目。
+- **格式转换**（可选 FFmpeg）：批量转码为其他格式。
+
+## 曲库扫描与浏览
+
+- 异步、可暂停地扫描本地目录，progressive 入库，结果持久化到 SQLite，重启不丢。
+- 左侧曲目树支持搜索，并按「乱码 / 繁体 / 无歌词 / 无海报 / 待识别」快速筛选。
+- 右侧编辑面板可手动修改标题、艺术家、专辑、年份、音轨号、流派，管理内嵌封面与外挂/内嵌歌词并写回文件。
+
+## 附带：四协议播放网关
+
+同一端口提供 Subsonic/OpenSubsonic、Navidrome 风格 REST、Jellyfin、Emby 四种兼容接口，复用已扫描曲库，供第三方播放器在线播放、下载与浏览封面/歌单。完整端点覆盖与未实现项见 [docs/STREAMING_GATEWAY.md](docs/STREAMING_GATEWAY.md)。
 
 ## 部署
 
@@ -75,7 +112,7 @@ docker build -t lnh-music-tag:local .
 | `LNH_STREAM_PASS` | 空 | 播放器流媒体密码；Subsonic token 认证与 Navidrome 登录建议设置 |
 | `LNH_INSTALL_FFMPEG` | 关 | 容器启动时自动安装 FFmpeg |
 
-## 接入第三方播放器（同一端口）
+## 接入第三方播放器（同一端口，可选）
 
 先在 Web 界面「扫描」加入音乐目录，再在播放器里按下表填写：
 
@@ -86,11 +123,10 @@ docker build -t lnh-music-tag:local .
 | Jellyfin | `http://<IP>:10248` | 本地单用户模式，`/Users/AuthenticateByName` 放行 |
 | Emby | `http://<IP>:10248/emby` | 同上 |
 
-完整端点覆盖与未实现项见 [docs/STREAMING_GATEWAY.md](docs/STREAMING_GATEWAY.md)。
+## 插件门控
 
-## FFmpeg 与 AcoustID 插件门控
-
-- **FFmpeg（`tool.ffmpeg`）**：服务「格式转换」批量任务与网关按需实时转码（播放器请求 `format=mp3/aac/opus` 或 Emby HLS）。插件页按「配置路径 → PATH → 配置卷」探测二进制；探测不到时开关自动回显关闭并禁用，保存开启被拒绝。**关闭/未安装不影响原始文件直传、下载、浏览封面与歌单**，此时转码自动回退直传。
+- **需 Key 的海外源**（Last.fm / Spotify / Discogs / Jamendo）：未配 Key 时开关禁用，不会参与自动刮削。
+- **FFmpeg（`tool.ffmpeg`）**：服务「格式转换」批量任务与网关按需实时转码（播放器请求 `format=mp3/aac/opus` 或 Emby HLS）。插件页按「配置路径 → PATH → 配置卷」探测二进制；探测不到时开关自动回显关闭并禁用，保存开启被拒绝。**关闭/未安装不影响刮削、原始文件直传、下载、浏览封面与歌单**，此时转码自动回退直传。
 - **AcoustID（`tool.acoustid`）**：在线音频指纹识别，必须先配 API Key；未配 Key 时开关禁用。它只用于存疑曲目识别，不参与播放。
 
 ## 安全提示
@@ -117,10 +153,12 @@ LNH_TEST_USER=admin LNH_TEST_PASS='你的密码' \
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0 — see [LICENSE](LICENSE).
 
 ---
 
 ## English
 
-Lnh-Music-Tag is a self-hosted music-tag manager with a built-in multi-protocol streaming gateway. Edit tags, embedded covers and lyrics for a local library from the browser, and serve the same library to Subsonic, Navidrome-style, Jellyfin and Emby clients over a single port. The gateway is a protocol subset, not a full media server. See Docker Compose above for deployment and [docs/STREAMING_GATEWAY.md](docs/STREAMING_GATEWAY.md) for exact protocol coverage.
+Lnh-Music-Tag is a self-hosted multi-source metadata scraper and tag cleaner for your local music library. It matches tracks against a dozen domestic and international sources and fills in title, artist, album, year, genre, track number, cover art and lyrics, writing the results back into the audio files. An optional built-in gateway serves the same library to Subsonic, Navidrome-style, Jellyfin and Emby clients over a single port. The gateway is a protocol subset, not a full media server. See Docker Compose above for deployment and [docs/STREAMING_GATEWAY.md](docs/STREAMING_GATEWAY.md) for exact protocol coverage.
+
+Released under the GPL-3.0 license — see [LICENSE](LICENSE).

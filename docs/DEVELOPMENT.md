@@ -27,7 +27,7 @@
 ├── fixencoding.go       # 乱码（GBK/拉丁误码）修复
 ├── zhscript.go           # 简繁转换
 ├── renameclean.go       # 文件名清理
-├── scrapejob.go          # 批量 / 一键刮削任务与进度
+├── scrapejob.go          # 批量 / 一键刮削任务、进度，及 fuseMetadata 多源按字段融合
 ├── pipeline.go / activity.go / security.go / helpers.go / static.go / version.go
 ├── internal/
 │   ├── model/           # 曲目/专辑/艺人/歌单等领域模型
