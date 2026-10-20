@@ -1145,7 +1145,7 @@ func (n *navidromeAPI) stream(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	q := r.URL.Query()
-	streamTrack(w, r, n.cfg, t, q.Get("format"), q.Get("maxBitrate"), false)
+	streamTrack(w, r, n.cfg, t, q.Get("format"), bitRateParam(q), false)
 }
 func (n *navidromeAPI) cover(w http.ResponseWriter, r *http.Request, id string) {
 	t := n.track(id)

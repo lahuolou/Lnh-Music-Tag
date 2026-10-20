@@ -1487,7 +1487,7 @@ func (g *mediaGateway) stream(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	q := r.URL.Query()
-	streamTrack(w, r, g.cfg, t, q.Get("format"), q.Get("maxBitrate"), false)
+	streamTrack(w, r, g.cfg, t, q.Get("format"), bitRateParam(q), false)
 }
 
 // embyHLSPlaylist 输出 Emby HLS 单分片播放列表（VOD，整曲一个分片）。

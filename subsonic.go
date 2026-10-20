@@ -426,7 +426,7 @@ func sxForceArray(parent, child string) bool {
 	case "musicFolders":
 		return child == "musicFolder"
 	case "playlist", "album", "directory":
-		return child == "song" || child == "child"
+		return child == "song" || child == "child" || child == "entry"
 	case "artist":
 		return child == "album"
 	case "nowPlaying":
@@ -1255,11 +1255,24 @@ func addSongIDs(q url.Values) []string {
 }
 
 func (a *subsonicAPI) playlistNode(p subsonicPlaylist, includeSongs bool) sxNode {
+	// getPlaylist 标准把曲目序列化为 <entry> 子节点（不是 <song>）；
+	// 音流等客户端按 entry 解析，输出 song 会导致详情页读不到任何曲目。
+	// songCount 以实际成功解析的曲目数为准，避免与可见条目数矛盾。
+	resolved := 0
 	parts := []sxNode{attr("id", p.ID), attr("name", p.Name), attr("owner", a.cfg.GetDefault("admin_user", "admin")), attr("public", "false"), attr("songCount", strconv.Itoa(len(p.TrackIDs))), attr("created", p.Created), attr("changed", p.Changed)}
 	if includeSongs {
 		for _, id := range p.TrackIDs {
 			if t := a.track(id); t != nil {
-				parts = append(parts, a.songNode(t))
+				resolved++
+				e := a.songNode(t)
+				e.Name = "entry"
+				parts = append(parts, e)
+			}
+		}
+		// 详情页：songCount 与实际返回的 entry 数对齐（覆盖上面的占位值）
+		for i := range parts {
+			if parts[i].Name == "@songCount" {
+				parts[i] = attr("songCount", strconv.Itoa(resolved))
 			}
 		}
 	}
@@ -1926,9 +1939,15 @@ func (a *subsonicAPI) stream(w http.ResponseWriter, r *http.Request, op string) 
 	a.lastStreamed = t.ID
 	a.mu.Unlock()
 	q := r.URL.Query()
-	// download：附件形式直传原始文件；stream：按 format/maxBitrate 实时转码，默认直传。
+	// download 标准语义是返回原始文件（附件），不按 format/maxBitrate 转码；
+	// 只有 stream 才按请求实时转码。若让下载也走转码，非 mp3 源在转码失败时
+	// 会表现为“下载失败”，故 download 始终直传原始文件。
 	download := op == "download"
-	streamTrack(w, r, a.cfg, t, q.Get("format"), q.Get("maxBitrate"), download)
+	if download {
+		streamTrack(w, r, a.cfg, t, "", "", true)
+	} else {
+		streamTrack(w, r, a.cfg, t, q.Get("format"), bitRateParam(q), false)
+	}
 }
 func urlEscape(s string) string { return url.PathEscape(s) }
 func (a *subsonicAPI) cover(w http.ResponseWriter, r *http.Request) {

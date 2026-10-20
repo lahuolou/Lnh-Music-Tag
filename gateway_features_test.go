@@ -299,6 +299,53 @@ func TestSubsonicStatisticsCounts(t *testing.T) {
 	}
 }
 
+// TEMP-DEBUG: Subsonic 建歌单加歌后 getPlaylist 是否返回歌曲。
+// Subsonic getPlaylist 标准把曲目序列化为 <entry> 子节点；音流按 entry 解析，
+// 若输出成 song，详情页会读不到任何曲目（列表计数仍对）。这里断言详情返回
+// entry 数组且 songCount 与条目数一致。
+func TestSubsonicPlaylistEntryNodes(t *testing.T) {
+	cfg, _ := cstore.OpenConfig(t.TempDir())
+	defer cfg.Close()
+	_ = cfg.Set("stream_pass", "test")
+	s := newStore(nil)
+	s.add(&model.Track{ID: "t1", Path: "/m/a.flac", FileName: "a.flac", Tags: map[string]string{"TITLE": "歌一", "ARTIST": "甲"}})
+	s.add(&model.Track{ID: "t2", Path: "/m/b.flac", FileName: "b.flac", Tags: map[string]string{"TITLE": "歌二", "ARTIST": "乙"}})
+	a := &subsonicAPI{library: s, cfg: cfg}
+	srv := httptest.NewServer(a.handler())
+	defer srv.Close()
+
+	get := func(path string) map[string]any {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var env map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		return env["subsonic-response"].(map[string]any)
+	}
+
+	get("/rest/createPlaylist.view?u=admin&p=test&f=json&name=就他&songIdToAdd=t1&songIdToAdd=t2")
+	list := get("/rest/getPlaylists.view?u=admin&p=test&f=json")
+	pls := list["playlists"].(map[string]any)["playlist"].([]any)
+	pid := pls[0].(map[string]any)["id"].(string)
+
+	detail := get("/rest/getPlaylist.view?u=admin&p=test&f=json&id=" + pid)
+	pl := detail["playlist"].(map[string]any)
+	entries, ok := pl["entry"].([]any)
+	if !ok {
+		t.Fatalf("playlist 曲目应为 entry 数组，got keys=%v", pl)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entry 数=%d, want 2", len(entries))
+	}
+	if sc, _ := pl["songCount"].(float64); int(sc) != 2 {
+		t.Fatalf("songCount=%v, want 2", pl["songCount"])
+	}
+}
+
 // 专辑节点必须同时带 name 与 title：音流等客户端只读 title，缺 title 会把
 // 专辑名渲染成占位“?”。
 func TestAlbumNodeCarriesTitle(t *testing.T) {
