@@ -109,19 +109,21 @@ docker build -t lnh-music-tag:local .
 | `LNH_PORT` | `:10248` | HTTP 监听端口 |
 | `LNH_CONFIG_DIR` | `/config` | SQLite 配置目录（`lnh.db`） |
 | `LNH_ADMIN_USER` / `LNH_ADMIN_PASS` | `admin` / 随机 | 仅首次启动写入管理员账号；之后以数据库为准 |
-| `LNH_STREAM_PASS` | 空 | 播放器流媒体密码；Subsonic token 认证与 Navidrome 登录建议设置 |
+| `LNH_STREAM_PASS` | 空 | 四协议播放器连接的**唯一密码**；未配置时播放器一律无法连接 |
 | `LNH_INSTALL_FFMPEG` | 关 | 容器启动时自动安装 FFmpeg |
 
 ## 接入第三方播放器（同一端口，可选）
 
 先在 Web 界面「扫描」加入音乐目录，再在播放器里按下表填写：
 
+四个协议统一只填同一个**流媒体密码**（插件「音乐统一网关」或 `LNH_STREAM_PASS`），用户名任意，不使用 Web 管理员密码。
+
 | 服务类型 | 基础地址 | 认证 |
 |---|---|---|
-| Subsonic / OpenSubsonic | `http://<IP>:10248/rest` | 管理员用户名；明文密码可用管理员密码或流媒体密码，token 模式需流媒体密码 |
-| Navidrome 兼容 | `http://<IP>:10248` | `/auth/login`，用户名=管理员，密码=流媒体密码（未配则用管理员密码） |
-| Jellyfin | `http://<IP>:10248` | 本地单用户模式，`/Users/AuthenticateByName` 放行 |
-| Emby | `http://<IP>:10248/emby` | 同上 |
+| Subsonic / OpenSubsonic | `http://<IP>:10248/rest` | 密码填流媒体密码（明文或 token 模式均可） |
+| Navidrome 兼容 | `http://<IP>:10248` | `/auth/login`，密码填流媒体密码 |
+| Jellyfin | `http://<IP>:10248` | `/Users/AuthenticateByName`，密码填流媒体密码 |
+| Emby | `http://<IP>:10248/emby` | 密码填流媒体密码 |
 
 ## 插件门控
 
@@ -131,7 +133,7 @@ docker build -t lnh-music-tag:local .
 
 ## 安全提示
 
-当前为**单用户自托管**模型，Jellyfin/Emby 认证在本地单用户模式下宽松放行；暴露到公网前应收紧认证、使用 HTTPS，并修改默认/随机密码。日志不记录完整 query、认证头或登录正文。
+当前为**单用户自托管**模型：Web 后台用管理员账号登录，四个流媒体协议统一只认流媒体密码 `stream_pass`（不宽松放行）；暴露到公网前应使用 HTTPS，并分别设置强管理员密码与流媒体密码。日志不记录完整 query、认证头或登录正文。
 
 ## 自检
 

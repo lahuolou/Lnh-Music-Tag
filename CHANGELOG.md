@@ -4,6 +4,52 @@
 
 ---
 
+## 1.0.3
+
+将 1.0.2 在 Subsonic 网关补齐的评分、真实计数、歌单能力，同步覆盖到 Navidrome、Jellyfin、Emby 三套协议，并修复歌单标识匹配。
+
+### 认证统一为流媒体密码
+
+- 四个协议（Subsonic/OpenSubsonic、Navidrome、Jellyfin、Emby）统一只校验流媒体密码 `stream_pass`：移除管理员密码认证分支与“任意/残留密码宽松放行”，未配置 `stream_pass` 时四协议一律拒绝连接；用户名仅作占位。
+- Subsonic 明文 `p` 精确匹配 `stream_pass`，token 仍为 MD5(`stream_pass`+salt)；ND `/auth/login`、JF/Emby `AuthenticateByName` 的 `Password` 精确匹配 `stream_pass`，派生 Bearer/Access token 也只以 `stream_pass` 为基值。
+- 修复 Emby 评分写 `POST /Users/{uid}/Items/{id}/Rating` 被通用曲目读取吞掉、`POST /Playlists` 建歌单被 GET 歌单列表吞掉的问题（写动作路由前置于通用读取/列表之前）。
+
+### 概览统计
+
+- 补齐 Subsonic `getStatistics`：回传真实 `songCount/albumCount/artistCount/playlistCount`，解决概览页专辑/歌手/歌单显示“未知”。
+
+### 评分（四协议共享 `streaming_ratings`）
+
+- Navidrome 歌曲 DTO 的 `rating` 不再恒为 0，回传与 Subsonic 共享的星级评分。
+- Jellyfin / Emby 歌曲 `UserData.Rating` 回传共享评分；新增评分写端点 `POST /Users/{uid}/Items/{id}/Rating?Rating=0..5`（`Rating=0` 清除），仅对真实曲目生效。
+
+### 歌单（Jellyfin / Emby）
+
+- 新增建歌单 `POST /Users/{uid}/Playlists` / `POST /Playlists`（body `{"Name":..,"Ids":[..]}`），追加去重。
+- 新增加歌 `POST /Playlists/{id}/Items?Ids=..`、删歌 `DELETE /Playlists/{id}/Items?EntryIds=..`，与 Subsonic/Navidrome 共享 `streaming_playlists`。
+- 修复 `playlistByID`：存储原生 ID、展示前缀 `pl-<id>`、裸 ID 三种标识均可匹配，解决按展示 ID 定位歌单误报“Playlist not found”。
+
+### 说明
+
+- 经实测核实：服务端标签中文与 JSON/XML 转义均正常，历史“乱码/引号破坏 JSON”系控制台按 ANSI 误读 UTF-8 落盘文件所致，未改动显示层以免误伤正常短名。
+
+## 1.0.2
+
+修复 Subsonic/OpenSubsonic 网关在音流（Musiver）客户端实机暴露的四项问题。
+
+### 播放与评分
+
+- 实现 `setRating`（0~5 星，`rating=0` 清除）：评分持久化到配置，并在歌曲节点回传 `userRating`；收藏状态回传 `starred`，不再返回 `setRating is not implemented` 报错。
+
+### 浏览计数
+
+- `getIndexes` 的歌手节点补齐真实 `songCount` / `trackCount` / `albumCount`，不再因缺字段被客户端兜底显示固定“50 首”。
+- `getArtists`、`getAlbumList` / `getAlbumList2`、`getPlaylists` 根节点补充 `total`（全量计数，不受分页截断），客户端服务器概览不再显示专辑/歌手/歌单“未知”。
+
+### 歌单
+
+- `createPlaylist` / `updatePlaylist` 兼容追加参数别名 `songId`（标准为 `songIdToAdd`），并对曲目去重，解决已有歌单追加后仍显示 0 首、点进去为空的问题。
+
 ## 1.0.1
 
 ### 许可证

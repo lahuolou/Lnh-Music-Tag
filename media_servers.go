@@ -105,14 +105,9 @@ func (g *mediaGateway) userPass(r *http.Request) (string, string) {
 	}
 	return x.Username, x.Pw
 }
+// token base 仅取流媒体密码 stream_pass（唯一凭证）；未配置则为空，token 校验自然失败。
 func (g *mediaGateway) tokenBase() string {
-	// 与 Navidrome 风格网关一致：优先使用独立流媒体密码；未配置时，
-	// 使用数据库中持久化的管理员密码摘要作为稳定派生基值。
-	if p := strings.TrimSpace(g.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS"))); p != "" {
-		return p
-	}
-	stored, _ := g.cfg.Get("admin_pass")
-	return stored
+	return strings.TrimSpace(g.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
 }
 
 func (g *mediaGateway) tokenFor(user string) string {
@@ -120,23 +115,18 @@ func (g *mediaGateway) tokenFor(user string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// authenticate 仅以流媒体密码 stream_pass 作为唯一凭证（单用户自托管）：
+// 不校验管理员密码、不接受任意空/残留密码。密码即凭证，用户名仅用于派生稳定 token。
 func (g *mediaGateway) authenticate(w http.ResponseWriter, r *http.Request, kind string) {
-	user, pass := g.userPass(r)
+	_, pass := g.userPass(r)
 	wantUser := g.cfg.GetDefault("admin_user", "admin")
-	stored, _ := g.cfg.Get("admin_pass")
-	userMatches := subtle.ConstantTimeCompare([]byte(user), []byte(wantUser)) == 1
-	ok := userMatches && verifyPassword(stored, pass)
-	if !ok {
-		// 兼容流媒体密码（与 Subsonic 网关一致；token 认证类客户端要求）
-		streamPass := strings.TrimSpace(g.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
-		ok = userMatches && streamPass != "" && subtle.ConstantTimeCompare([]byte(pass), []byte(streamPass)) == 1
-		// 本地单用户自托管兼容：用户名正确且已配置 stream_pass 时，接受客户端任意已填密码（部分客户端密码残留/不回传）。
-		if !ok && userMatches && streamPass != "" {
-			ok = true
-		}
+	streamPass := strings.TrimSpace(g.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
+	if streamPass == "" {
+		g.json(w, http.StatusUnauthorized, map[string]any{"Message": "流媒体密码未配置（请先在插件设置填写 stream_pass）"})
+		return
 	}
-	if !ok {
-		g.json(w, 401, map[string]any{"Message": "Invalid username or password"})
+	if subtle.ConstantTimeCompare([]byte(pass), []byte(streamPass)) != 1 {
+		g.json(w, http.StatusUnauthorized, map[string]any{"Message": "Invalid username or password"})
 		return
 	}
 	// 登录来源不影响 token：token 始终使用稳定配置派生，重启后仍可校验。
@@ -387,6 +377,31 @@ func (g *mediaGateway) favorite(w http.ResponseWriter, r *http.Request, id strin
 	g.json(w, http.StatusOK, map[string]any{"ItemId": id, "IsFavorite": r.Method == http.MethodPost})
 }
 
+// rateItem 处理 Jellyfin/Emby 星级评分（POST /Users/{userId}/Items/{id}/Rating?Rating=0..5），
+// 与 Subsonic/Navidrome 共享 streaming_ratings；仅对真实曲目生效，Rating=0 表示清除。
+func (g *mediaGateway) rateItem(w http.ResponseWriter, r *http.Request, id string) {
+	if g.library.get(id) == nil {
+		g.json(w, http.StatusNotFound, map[string]any{"Message": "Item not found"})
+		return
+	}
+	rating, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("Rating")))
+	if err != nil || rating < 0 || rating > 5 {
+		g.json(w, http.StatusBadRequest, map[string]any{"Message": "Invalid Rating (0-5)"})
+		return
+	}
+	m := map[string]int{}
+	_ = json.Unmarshal([]byte(g.cfg.GetDefault("streaming_ratings", "{}")), &m)
+	if rating == 0 {
+		delete(m, id)
+	} else {
+		m[id] = rating
+	}
+	if b, err := json.Marshal(m); err == nil {
+		_ = g.cfg.Set("streaming_ratings", string(b))
+	}
+	g.json(w, http.StatusOK, map[string]any{"ItemId": id, "Rating": rating})
+}
+
 func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p string) {
 	if p == "system/info/public" || p == "system/info" {
 		g.json(w, 200, map[string]any{"ServerName": "Lnh-Music-Tag", "Version": "10.8.13", "ProductName": "Lnh-Music-Tag", "Id": "lnh-music-tag", "OperatingSystem": "Linux", "CanSelfRestart": false, "CanLaunchWebBrowser": false, "StartupWizardCompleted": true, "SystemArchitecture": "x64", "LocalNetworkAddresses": []string{}})
@@ -440,6 +455,23 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 		g.favorite(w, r, id)
 		return
 	}
+	// 星级评分：POST /Users/{userId}/Items/{id}/Rating?Rating=0..5（与 Subsonic 共享 streaming_ratings）
+	if strings.Contains(p, "/items/") && strings.HasSuffix(p, "/rating") {
+		id := p[strings.LastIndex(p, "/items/")+len("/items/"):]
+		g.rateItem(w, r, strings.TrimSuffix(id, "/rating"))
+		return
+	}
+	// 建歌单：POST /Users/{uid}/Playlists 或 POST /Playlists（body {"Name":..,"Ids":[..]}）
+	if r.Method == http.MethodPost && (p == "playlists" || strings.HasSuffix(p, "/playlists")) {
+		g.createPlaylistJf(w, r)
+		return
+	}
+	// 加/删歌：POST/DELETE /Playlists/{id}/Items?Ids=.. / EntryIds=..
+	if strings.HasPrefix(p, "playlists/") && strings.HasSuffix(p, "/items") {
+		id := strings.TrimSuffix(strings.TrimPrefix(p, "playlists/"), "/items")
+		g.mutatePlaylistItems(w, r, id)
+		return
+	}
 	// 标准 Jellyfin 歌词接口：/Users/{userId}/Items/{id}/Lyrics、/Items/{id}/Lyrics（10.9+）、/Audio/{id}/Lyrics（10.8+）
 	if strings.Contains(p, "/items/") && strings.HasSuffix(p, "/lyrics") {
 		id := p[strings.LastIndex(p, "/items/")+len("/items/"):]
@@ -474,7 +506,8 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 		g.json(w, 200, g.itemQuery(r2))
 		return
 	}
-	if p == "playlists" {
+	// GET /Playlists 返回歌单列表；POST /Playlists 建歌单落到写动作路由，不可在此吞掉。
+	if p == "playlists" && r.Method != http.MethodPost {
 		g.json(w, 200, g.playlistItems(r))
 		return
 	}
@@ -508,6 +541,11 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 	}
 	if strings.HasPrefix(p, "users/") && strings.Contains(p, "/items/") {
 		last := p[strings.LastIndex(p, "/items/")+len("/items/"):]
+		// 评分写动作须先于通用曲目读取拦截，否则 POST 会被 item 查询吞掉。
+		if strings.HasSuffix(last, "/rating") {
+			g.rateItem(w, r, strings.TrimSuffix(last, "/rating"))
+			return
+		}
 		if t := g.library.get(last); t != nil {
 			g.json(w, 200, g.item(t))
 			return
@@ -772,6 +810,11 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 	}
 	if strings.HasPrefix(p, "users/") && strings.Contains(p, "/items/") {
 		last := p[strings.LastIndex(p, "/items/")+len("/items/"):]
+		// 评分写动作须先于通用曲目读取拦截，否则 POST 会被 item 查询吞掉。
+		if strings.HasSuffix(last, "/rating") {
+			g.rateItem(w, r, strings.TrimSuffix(last, "/rating"))
+			return
+		}
 		if t := g.library.get(last); t != nil {
 			g.json(w, 200, g.item(t))
 			return
@@ -817,7 +860,8 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 		g.json(w, 200, g.itemQuery(r2))
 		return
 	}
-	if p == "playlists" {
+	// GET /Playlists 返回歌单列表；POST /Playlists 建歌单落到写动作路由，不可在此吞掉。
+	if p == "playlists" && r.Method != http.MethodPost {
 		g.json(w, 200, g.playlistItems(r))
 		return
 	}
@@ -905,6 +949,23 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 		g.favorite(w, r, id)
 		return
 	}
+	// 星级评分：POST /Users/{userId}/Items/{id}/Rating?Rating=0..5（与 Subsonic 共享 streaming_ratings）
+	if strings.Contains(p, "/items/") && strings.HasSuffix(p, "/rating") {
+		id := p[strings.LastIndex(p, "/items/")+len("/items/"):]
+		g.rateItem(w, r, strings.TrimSuffix(id, "/rating"))
+		return
+	}
+	// 建歌单：POST /Users/{uid}/Playlists 或 POST /Playlists（body {"Name":..,"Ids":[..]}）
+	if r.Method == http.MethodPost && (p == "playlists" || strings.HasSuffix(p, "/playlists")) {
+		g.createPlaylistJf(w, r)
+		return
+	}
+	// 加/删歌：POST/DELETE /Playlists/{id}/Items?Ids=.. / EntryIds=..
+	if strings.HasPrefix(p, "playlists/") && strings.HasSuffix(p, "/items") {
+		id := strings.TrimSuffix(strings.TrimPrefix(p, "playlists/"), "/items")
+		g.mutatePlaylistItems(w, r, id)
+		return
+	}
 	http.NotFound(w, r)
 }
 func (g *mediaGateway) mediaSources(t *model.Track) []any {
@@ -975,7 +1036,7 @@ func (g *mediaGateway) item(t *model.Track) map[string]any {
 	if gv := tag(t, "GENRE"); gv != "" {
 		genres = []string{gv}
 	}
-	return map[string]any{"Name": songTitle(t), "ServerId": "lnh-music-tag", "Id": t.ID, "Type": "Audio", "MediaType": "Audio", "IsFolder": false, "Album": songAlbum(t), "AlbumId": albumID(t), "AlbumArtist": songArtist(t), "Artists": []string{songArtist(t)}, "ArtistItems": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "AlbumArtists": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "RunTimeTicks": int64(t.Duration * 10000000), "ProductionYear": year, "IndexNumber": intValue(tag(t, "TRACKNUMBER", "TRACK")), "ParentIndexNumber": intValue(tag(t, "DISCNUMBER", "DISC")), "Container": strings.TrimPrefix(strings.ToLower(t.Ext), "."), "Path": t.Path, "Size": t.Size, "Bitrate": t.Bitrate * 1000, "HasPrimaryImage": t.HasCover, "ImageTags": imageTags, "Genres": genres, "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": g.isStarred(t.ID), "Played": false}, "MediaSources": g.mediaSources(t)}
+	return map[string]any{"Name": songTitle(t), "ServerId": "lnh-music-tag", "Id": t.ID, "Type": "Audio", "MediaType": "Audio", "IsFolder": false, "Album": songAlbum(t), "AlbumId": albumID(t), "AlbumArtist": songArtist(t), "Artists": []string{songArtist(t)}, "ArtistItems": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "AlbumArtists": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "RunTimeTicks": int64(t.Duration * 10000000), "ProductionYear": year, "IndexNumber": intValue(tag(t, "TRACKNUMBER", "TRACK")), "ParentIndexNumber": intValue(tag(t, "DISCNUMBER", "DISC")), "Container": strings.TrimPrefix(strings.ToLower(t.Ext), "."), "Path": t.Path, "Size": t.Size, "Bitrate": t.Bitrate * 1000, "HasPrimaryImage": t.HasCover, "ImageTags": imageTags, "Genres": genres, "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": g.isStarred(t.ID), "Rating": ratingFor(g.cfg, t.ID), "Played": false}, "MediaSources": g.mediaSources(t)}
 }
 func intValue(s string) int { n, _ := strconv.Atoi(firstNumber(s)); return n }
 
@@ -1246,20 +1307,114 @@ func (g *mediaGateway) loadPlaylists() []subsonicPlaylist {
 	return p
 }
 
-// playlistByID 兼容 "pl-<id>" 与裸 <id> 两种歌单标识。
+// playlistByID 兼容三种标识：存储原生 ID（自带 pl- 前缀）、展示前缀 "pl-<id>"、裸 <id>。
 func (g *mediaGateway) playlistByID(id string) (subsonicPlaylist, int) {
-	id = strings.TrimPrefix(id, "pl-")
+	cands := []string{id}
+	if stripped := strings.TrimPrefix(id, "pl-"); stripped != id {
+		cands = append(cands, stripped)
+	}
 	for i, pl := range g.loadPlaylists() {
-		if pl.ID == id {
-			return pl, i
+		for _, c := range cands {
+			if pl.ID == c {
+				return pl, i
+			}
 		}
 	}
 	return subsonicPlaylist{}, -1
 }
 
+func (g *mediaGateway) savePlaylists(p []subsonicPlaylist) {
+	if b, err := json.Marshal(p); err == nil {
+		_ = g.cfg.Set("streaming_playlists", string(b))
+	}
+}
+
+// splitIDList 汇总 query 里逗号分隔的条目 id（Ids / EntryIds），去空白、去空。
+func splitIDList(v string) []string {
+	var out []string
+	for _, x := range strings.Split(v, ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// createPlaylistJf 建歌单：POST /Users/{uid}/Playlists 或 POST /Playlists，
+// body {"Name":..,"Ids":[..]}，兼容 query Name/Ids；与 Subsonic 共享 streaming_playlists。
+func (g *mediaGateway) createPlaylistJf(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.URL.Query().Get("Name"))
+	var body struct {
+		Name string   `json:"Name"`
+		Ids  []string `json:"Ids"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body)
+	if body.Name != "" {
+		name = strings.TrimSpace(body.Name)
+	}
+	ids := body.Ids
+	if len(ids) == 0 {
+		ids = splitIDList(r.URL.Query().Get("Ids"))
+	}
+	for _, sid := range ids {
+		if g.library.get(sid) == nil {
+			g.json(w, http.StatusNotFound, map[string]any{"Message": "Item not found: " + sid})
+			return
+		}
+	}
+	if name == "" {
+		g.json(w, http.StatusBadRequest, map[string]any{"Message": "Missing Name"})
+		return
+	}
+	ps := g.loadPlaylists()
+	now := time.Now().UTC().Format(time.RFC3339)
+	pl := subsonicPlaylist{ID: stableID("pl-", name+strconv.FormatInt(time.Now().UnixNano(), 10)), Name: name, Created: now, Changed: now, TrackIDs: []string{}}
+	pl.TrackIDs = appendUniqueSongs(pl.TrackIDs, ids)
+	ps = append(ps, pl)
+	g.savePlaylists(ps)
+	g.json(w, http.StatusOK, g.playlistDTO(pl))
+}
+
+// mutatePlaylistItems 加/删歌：POST /Playlists/{id}/Items?Ids=.. 追加（去重），
+// DELETE /Playlists/{id}/Items?EntryIds=.. 移除。
+func (g *mediaGateway) mutatePlaylistItems(w http.ResponseWriter, r *http.Request, id string) {
+	_, idx := g.playlistByID(id)
+	if idx < 0 {
+		g.json(w, http.StatusNotFound, map[string]any{"Message": "Playlist not found"})
+		return
+	}
+	ps := g.loadPlaylists()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if r.Method == http.MethodDelete {
+		remove := map[string]bool{}
+		for _, x := range splitIDList(r.URL.Query().Get("EntryIds")) {
+			remove[x] = true
+		}
+		next := []string{}
+		for _, sid := range ps[idx].TrackIDs {
+			if !remove[sid] {
+				next = append(next, sid)
+			}
+		}
+		ps[idx].TrackIDs = next
+	} else {
+		add := splitIDList(r.URL.Query().Get("Ids"))
+		for _, sid := range add {
+			if g.library.get(sid) == nil {
+				g.json(w, http.StatusNotFound, map[string]any{"Message": "Item not found: " + sid})
+				return
+			}
+		}
+		ps[idx].TrackIDs = appendUniqueSongs(ps[idx].TrackIDs, add)
+	}
+	ps[idx].Changed = now
+	g.savePlaylists(ps)
+	g.json(w, http.StatusOK, g.playlistDTO(ps[idx]))
+}
+
 func (g *mediaGateway) playlistDTO(pl subsonicPlaylist) map[string]any {
 	return map[string]any{
-		"Name": pl.Name, "Id": "pl-" + pl.ID, "Type": "Playlist", "IsFolder": true,
+		"Name": pl.Name, "Id": pl.ID, "Type": "Playlist", "IsFolder": true,
 		"ChildCount": len(pl.TrackIDs), "ServerId": "lnh-music-tag",
 		"UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": false, "Played": false},
 	}
@@ -1269,7 +1424,7 @@ func (g *mediaGateway) playlistItems(r *http.Request) map[string]any {
 	p := g.loadPlaylists()
 	var items []any
 	for _, pl := range p {
-		items = append(items, map[string]any{"Name": pl.Name, "Id": "pl-" + pl.ID, "Type": "Playlist", "IsFolder": true, "ChildCount": len(pl.TrackIDs), "ServerId": "lnh-music-tag", "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": false, "Played": false}})
+		items = append(items, map[string]any{"Name": pl.Name, "Id": pl.ID, "Type": "Playlist", "IsFolder": true, "ChildCount": len(pl.TrackIDs), "ServerId": "lnh-music-tag", "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": false, "Played": false}})
 	}
 	return pageItems(items, r)
 }

@@ -35,7 +35,7 @@ Lnh-Music-Tag 的刮削源、FFmpeg、AcoustID、音乐网关都以「插件」�
 - **刮削源 `scrape.*`**（来自 `internal/scrape`，`auto` 为始终启用的聚合伪源）：netease、qq、kugou、kuwo、migu、bilibili、qishui、bodian、fivesing、musicbrainz、itunes、listenbrainz、deezer、lastfm、spotify、discogs、jamendo。其中 lastfm/spotify/discogs/jamendo 需 Key。
 - **`tool.ffmpeg`**：格式转换与网关按需转码；支持配置路径、容器内一键安装、配置卷持久化。
 - **`tool.acoustid`**：音频指纹识别，需 API Key。
-- **`tool.streaming_gateway`**：四协议音乐网关，`stream_pass` 为播放器流媒体密码。
+- **`tool.streaming_gateway`**：四协议（Subsonic / Navidrome / Jellyfin / Emby）音乐网关；`stream_pass` 是播放器连接的唯一凭证，四协议均只校验该密码，不校验 Web 管理员密码。
 
 ## 3. 第三方 ZIP 插件包
 

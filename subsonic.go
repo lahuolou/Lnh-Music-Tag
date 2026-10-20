@@ -154,7 +154,7 @@ func (a *subsonicAPI) handler() http.Handler {
 		case "unstar":
 			result = a.star(r, false)
 		case "setRating":
-			result = apiError(0, "setRating is not implemented; no rating was changed")
+			result = a.setRating(r)
 		case "getAlbum":
 			result = a.album(r.URL.Query().Get("id"))
 		case "getSong":
@@ -170,6 +170,8 @@ func (a *subsonicAPI) handler() http.Handler {
 			result = a.search(r, "searchResult2")
 		case "search":
 			result = a.search(r, "searchResult")
+		case "getStatistics":
+			result = a.statistics()
 		case "getScanStatus":
 			result = node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("scanStatus", node("scanStatus", attr("scanning", "false"), attr("count", strconv.Itoa(len(a.all()))))))
 		case "startScan":
@@ -268,18 +270,17 @@ func apiError(code int, msg string) sxNode {
 	return node("subsonic-response", attr("status", "failed"), attr("version", subsonicVersion), child("error", node("error", attr("code", strconv.Itoa(code)), attr("message", msg))))
 }
 
+// authorized 仅以流媒体密码 stream_pass 为唯一凭证（单用户自托管）：
+// 明文 p 精确匹配 stream_pass；token 认证为 MD5(stream_pass + salt)。
+// 不校验管理员密码，不接受空参/残留密码握手。
 func (a *subsonicAPI) authorized(r *http.Request) bool {
 	q := r.URL.Query()
-	user := q.Get("u")
-	supplied := q.Get("p")
-	wantUser := a.cfg.GetDefault("admin_user", "admin")
-	stored, _ := a.cfg.Get("admin_pass")
-	if subtle.ConstantTimeCompare([]byte(user), []byte(wantUser)) != 1 {
+	streamPass := strings.TrimSpace(a.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
+	if streamPass == "" {
 		return false
 	}
-	// 流媒体明文密码（插件配置 stream_pass 优先，兼容 LNH_STREAM_PASS 环境变量）。
-	// 用于 Subsonic token 认证（md5(password+salt)）与可选明文认证。
-	streamPass := strings.TrimSpace(a.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
+	// 明文密码（兼容客户端 enc:hex 编码）。
+	supplied := q.Get("p")
 	pass := supplied
 	if strings.HasPrefix(pass, "enc:") {
 		b, err := hex.DecodeString(strings.TrimPrefix(pass, "enc:"))
@@ -288,25 +289,10 @@ func (a *subsonicAPI) authorized(r *http.Request) bool {
 		}
 		pass = string(b)
 	}
-	// 明文认证：管理员密码（加盐哈希）、流媒体密码均放行。
 	if pass != "" {
-		if verifyPassword(stored, pass) {
-			return true
-		}
-		if streamPass != "" && subtle.ConstantTimeCompare([]byte(pass), []byte(streamPass)) == 1 {
-			return true
-		}
+		return subtle.ConstantTimeCompare([]byte(pass), []byte(streamPass)) == 1
 	}
-	// 本地单用户兼容：已配置 stream_pass 且客户端仅带 u、未带 p/token/salt 时放行。
-	// 部分客户端在添加/探测阶段会先空参握手，本地自托管单用户环境直接接受。
-	if streamPass != "" && q.Get("t") == "" && q.Get("s") == "" {
-		return true
-	}
-	// Subsonic token 认证是 MD5(password + salt)。管理员密码是单向哈希、
-	// 无法派生 token，故 token 认证要求配置流媒体密码（插件设置页或 LNH_STREAM_PASS）。
-	if streamPass == "" {
-		return false
-	}
+	// Subsonic token 认证：MD5(stream_pass + salt)。
 	token := q.Get("t")
 	salt := q.Get("s")
 	if token == "" || salt == "" {
@@ -544,6 +530,12 @@ func (a *subsonicAPI) songNode(t *model.Track) sxNode {
 	if n := tag(t, "TRACKNUMBER", "TRACK"); n != "" {
 		attrs = append(attrs, attr("track", firstNumber(n)))
 	}
+	if a.isStarred(t.ID) {
+		attrs = append(attrs, attr("starred", time.Now().UTC().Format(time.RFC3339)))
+	}
+	if rv, ok := a.loadRatings()[t.ID]; ok && rv > 0 {
+		attrs = append(attrs, attr("userRating", strconv.Itoa(rv)))
+	}
 	return node("song", attrs...)
 }
 func firstYear(s string) string {
@@ -591,9 +583,15 @@ func artistIndexName(name string) string {
 }
 func (a *subsonicAPI) indexes() sxNode {
 	tracks := a.all()
-	counts := map[string]int{}
+	songCounts := map[string]int{}
+	albumSets := map[string]map[string]bool{}
 	for _, t := range tracks {
-		counts[songArtist(t)]++
+		name := songArtist(t)
+		songCounts[name]++
+		if albumSets[name] == nil {
+			albumSets[name] = map[string]bool{}
+		}
+		albumSets[name][songAlbum(t)] = true
 	}
 	groups := map[string][]sxNode{}
 	seen := map[string]bool{}
@@ -604,7 +602,14 @@ func (a *subsonicAPI) indexes() sxNode {
 		}
 		seen[name] = true
 		key := artistIndexName(name)
-		groups[key] = append(groups[key], node("artist", attr("id", artistID(t)), attr("name", name), attr("coverArt", albumID(t)), attr("childCount", strconv.Itoa(counts[name]))))
+		attrs := []sxNode{
+			attr("id", artistID(t)), attr("name", name), attr("coverArt", albumID(t)),
+			attr("childCount", strconv.Itoa(songCounts[name])),
+			attr("songCount", strconv.Itoa(songCounts[name])),
+			attr("trackCount", strconv.Itoa(songCounts[name])),
+			attr("albumCount", strconv.Itoa(len(albumSets[name]))),
+		}
+		groups[key] = append(groups[key], node("artist", attrs...))
 	}
 	keys := make([]string, 0, len(groups))
 	for k := range groups {
@@ -654,7 +659,8 @@ func (a *subsonicAPI) artists() sxNode {
 		parts := append([]sxNode{attr("name", k)}, groups[k]...)
 		indices = append(indices, node("index", parts...))
 	}
-	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("artists", node("artists", indices...)))
+	artistChildren := append([]sxNode{attr("total", strconv.Itoa(len(albumSets)))}, indices...)
+	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("artists", node("artists", artistChildren...)))
 }
 func (a *subsonicAPI) genres() sxNode {
 	counts := map[string]int{}
@@ -797,12 +803,14 @@ func (a *subsonicAPI) albumList(r *http.Request, v2 bool) sxNode {
 	for _, e := range list[offset:end] {
 		albums = append(albums, albumNode(e.ts, stableID("al-", e.k), songAlbum(e.ts[0]), songArtist(e.ts[0]), artistID(e.ts[0])))
 	}
-	// v1 getAlbumList 返回 <albumList>，v2 getAlbumList2 返回 <albumList2>，节点名必须与操作名一致
+	// v1 getAlbumList 返回 <albumList>，v2 getAlbumList2 返回 <albumList2>，节点名必须与操作名一致。
+	// total 给全量专辑数（不受 size/offset 分页截断影响），供客户端统计与分页。
 	name := "albumList"
 	if v2 {
 		name = "albumList2"
 	}
-	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child(name, node(name, albums...)))
+	albumChildren := append([]sxNode{attr("total", strconv.Itoa(len(list)))}, albums...)
+	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child(name, node(name, albumChildren...)))
 }
 func (a *subsonicAPI) album(id string) sxNode {
 	var arr []sxNode
@@ -1217,6 +1225,33 @@ func (a *subsonicAPI) savePlaylists(p []subsonicPlaylist) {
 		_ = a.cfg.Set("streaming_playlists", string(b))
 	}
 }
+// appendUniqueSongs 把待加入曲目去重后追加到歌单（忽略空 id 与已存在项）。
+func appendUniqueSongs(dst []string, ids []string) []string {
+	have := make(map[string]bool, len(dst)+len(ids))
+	for _, s := range dst {
+		have[s] = true
+	}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || have[id] {
+			continue
+		}
+		have[id] = true
+		dst = append(dst, id)
+	}
+	return dst
+}
+
+// addSongIDs 汇总各客户端别名：标准 songIdToAdd，兼容 songId（部分客户端
+// 在已有歌单上追加时使用）。playlistId 是歌单自身 id，不会混入。
+func addSongIDs(q url.Values) []string {
+	ids := q["songIdToAdd"]
+	if len(ids) == 0 {
+		ids = q["songId"]
+	}
+	return ids
+}
+
 func (a *subsonicAPI) playlistNode(p subsonicPlaylist, includeSongs bool) sxNode {
 	parts := []sxNode{attr("id", p.ID), attr("name", p.Name), attr("owner", a.cfg.GetDefault("admin_user", "admin")), attr("public", "false"), attr("songCount", strconv.Itoa(len(p.TrackIDs))), attr("created", p.Created), attr("changed", p.Changed)}
 	if includeSongs {
@@ -1229,11 +1264,37 @@ func (a *subsonicAPI) playlistNode(p subsonicPlaylist, includeSongs bool) sxNode
 	return node("playlist", parts...)
 }
 func (a *subsonicAPI) playlists() sxNode {
-	var items []sxNode
-	for _, p := range a.loadPlaylists() {
+	ps := a.loadPlaylists()
+	items := make([]sxNode, 0, len(ps))
+	for _, p := range ps {
 		items = append(items, a.playlistNode(p, false))
 	}
-	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("playlists", node("playlists", items...)))
+	plChildren := append([]sxNode{attr("total", strconv.Itoa(len(ps)))}, items...)
+	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("playlists", node("playlists", plChildren...)))
+}
+
+// statistics 返回全库歌曲/专辑/歌手/歌单真实计数，供客户端概览页展示。
+// 专辑按“艺人+专辑名”去重，歌手按歌手 ID 去重，与 getArtists/getAlbumList 口径一致。
+func (a *subsonicAPI) statistics() sxNode {
+	songs := a.all()
+	albums := make(map[string]bool)
+	artists := make(map[string]bool)
+	for _, t := range songs {
+		if t == nil {
+			continue
+		}
+		albums[albumID(t)] = true
+		artists[artistID(t)] = true
+	}
+	pl := a.loadPlaylists()
+	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion),
+		child("statistics", node("statistics",
+			attr("songCount", strconv.Itoa(len(songs))),
+			attr("albumCount", strconv.Itoa(len(albums))),
+			attr("artistCount", strconv.Itoa(len(artists))),
+			attr("playlistCount", strconv.Itoa(len(pl))),
+			attr("playCount", "0"),
+		)))
 }
 func (a *subsonicAPI) playlist(id string) sxNode {
 	for _, p := range a.loadPlaylists() {
@@ -1269,14 +1330,13 @@ func (a *subsonicAPI) createPlaylist(r *http.Request) sxNode {
 	if name != "" {
 		ps[found].Name = name
 	}
-	for _, songID := range q["songId"] {
+	addIDs := addSongIDs(q)
+	for _, songID := range addIDs {
 		if a.track(songID) == nil {
 			return apiError(70, "Song not found: "+songID)
 		}
 	}
-	for _, songID := range q["songId"] {
-		ps[found].TrackIDs = append(ps[found].TrackIDs, songID)
-	}
+	ps[found].TrackIDs = appendUniqueSongs(ps[found].TrackIDs, addIDs)
 	ps[found].Changed = now
 	a.savePlaylists(ps)
 	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("playlist", a.playlistNode(ps[found], true)))
@@ -1290,7 +1350,8 @@ func (a *subsonicAPI) updatePlaylist(r *http.Request) sxNode {
 		if ps[i].ID != id {
 			continue
 		}
-		for _, sid := range q["songIdToAdd"] {
+		addIDs := addSongIDs(q)
+		for _, sid := range addIDs {
 			if a.track(sid) == nil {
 				return apiError(70, "Song not found: "+sid)
 			}
@@ -1298,9 +1359,7 @@ func (a *subsonicAPI) updatePlaylist(r *http.Request) sxNode {
 		if q.Get("name") != "" {
 			ps[i].Name = q.Get("name")
 		}
-		for _, sid := range q["songIdToAdd"] {
-			ps[i].TrackIDs = append(ps[i].TrackIDs, sid)
-		}
+		ps[i].TrackIDs = appendUniqueSongs(ps[i].TrackIDs, addIDs)
 		remove := map[int]bool{}
 		for _, v := range q["songIndexToRemove"] {
 			n, e := strconv.Atoi(v)
@@ -1351,6 +1410,24 @@ func (a *subsonicAPI) saveStarred(ids []string) {
 		_ = a.cfg.Set("streaming_starred", string(b))
 	}
 }
+func (a *subsonicAPI) loadRatings() map[string]int {
+	out := map[string]int{}
+	_ = json.Unmarshal([]byte(a.cfg.GetDefault("streaming_ratings", "{}")), &out)
+	return out
+}
+func (a *subsonicAPI) saveRatings(m map[string]int) {
+	if b, err := json.Marshal(m); err == nil {
+		_ = a.cfg.Set("streaming_ratings", string(b))
+	}
+}
+
+// ratingFor 读取与四协议共享的星级评分（streaming_ratings: {歌曲ID: 0-5}），
+// 未评分或不存在时返回 0。供 Navidrome / Jellyfin / Emby 视图回传，避免重复解析。
+func ratingFor(cfg *cstore.Config, id string) int {
+	m := map[string]int{}
+	_ = json.Unmarshal([]byte(cfg.GetDefault("streaming_ratings", "{}")), &m)
+	return m[id]
+}
 func (a *subsonicAPI) validStarID(id string) bool {
 	if a.track(id) != nil {
 		return true
@@ -1390,6 +1467,41 @@ func (a *subsonicAPI) star(r *http.Request, add bool) sxNode {
 	sort.Strings(stars)
 	a.saveStarred(stars)
 	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion))
+}
+
+// setRating：标准 Subsonic 星级评分（0~5）。rating=0 表示清除。仅对真实
+// 曲目生效，评分持久化到配置并在 songNode 以 userRating 回传。
+func (a *subsonicAPI) setRating(r *http.Request) sxNode {
+	ids := r.URL.Query()["id"]
+	rating, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("rating")))
+	if err != nil || rating < 0 || rating > 5 {
+		return apiError(10, "Missing or invalid parameter: rating (0-5)")
+	}
+	if len(ids) == 0 {
+		return apiError(10, "Missing required parameter: id")
+	}
+	ratings := a.loadRatings()
+	for _, id := range ids {
+		if a.track(id) == nil {
+			return apiError(70, "Song not found: "+id)
+		}
+		if rating == 0 {
+			delete(ratings, id)
+		} else {
+			ratings[id] = rating
+		}
+	}
+	a.saveRatings(ratings)
+	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion))
+}
+
+func (a *subsonicAPI) isStarred(id string) bool {
+	for _, s := range a.loadStarred() {
+		if s == id {
+			return true
+		}
+	}
+	return false
 }
 
 // getUser 返回单一内置用户（管理员），字段对齐 Subsonic API 的 user DTO。

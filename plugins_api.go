@@ -151,9 +151,9 @@ func registerBuiltinPlugins(ms *scrape.MultiSource, cfg *cstore.Config) {
 	registerPlugin(&Plugin{
 		Name: "tool.streaming_gateway", Label: "音乐统一网关（Subsonic / Jellyfin / Emby / Navidrome）", Kind: PluginTool,
 		Enabled: gatewayEnabled, Builtin: true, Version: AppVersion(),
-		Hint: "为第三方音乐播放器提供 Subsonic / OpenSubsonic、Jellyfin、Emby 与 Navidrome 兼容接口；账号使用主程序管理员账号。",
+		Hint: "为第三方音乐播放器提供 Subsonic / OpenSubsonic、Jellyfin、Emby 与 Navidrome 兼容接口；四个协议统一仅用下面的流媒体密码认证（用户名任意填写）。",
 		Fields: []PluginField{
-			{Key: "stream_pass", Label: "流媒体密码（播放器连接用，token 认证必需；留空则仅支持管理员密码明文认证）", Type: "password", Placeholder: "建议设置，如 admin"},
+			{Key: "stream_pass", Label: "流媒体密码（四协议播放器连接的唯一凭证；留空则播放器一律无法连接）", Type: "password", Placeholder: "设置播放器连接密码"},
 		},
 	}, func(_ string, on bool, cfgMap map[string]string) {
 		if cfg != nil {

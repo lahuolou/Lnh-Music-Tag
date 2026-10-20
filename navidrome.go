@@ -126,13 +126,9 @@ func (n *navidromeAPI) wantUser() string {
 	return n.cfg.GetDefault("admin_user", "admin")
 }
 
-// token base: stream_pass 优先（可派生校验），否则用 admin_pass 哈希本身。
+// token base 仅取流媒体密码 stream_pass（唯一凭证）；未配置则为空，token 校验自然失败。
 func (n *navidromeAPI) tokenBase() string {
-	if p := strings.TrimSpace(n.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS"))); p != "" {
-		return p
-	}
-	stored, _ := n.cfg.Get("admin_pass")
-	return stored
+	return strings.TrimSpace(n.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
 }
 func (n *navidromeAPI) tokenFor(user string) string {
 	h := md5.Sum([]byte(n.tokenBase() + "|" + user + "|lnh-navidrome"))
@@ -168,13 +164,13 @@ func (n *navidromeAPI) login(w http.ResponseWriter, r *http.Request) {
 		x.Password = q.Get("password")
 	}
 	wantUser := n.wantUser()
-	stored, _ := n.cfg.Get("admin_pass")
-	ok := subtle.ConstantTimeCompare([]byte(x.Username), []byte(wantUser)) == 1 && verifyPassword(stored, x.Password)
-	if !ok {
-		streamPass := strings.TrimSpace(n.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
-		ok = subtle.ConstantTimeCompare([]byte(x.Username), []byte(wantUser)) == 1 && streamPass != "" && subtle.ConstantTimeCompare([]byte(x.Password), []byte(streamPass)) == 1
+	// 仅以流媒体密码 stream_pass 为唯一凭证（单用户）：不校验管理员密码，不接受任意残留密码。
+	streamPass := strings.TrimSpace(n.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
+	if streamPass == "" {
+		n.json(w, http.StatusUnauthorized, map[string]any{"error": "流媒体密码未配置（请先填写 stream_pass）", "ok": false})
+		return
 	}
-	if !ok {
+	if subtle.ConstantTimeCompare([]byte(x.Password), []byte(streamPass)) != 1 {
 		n.json(w, http.StatusUnauthorized, map[string]any{"error": "Invalid username or password", "ok": false})
 		return
 	}
@@ -360,7 +356,7 @@ func (n *navidromeAPI) songJSON(t *model.Track) map[string]any {
 		"albumId": albumID(t), "hasCoverArt": t.HasCover,
 		"genre": tag(t, "GENRE"), "year": year,
 		"duration": t.Duration, "trackNumber": trackNo, "discNumber": 1,
-		"playCount": 0, "starred": starred, "rating": 0, "starredAt": starredAt,
+		"playCount": 0, "starred": starred, "rating": ratingFor(n.cfg, t.ID), "starredAt": starredAt,
 		"size": t.Size, "suffix": strings.TrimPrefix(t.Ext, "."), "format": format,
 		"bitRate": int(t.Bitrate), "channels": t.Channels,
 		"path": t.FileName, "coverArtId": albumID(t),

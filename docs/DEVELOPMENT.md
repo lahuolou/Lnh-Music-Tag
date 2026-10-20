@@ -90,7 +90,7 @@ LNH_TEST_USER=admin LNH_TEST_PASS='密码' \
 | `LNH_PORT` | `:10248` | 监听端口 |
 | `LNH_CONFIG_DIR` | `/config` | SQLite 目录（`lnh.db`，含账号/配置/插件/歌单） |
 | `LNH_ADMIN_USER` / `LNH_ADMIN_PASS` | `admin` / 随机 | 仅首次启动种子，之后以数据库为准 |
-| `LNH_STREAM_PASS` | 空 | 流媒体密码（Subsonic token、ND 登录） |
+| `LNH_STREAM_PASS` | 空 | 四协议播放器唯一密码（Subsonic 明文/token、ND 登录、JF/Emby 登录均只认它） |
 | `LNH_INSTALL_FFMPEG` | 关 | 容器启动自动装 FFmpeg |
 
 运行期配置（扫描目录、自动修标题/重命名、编辑字段、FFmpeg 路径、插件开关与 Key）都落 SQLite，重启保留。
@@ -109,6 +109,6 @@ LNH_TEST_USER=admin LNH_TEST_PASS='密码' \
 
 ## 8. 安全注意
 
-- 单用户自托管模型，Jellyfin/Emby 在本地单用户模式下宽松放行；暴露公网前必须收紧认证并上 HTTPS。
+- 单用户自托管模型，四协议流媒体接口只校验 `stream_pass`（不校验 Web 管理员密码，也不宽松放行）；暴露公网仍应上 HTTPS。Web 后台管理员登录是独立的另一套会话认证。
 - 后台 `/api/` 一律走会话 + CSRF；请求体有上限；扫描目录做 `filepath.Clean` 防路径遍历；ZIP 插件防 zip-slip、压缩炸弹与符号链接逃逸。
 - 日志不记录完整 query、认证头或登录正文；API Key 下发前端时脱敏。
