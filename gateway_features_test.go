@@ -298,3 +298,16 @@ func TestSubsonicStatisticsCounts(t *testing.T) {
 		t.Fatalf("statistics=%v, want 3/1/1/0", st)
 	}
 }
+
+// 专辑节点必须同时带 name 与 title：音流等客户端只读 title，缺 title 会把
+// 专辑名渲染成占位“?”。
+func TestAlbumNodeCarriesTitle(t *testing.T) {
+	ts := []*model.Track{{ID: "t1", Tags: map[string]string{"ALBUM": "EO2专辑"}}}
+	n := albumNode(ts, "al-1", "EO2专辑", "EO2", "ar-1")
+	if n.Attr["title"] != "EO2专辑" {
+		t.Fatalf("album node title=%q, want EO2专辑 (attrs=%v)", n.Attr["title"], n.Attr)
+	}
+	if n.Attr["coverArt"] != "t1" {
+		t.Fatalf("album coverArt should reference track id, got %q", n.Attr["coverArt"])
+	}
+}

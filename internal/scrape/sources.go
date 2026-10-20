@@ -273,13 +273,14 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// FetchCoverFallback finds cover art for a query, trying the preferred source
-// first and then every other enabled source until one returns cover bytes. It
-// returns the first non-empty cover image. Used by the one-key pipeline so a
-// source without a poster automatically falls back to the next source.
-// When the full query (title+artist) fails everywhere, a second pass retries
-// with titleOnly (pure song title), which hits iTunes/MusicBrainz more often.
-func (m *MultiSource) FetchCoverFallback(query, prefer, titleOnly string) ([]byte, error) {
+// FetchCoverFallback 在代表源无海报时按 query 补图：先首选源再遍历其余启用源，
+// 全 query（标题+艺人）失败后第二轮用纯标题重试。wantArtist 非空时只采用艺人
+// 匹配候选的封面，避免短/纯标题命中同名异人的错误专辑封面。
+func (m *MultiSource) FetchCoverFallback(query, prefer, titleOnly, wantArtist string) ([]byte, error) {
+	wantA := []string{}
+	if w := strings.TrimSpace(wantArtist); w != "" {
+		wantA = []string{w}
+	}
 	queries := []string{query}
 	if titleOnly != "" && titleOnly != query {
 		queries = append(queries, titleOnly)
@@ -291,14 +292,25 @@ func (m *MultiSource) FetchCoverFallback(query, prefer, titleOnly string) ([]byt
 			if !ok || !m.IsEnabled(n) {
 				continue
 			}
-			res, err := s.Search(m.client, q, 1)
+			res, err := s.Search(m.client, q, 4)
 			if err != nil || len(res) == 0 {
 				if err != nil {
 					lastErr = err
 				}
 				continue
 			}
-			img, err := m.FetchCover(res[0])
+			// 优先取艺人匹配候选；无艺人约束（wantA 空）退回第一条。
+			pick := -1
+			for i, c := range res {
+				if len(wantA) == 0 || ArtistSimilar(c.Artists, wantA) >= 0.5 {
+					pick = i
+					break
+				}
+			}
+			if pick < 0 {
+				continue
+			}
+			img, err := m.FetchCover(res[pick])
 			if err != nil {
 				lastErr = err
 				continue
@@ -308,7 +320,6 @@ func (m *MultiSource) FetchCoverFallback(query, prefer, titleOnly string) ([]byt
 			}
 		}
 		if lastErr != nil {
-			// 第一轮完整 query 失败才进入纯标题第二轮；错误不阻断继续尝试
 			_ = lastErr
 		}
 	}

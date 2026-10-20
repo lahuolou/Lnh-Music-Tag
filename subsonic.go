@@ -682,7 +682,9 @@ func (a *subsonicAPI) genres() sxNode {
 }
 
 func albumNode(ts []*model.Track, id, name, artist, artistId string) sxNode {
-	attrs := []sxNode{attr("id", id), attr("name", name), attr("isDir", "true"), attr("artist", artist), attr("artistId", artistId), attr("songCount", strconv.Itoa(len(ts))), attr("coverArt", ts[0].ID)}
+	// 专辑名同时写 name 与 title：部分客户端（音流等）只读 title，缺 title
+	// 会把专辑名渲染成占位"?"。
+	attrs := []sxNode{attr("id", id), attr("name", name), attr("title", name), attr("isDir", "true"), attr("artist", artist), attr("artistId", artistId), attr("songCount", strconv.Itoa(len(ts))), attr("coverArt", ts[0].ID)}
 	var dur float64
 	for _, t := range ts {
 		dur += t.Duration
@@ -705,7 +707,7 @@ func (a *subsonicAPI) artist(id string) sxNode {
 	for _, t := range a.all() {
 		if artistID(t) == id {
 			ar = songArtist(t)
-			repCover = albumID(t)
+			repCover = t.ID // coverArt 引用曲目 ID（与 albumNode 口径一致），不能用专辑 ID
 			break
 		}
 	}
@@ -825,7 +827,7 @@ func (a *subsonicAPI) album(id string) sxNode {
 	if len(arr) == 0 {
 		return apiError(70, "Album not found")
 	}
-	albumParts := append([]sxNode{attr("id", id), attr("name", title), attr("artist", artist), attr("artistId", artistIDByName(artist)), attr("songCount", strconv.Itoa(len(arr)))}, arr...)
+	albumParts := append([]sxNode{attr("id", id), attr("name", title), attr("title", title), attr("artist", artist), attr("artistId", artistIDByName(artist)), attr("songCount", strconv.Itoa(len(arr))), attr("coverArt", arr[0].Attr["id"])}, arr...)
 	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("album", node("album", albumParts...)))
 }
 func artistIDByName(s string) string { return stableID("ar-", s) }

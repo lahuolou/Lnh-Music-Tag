@@ -21,7 +21,7 @@ func TestFuseMetadataFieldWise(t *testing.T) {
 		ReleaseMBID: "mb-123", AlbumArtist: []string{"专辑艺人"},
 		Genre: []string{"流行", "Pop"}, Language: "zh",
 	}
-	out := fuseMetadata([]scrape.SearchResult{a, b, c}, want)
+	out := fuseMetadata([]scrape.SearchResult{a, b, c}, want, "")
 
 	if out.Title != "蓝色蝴蝶" {
 		t.Fatalf("title should come from exact-match candidate, got %q", out.Title)
@@ -64,7 +64,7 @@ func TestFuseMetadataFieldWise(t *testing.T) {
 func TestFuseMetadataRejectsPlaceholders(t *testing.T) {
 	a := scrape.SearchResult{Source: "netease", Title: "歌", Artists: []string{"Unknown"}, Album: "未知专辑"}
 	b := scrape.SearchResult{Source: "qq", Title: "歌", Artists: []string{"真人"}, Album: "真实专辑", Date: "2021"}
-	out := fuseMetadata([]scrape.SearchResult{a, b}, "歌")
+	out := fuseMetadata([]scrape.SearchResult{a, b}, "歌", "")
 	if len(out.Artists) == 1 && out.Artists[0] == "Unknown" {
 		t.Fatalf("placeholder artist must be rejected, got %v", out.Artists)
 	}
@@ -73,6 +73,50 @@ func TestFuseMetadataRejectsPlaceholders(t *testing.T) {
 	}
 	if out.Date != "2021" {
 		t.Fatalf("date should be usable, got %q", out.Date)
+	}
+}
+
+// 同名不同艺人不得互相顶替：目标 EO2《内疚》不能被陈奕迅《内疚》的
+// 艺人/代表源/专辑/封面覆盖（串歌回归用例）。
+func TestFuseMetadataRejectsSameNameOtherArtist(t *testing.T) {
+	e2 := scrape.SearchResult{
+		Source: "netease", SourceID: "e2id",
+		Title: "内疚", Artists: []string{"EO2"}, Album: "EO2同名专辑",
+	}
+	eason := scrape.SearchResult{
+		Source: "qq", SourceID: "easonid",
+		Title: "内疚", Artists: []string{"陈奕迅"}, Album: "U87",
+	}
+	out := fuseMetadata([]scrape.SearchResult{eason, e2}, "内疚", "EO2")
+
+	for _, a := range out.Artists {
+		if a == "陈奕迅" {
+			t.Fatalf("must not adopt other-artist 陈奕迅, got %v", out.Artists)
+		}
+	}
+	if len(out.Artists) == 0 || out.Artists[0] != "EO2" {
+		t.Fatalf("artist should be EO2, got %v", out.Artists)
+	}
+	if out.SourceID != "e2id" {
+		t.Fatalf("representative source must stay on EO2 candidate, got %q", out.SourceID)
+	}
+	if out.Album == "U87" {
+		t.Fatalf("album must not come from other-artist candidate, got %q", out.Album)
+	}
+}
+
+// 目标艺人已知但所有候选都是异名同名曲时，不得写艺术家、不得挂异名源ID/封面，
+// 保留原标签交给后续兜底，而不是把对的艺人冲成错的。
+func TestFuseMetadataHoldsBackWhenNoArtistMatch(t *testing.T) {
+	onlyOther := []scrape.SearchResult{
+		{Source: "qq", SourceID: "easonid", Title: "内疚", Artists: []string{"陈奕迅"}, CoverURL: "http://wrong/cover.jpg"},
+	}
+	out := fuseMetadata(onlyOther, "内疚", "EO2")
+	if len(out.Artists) != 0 {
+		t.Fatalf("must not adopt non-matching artist, got %v", out.Artists)
+	}
+	if out.SourceID != "" || out.CoverURL != "" {
+		t.Fatalf("must not attach non-matching representative source, got id=%q cover=%q", out.SourceID, out.CoverURL)
 	}
 }
 

@@ -825,7 +825,7 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 				}
 				// 多源元数据融合：每个 ID3 字段独立从各候选按匹配度+完整度择优，
 				// 合并到一条结果上，替代"整条候选整体采用"。
-				sr = fuseMetadata(results, title)
+				sr = fuseMetadata(results, title, artist)
 
 				// 部分源会把 GBK 编码字节按 Latin-1 塞进 JSON，得到
 				// "习惯了寂寞" → "Ï°¹ßÁË¼ÅÄ¯" 这类乱码。写入标签前统一修复，
@@ -1000,7 +1000,7 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 			var coverErr error
 			img, coverErr = ms.FetchCover(sr)
 			if len(img) == 0 {
-				img, coverErr = ms.FetchCoverFallback(query, sr.Source, strings.TrimSpace(title))
+				img, coverErr = ms.FetchCoverFallback(query, sr.Source, strings.TrimSpace(title), artist)
 			}
 			if len(img) > 0 && key != "" && coverCache != nil {
 				coverCache[key] = img
@@ -1094,10 +1094,11 @@ func fileNameNeedsRename(t *model.Track) bool {
 	return stripAudioExt(t.FileName) != want
 }
 
-// fusedRank 携带一条候选的标题匹配分与完整度，供跨源排序择优。
+// fusedRank 携带一条候选的标题匹配分、艺人匹配分与完整度，供跨源排序择优。
 type fusedRank struct {
 	sr     scrape.SearchResult
 	sim    float64 // 标题相似度（Dice 二元组，0~1）
+	asim   float64 // 艺人匹配度（0~1）；目标艺人非空时作为强约束
 	filled int     // 非空字段数，同分并列时完整度高者优先
 }
 
@@ -1105,17 +1106,38 @@ type fusedRank struct {
 // 而是让每个 ID3 字段独立从候选中按「标题匹配度优先、完整度次之」择优，再
 // 合并到一条结果上。代表源（封面下载、源ID、专辑ID、ReleaseMBID）取匹配度
 // 最高的候选；流派跨源去重合并，其余标量字段各取最佳非空值。
-func fuseMetadata(results []scrape.SearchResult, wantTitle string) scrape.SearchResult {
+func fuseMetadata(results []scrape.SearchResult, wantTitle, wantArtist string) scrape.SearchResult {
 	if len(results) == 0 {
 		return scrape.SearchResult{}
 	}
+	wantArtists := []string{}
+	if a := strings.TrimSpace(wantArtist); a != "" && !looksUnknown(a) && !looksGarbled(a) {
+		wantArtists = []string{a}
+	}
 	ranks := make([]fusedRank, 0, len(results))
 	for _, r := range results {
-		ranks = append(ranks, fusedRank{sr: r, sim: titleSimilar(r.Title, wantTitle), filled: countFilled(r)})
+		ranks = append(ranks, fusedRank{
+			sr:     r,
+			sim:    titleSimilar(r.Title, wantTitle),
+			asim:   scrape.ArtistSimilar(r.Artists, wantArtists),
+			filled: countFilled(r),
+		})
 	}
+	// 目标艺人非空时，艺人匹配候选整体排在异名候选之前（避免同名不同人顶替，
+	// 如 EO2《内疚》被陈奕迅《内疚》的标题/专辑/封面/艺人整体覆盖）；
+	// 组内再按标题相似度、艺人匹配、完整度排序。
 	sort.SliceStable(ranks, func(a, b int) bool {
+		if len(wantArtists) > 0 {
+			ma, mb := ranks[a].asim >= 0.5, ranks[b].asim >= 0.5
+			if ma != mb {
+				return ma
+			}
+		}
 		if ranks[a].sim != ranks[b].sim {
 			return ranks[a].sim > ranks[b].sim
+		}
+		if ranks[a].asim != ranks[b].asim {
+			return ranks[a].asim > ranks[b].asim
 		}
 		return ranks[a].filled > ranks[b].filled
 	})
@@ -1133,10 +1155,15 @@ func fuseMetadata(results []scrape.SearchResult, wantTitle string) scrape.Search
 	var out scrape.SearchResult
 	rep := ranks[0].sr
 	// 代表源：封面下载、源ID、专辑ID、ReleaseMBID 挂在匹配最佳的候选上。
-	out.Source = rep.Source
-	out.SourceID = rep.SourceID
-	out.AlbumID = rep.AlbumID
-	out.CoverURL = rep.CoverURL
+	// 目标艺人已知但最佳候选艺人不匹配（全是异名同名曲）时，不挂其封面/源ID，
+	// 交由带艺人校验的封面兜底，避免下载异名专辑封面、写入误导性源ID。
+	representativeOK := len(wantArtists) == 0 || ranks[0].asim >= 0.5
+	if representativeOK {
+		out.Source = rep.Source
+		out.SourceID = rep.SourceID
+		out.AlbumID = rep.AlbumID
+		out.CoverURL = rep.CoverURL
+	}
 	out.ReleaseMBID = rep.ReleaseMBID
 	// 代表源非 MusicBrainz 时，仍从任一 MB 候选继承发行 ID（用于写 MB 专辑标签）。
 	if out.ReleaseMBID == "" {
@@ -1153,20 +1180,36 @@ func fuseMetadata(results []scrape.SearchResult, wantTitle string) scrape.Search
 	complete := func(s scrape.SearchResult) bool {
 		return titleOK(s) && (len(s.Artists) > 0 || albumUsable(s.Album))
 	}
+	completeMatch := func(s scrape.SearchResult) bool {
+		return complete(s) && scrape.ArtistSimilar(s.Artists, wantArtists) >= 0.5
+	}
 	switch {
 	case ranks[0].sim >= 0.35 && titleOK(ranks[0].sr):
 		out.Title = ranks[0].sr.Title
 	default:
-		if r, ok := pick(complete); ok {
+		if r, ok := pick(completeMatch); ok {
+			out.Title = r.Title
+		} else if r, ok := pick(complete); ok {
 			out.Title = r.Title
 		} else if r, ok := pick(titleOK); ok {
 			out.Title = r.Title
 		}
 	}
-	// 艺术家：匹配最佳且非占位（Unknown/未知）。
-	if r, ok := pick(func(s scrape.SearchResult) bool {
+	// 艺术家：目标艺人非空时优先取同艺人候选，避免被异名同名曲目顶替；
+	// 无同艺人候选（目标艺人未知/源未给）再回退任意非占位值。
+	artistNonPlaceholder := func(s scrape.SearchResult) bool {
 		return len(s.Artists) > 0 && !looksUnknown(s.Artists[0])
-	}); ok {
+	}
+	artistMatch := func(s scrape.SearchResult) bool {
+		return artistNonPlaceholder(s) && scrape.ArtistSimilar(s.Artists, wantArtists) >= 0.5
+	}
+	if len(wantArtists) > 0 {
+		// 目标艺人已知：只接受同艺人候选；无匹配时不写艺术家，保留原标签，
+		// 绝不把对的艺人冲成异名同名曲目（如 EO2 被写成陈奕迅）。
+		if r, ok := pick(artistMatch); ok {
+			out.Artists = r.Artists
+		}
+	} else if r, ok := pick(artistNonPlaceholder); ok {
 		out.Artists = r.Artists
 	}
 	// 专辑：非空、非占位/Various。

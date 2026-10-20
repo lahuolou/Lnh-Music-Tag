@@ -8,12 +8,17 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // FetchLyrics returns the lyrics text for a result. Strategy:
 //   - NetEase / QQ: fetch by the source song ID (best for Chinese tracks)
-//   - otherwise: NetEase search by title+artist, then lrclib (international)
+//   - otherwise: search QQ then NetEase by title+artist, picking only a
+//     candidate whose artist matches the target (same-name different-artist
+//     tracks must not steal lyrics, e.g. EO2《内疚》must not get 陈奕迅《内疚》),
+//     then lrclib (international) with the same artist check.
 func (m *MultiSource) FetchLyrics(sr SearchResult) (string, error) {
+	// 选中候选自带 SourceID（前端手选 / 融合代表源）：直接按 ID 取，不二次搜索。
 	if sr.Source == "netease" && sr.SourceID != "" {
 		if l, err := neteaseLyric(m.client, sr.SourceID); err == nil && l != "" {
 			return l, nil
@@ -24,26 +29,152 @@ func (m *MultiSource) FetchLyrics(sr SearchResult) (string, error) {
 			return l, nil
 		}
 	}
-	if sr.Title != "" {
-		q := strings.TrimSpace(sr.Title + " " + strings.Join(sr.Artists, " "))
-		// QQ 搜索兜底（快；网易挂起/无版权时改走 QQ 歌词接口）
-		if qres, err := (qqSource{}).Search(m.client, q, 1); err == nil && len(qres) > 0 && qres[0].SourceID != "" {
-			if l, err2 := qqLyric(m.client, qres[0].SourceID); err2 == nil && l != "" {
+	if strings.TrimSpace(sr.Title) == "" {
+		return "", fmt.Errorf("未找到歌词")
+	}
+	q := strings.TrimSpace(sr.Title + " " + strings.Join(sr.Artists, " "))
+
+	// QQ 兜底：取多候选，按标题+艺人匹配择优，艺人不符一律不取（宁缺毋滥）。
+	if qres, err := (qqSource{}).Search(m.client, q, 6); err == nil {
+		if cand := pickLyricCandidate(qres, sr.Title, sr.Artists); cand.SourceID != "" {
+			if l, err2 := qqLyric(m.client, cand.SourceID); err2 == nil && l != "" {
 				return l, nil
 			}
-		}
-		// 网易搜索兜底（中文歌命中率高；接口偶发挂起，短超时快速让位）
-		res, err := neteaseSource{}.Search(m.client, q, 1)
-		if err == nil && len(res) > 0 && res[0].SourceID != "" && res[0].SourceID != sr.SourceID {
-			if l, err2 := neteaseLyric(m.client, res[0].SourceID); err2 == nil && l != "" {
-				return l, nil
-			}
-		}
-		if l, err := lrclibLyric(m.client, sr.Title, sr.Artists); err == nil && l != "" {
-			return l, nil
 		}
 	}
+	// 网易兜底：短超时；同样只取艺人匹配候选。
+	if res, err := (neteaseSource{}).Search(m.client, q, 6); err == nil {
+		if cand := pickLyricCandidate(res, sr.Title, sr.Artists); cand.SourceID != "" && cand.SourceID != sr.SourceID {
+			if l, err2 := neteaseLyric(m.client, cand.SourceID); err2 == nil && l != "" {
+				return l, nil
+			}
+		}
+	}
+	// lrclib 国际源：结果自带 artistName，一并校验艺人。
+	if l, err := lrclibLyric(m.client, sr.Title, sr.Artists); err == nil && l != "" {
+		return l, nil
+	}
 	return "", fmt.Errorf("未找到歌词")
+}
+
+// pickLyricCandidate 在搜索候选中挑出标题与目标最接近、且艺人匹配的一条。
+// 当目标艺人非空时，艺人不匹配的候选直接淘汰（避免同名不同人串歌）；
+// 目标艺人为空（未知艺人曲目）时退回标题匹配。返回空 SearchResult 表示无可取候选。
+func pickLyricCandidate(list []SearchResult, wantTitle string, wantArtists []string) SearchResult {
+	hasArtist := len(normalizeArtistTokens(strings.Join(wantArtists, " "))) > 0
+	var best SearchResult
+	bestScore := -1.0
+	for _, c := range list {
+		if c.SourceID == "" || strings.TrimSpace(c.Title) == "" {
+			continue
+		}
+		am := artistSimilar(c.Artists, wantArtists)
+		tm := lyricTitleSimilar(c.Title, wantTitle)
+		// 目标有艺人时，艺人不匹配（am 过低）直接跳过。
+		if hasArtist && am < 0.5 {
+			continue
+		}
+		score := am*2 + tm // 艺人权重高于标题，同名人优先锁定同艺人
+		if score > bestScore {
+			bestScore = score
+			best = c
+		}
+	}
+	return best
+}
+
+// lyricTitleSimilar 标题匹配度：归一化后相等=1，互相包含=0.8，否则 0。
+func lyricTitleSimilar(got, want string) float64 {
+	g := normForMatch(got)
+	w := normForMatch(want)
+	if g == "" || w == "" {
+		return 0
+	}
+	if g == w {
+		return 1
+	}
+	if strings.Contains(g, w) || strings.Contains(w, g) {
+		return 0.8
+	}
+	return 0
+}
+
+// ArtistSimilar 报告候选艺人与目标艺人列表的最大匹配度（0~1），供融合/歌词复用。
+func ArtistSimilar(got, want []string) float64 {
+	return artistSimilar(got, want)
+}
+
+// artistSimilar 返回候选艺人与目标艺人的最大匹配度。
+func artistSimilar(got, want []string) float64 {
+	wantToks := normalizeArtistTokens(strings.Join(want, " "))
+	if len(wantToks) == 0 {
+		return 0
+	}
+	gotToks := normalizeArtistTokens(strings.Join(got, " "))
+	best := 0.0
+	for _, wt := range wantToks {
+		for _, gt := range gotToks {
+			if gt == "" || wt == "" {
+				continue
+			}
+			s := 0.0
+			switch {
+			case gt == wt:
+				s = 1
+			case strings.Contains(gt, wt) || strings.Contains(wt, gt):
+				if len([]rune(gt)) >= 2 && len([]rune(wt)) >= 2 {
+					s = 0.7
+				}
+			}
+			if s > best {
+				best = s
+			}
+		}
+	}
+	return best
+}
+
+// normalizeArtistTokens 把艺人字符串拆成归一化 token：小写、去括号备注、
+// 拆分 &/、/,/feat./ft./with/x/vs. 等并列，去标点压缩空白。
+func normalizeArtistTokens(s string) []string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	// 去掉括号及其内容（现场/feat 备注）
+	for {
+		lo := strings.IndexAny(s, "([（")
+		if lo < 0 {
+			break
+		}
+		cl := strings.IndexAny(s[lo:], ")]）")
+		if cl < 0 {
+			s = strings.TrimSpace(s[:lo])
+			break
+		}
+		s = s[:lo] + s[lo+cl+1:]
+	}
+	// 并列/合作标识替换为分隔符
+	for _, sep := range []string{"&", "，", ",", "/", "、", "feat.", "feat", "ft.", "ft", "with", " x ", "vs.", "vs"} {
+		s = strings.ReplaceAll(s, sep, "|")
+	}
+	parts := strings.Split(s, "|")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = normForMatch(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// normForMatch 归一化用于比较的文本：小写、去所有标点与空白。
+func normForMatch(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // neteaseLyric fetches LRC lyrics by NetEase song id. NetEase returns a block
@@ -113,25 +244,50 @@ func qqLyric(c *Client, songmid string) (string, error) {
 }
 
 // lrclibLyric fetches lyrics from lrclib (no key required, international).
+// 结果自带 trackName/artistName，按标题+艺人匹配择优，目标艺人非空时
+// 跳过艺人不符的条目，避免同名不同人串歌。
 func lrclibLyric(c *Client, title string, artists []string) (string, error) {
 	q := strings.TrimSpace(title + " " + strings.Join(artists, " "))
 	u := "https://lrclib.net/api/search?q=" + url.QueryEscape(q)
 	var out []struct {
-		Synced string `json:"syncedLyrics"`
-		Plain  string `json:"plainLyrics"`
+		Synced    string `json:"syncedLyrics"`
+		Plain     string `json:"plainLyrics"`
+		TrackName string `json:"trackName"`
+		Artist    string `json:"artistName"`
 	}
 	if err := c.getJSON(u, nil, &out); err != nil {
 		return "", err
 	}
-	for _, it := range out {
-		if it.Synced != "" {
-			return it.Synced, nil
+	hasArtist := len(normalizeArtistTokens(strings.Join(artists, " "))) > 0
+	// score: 艺人匹配*2 + 标题匹配；先选同步歌词，再选纯文本。
+	pick := func(synced bool) (string, bool) {
+		best, bestScore := "", -1.0
+		for _, it := range out {
+			txt := it.Plain
+			if synced {
+				txt = it.Synced
+			}
+			if txt == "" {
+				continue
+			}
+			am := artistSimilar([]string{it.Artist}, artists)
+			tm := lyricTitleSimilar(it.TrackName, title)
+			if hasArtist && am < 0.5 {
+				continue
+			}
+			score := am*2 + tm
+			if score > bestScore {
+				bestScore = score
+				best = txt
+			}
 		}
+		return best, best != ""
 	}
-	for _, it := range out {
-		if it.Plain != "" {
-			return it.Plain, nil
-		}
+	if l, ok := pick(true); ok {
+		return l, nil
+	}
+	if l, ok := pick(false); ok {
+		return l, nil
 	}
 	return "", fmt.Errorf("lrclib no lyrics")
 }
