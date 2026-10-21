@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"lnh-music-tag/internal/audiofmt"
@@ -59,8 +61,39 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"ok": false, "error": msg})
 }
 
+// trashManifestMu 串行化回收站清单（_manifest.jsonl）的读写。
+// moveToTrash 记录每条文件的原路径，回收站「恢复」功能据此把文件放回原位。
+var trashManifestMu sync.Mutex
+
+// trashManifestPath 回收站原路径清单文件：配置目录 trash/_manifest.jsonl，
+// 每行一条 JSON {"n":"回收站内文件名","p":"原始路径","t":"移入时间 RFC3339"}。
+func trashManifestPath(cfg *cstore.Config) string {
+	return filepath.Join(cfg.Dir(), "trash", "_manifest.jsonl")
+}
+
+// trashRecordManifest 在清单末尾追加一条记录（best-effort：清单写失败不影响
+// 移入回收站本身，恢复时该文件会标记为"原路径未知"）。
+func trashRecordManifest(cfg *cstore.Config, trashName, originalPath string) {
+	if cfg == nil || cfg.Dir() == "" || trashName == "" || originalPath == "" {
+		return
+	}
+	trashManifestMu.Lock()
+	defer trashManifestMu.Unlock()
+	f, err := os.OpenFile(trashManifestPath(cfg), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	rec, err := json.Marshal(map[string]string{"n": trashName, "p": originalPath, "t": time.Now().UTC().Format(time.RFC3339)})
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(append(rec, '\n'))
+}
+
 // moveToTrash 将文件移入配置目录 trash/（先尝试同卷 rename；跨卷时复制后删除源），
 // 返回回收站中的目标路径。去重/删除统一走回收站而非永久删除，便于人工恢复。
+// 成功移入后把原路径记入清单（trash/_manifest.jsonl），供回收站恢复功能使用。
 func moveToTrash(cfg *cstore.Config, path string) (string, error) {
 	if cfg == nil || cfg.Dir() == "" {
 		return "", errors.New("未配置回收站目录")
@@ -84,6 +117,7 @@ func moveToTrash(cfg *cstore.Config, path string) (string, error) {
 		for attempt := 0; attempt < 8; attempt++ {
 			time.Sleep(1 * time.Second)
 			if err := os.Rename(path, dst); err == nil {
+				trashRecordManifest(cfg, filepath.Base(dst), path)
 				return dst, nil
 			} else {
 				renameErr = err
@@ -119,6 +153,7 @@ func moveToTrash(cfg *cstore.Config, path string) (string, error) {
 			time.Sleep(1 * time.Second)
 		}
 		if err := os.Remove(path); err == nil {
+			trashRecordManifest(cfg, filepath.Base(dst), path)
 			return dst, nil
 		} else {
 			rmErr = err

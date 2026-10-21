@@ -206,6 +206,9 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
           <div class="pdetail" v-show="p.builtin || openExt[p.name]">
             <p v-if="p.hint" class="muted small" style="margin:10px 0 6px">{{ t(p.hint) }}</p>
 
+            <!-- 依赖未就绪提示（如网关未设置密码）：红色警示，开关已由后端强制关闭 -->
+            <p v-if="p.unavailable" class="warn small" style="margin:8px 0 6px">⚠ {{ t(p.unavailable) }}</p>
+
             <!-- FFmpeg 实时状态 -->
             <div v-if="p.name === 'tool.ffmpeg'" class="ff-status" :class="{ ok: ffStatus.available }" style="margin:10px 0 4px">
               <span class="dot"></span>
@@ -292,6 +295,7 @@ onMounted(() => { loadPlugins(); loadFFmpeg(); });
 .ff-status { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 .ff-status .dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; }
 .ff-status.ok .dot { background: #30a46c; }
+.warn { color: #e5484d; }
 button.danger { color: #e34d59; }
 .btn-upload { display: inline-block; padding: 6px 12px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line, rgba(128,128,128,.35)); background: var(--panel2, rgba(128,128,128,.12)); color: var(--text); font-size: 13px; }
 .btn-upload.disabled { opacity: .5; pointer-events: none; }

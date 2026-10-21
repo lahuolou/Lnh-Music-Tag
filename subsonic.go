@@ -31,11 +31,17 @@ import (
 const subsonicVersion = "1.16.1"
 
 type subsonicAPI struct {
-	library      *store
-	cfg          *cstore.Config
-	mu           sync.Mutex
-	nowPlaying   map[string]time.Time
-	playCounts   map[string]int
+	library *store
+	cfg     *cstore.Config
+	// mu 保护播放状态（nowPlaying / playCounts）：scrobble 提交与
+	// getNowPlaying/getTopSongs 读取共享。流媒体/歌曲读取不走此锁。
+	mu         sync.Mutex
+	nowPlaying map[string]time.Time
+	playCounts map[string]int
+	// recMu 独立保护"最近访问"记录（lastStreamed / lastGetSong）：stream 与
+	// getSong 每次请求都要写，拆开后不再与播放计数/nowPlaying 争用同一把锁，
+	// 降低高并发流媒体下的首字节延迟。
+	recMu        sync.Mutex
 	lastStreamed string
 	lastGetSong  string
 }
@@ -160,9 +166,9 @@ func (a *subsonicAPI) handler() http.Handler {
 		case "getSong":
 			result = a.song(r.URL.Query().Get("id"))
 			if t := a.track(r.URL.Query().Get("id")); t != nil {
-				a.mu.Lock()
+				a.recMu.Lock()
 				a.lastGetSong = t.ID
-				a.mu.Unlock()
+				a.recMu.Unlock()
 			}
 		case "search3":
 			result = a.search(r, "searchResult3")
@@ -1111,12 +1117,12 @@ func (a *subsonicAPI) lyrics(r *http.Request, byID bool) sxNode {
 			t = a.track(id)
 		}
 		if t == nil && artist == "" && title == "" {
-			a.mu.Lock()
+			a.recMu.Lock()
 			ls := a.lastGetSong
 			if ls == "" {
 				ls = a.lastStreamed
 			}
-			a.mu.Unlock()
+			a.recMu.Unlock()
 			if ls != "" {
 				t = a.track(ls)
 			}
@@ -1935,9 +1941,9 @@ func (a *subsonicAPI) stream(w http.ResponseWriter, r *http.Request, op string) 
 		http.Error(w, "song not found", http.StatusNotFound)
 		return
 	}
-	a.mu.Lock()
+	a.recMu.Lock()
 	a.lastStreamed = t.ID
-	a.mu.Unlock()
+	a.recMu.Unlock()
 	q := r.URL.Query()
 	// download 标准语义是返回原始文件（附件），不按 format/maxBitrate 转码；
 	// 只有 stream 才按请求实时转码。若让下载也走转码，非 mp3 源在转码失败时

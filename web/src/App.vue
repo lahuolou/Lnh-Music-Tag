@@ -16,6 +16,7 @@ import ActivityLog from './components/ActivityLog.vue'
 import Toast from './components/Toast.vue'
 import UpdateModal from './components/UpdateModal.vue'
 import AboutModal from './components/AboutModal.vue'
+import TrashModal from './components/TrashModal.vue'
 
 const theme = ref(localStorage.getItem('lnh-theme') || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'))
 function applyTheme() {
@@ -30,6 +31,7 @@ function goHome() { state.view = 'home'; }
 
 const aboutOpen = ref(false)
 const gearOpen = ref(false)
+const trashOpen = ref(false)
 
 // 第三方插件（非内置且有 Web 面板）动态注册到「编辑/批量/去重」之后的 tab 区
 const extPanels = ref([])
@@ -97,6 +99,10 @@ onMounted(async () => {
       <button class="ghost sm" :title="t('home')" @click="goHome">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       </button>
+      <!-- 回收站入口：删除/去重的文件先进这里，可恢复 -->
+      <button class="ghost sm trash-btn" :title="t('trash')" @click="trashOpen = true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+      </button>
       <!-- 齿轮二级导航（按用户指定顺序）：主题 / 语言 / 插件 / 更新 / 关于 / 退出 -->
       <div class="gear" :class="{ open: gearOpen }" @click="gearOpen = !gearOpen">
         <button class="ghost sm gear-btn" :title="t('menu')">
@@ -152,5 +158,6 @@ onMounted(async () => {
   </template>
   <UpdateModal :open="verState.showUpdate" :data="verState.ver" @close="verState.showUpdate = false" @later="verState.showUpdate = false" @view="verState.showUpdate = false" />
   <AboutModal :open="aboutOpen" @close="aboutOpen = false" />
+  <TrashModal :open="trashOpen" @close="trashOpen = false" />
   <Toast />
 </template>

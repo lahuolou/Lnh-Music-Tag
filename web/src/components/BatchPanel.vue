@@ -80,7 +80,7 @@ async function runToolJob(kind, url, body, allowAll = false) {
         if (tj.status === 'cancelled') {
           toast(t('jobCancelled'), 'err');
         } else if (tj.status === 'failed') {
-          toast(t(failKeys[kind], { m: t('jobLost') }), 'err');
+          toast(t(failKeys[kind], { m: tj.message || t('jobLost') }), 'err');
         } else {
           toast(t('jobDone', { ok: tj.ok, fail: tj.fail, skip: tj.skip, t: tj.total }), tj.fail === 0 ? 'ok' : 'err');
         }
@@ -271,6 +271,7 @@ async function oneKey() {
             : t('jobDone', { ok: curJob.ok, fail: curJob.fail, skip: curJob.skip, t: curJob.total }) }}
         </template>
         <template v-else-if="curJob.status === 'cancelled'">{{ t('jobCancelled') }}</template>
+        <template v-else-if="curJob.status === 'failed'">{{ t('jobFailed', { m: curJob.message || '' }) }}</template>
         <template v-else>
           {{ curIsBatch
             ? t('batchProgressBar', { d: curJob.done, t: curJob.total, c: curJob.current || t('processing') })
@@ -279,7 +280,7 @@ async function oneKey() {
       </div>
       <button v-if="curJob.status === 'running'" class="ghost sm danger" :disabled="canceling" @click="doCancel">{{ canceling ? t('canceling') : t('cancel') }}</button>
     </div>
-    <div v-if="curJob.status === 'done' && curFails.length" class="err" style="white-space:pre-wrap">
+    <div v-if="(curJob.status === 'done' || curJob.status === 'failed') && curFails.length" class="err" style="white-space:pre-wrap">
       <div v-for="(r, i) in curFails" :key="i">{{ r.fileName }}: {{ r.message }}</div>
     </div>
   </div>

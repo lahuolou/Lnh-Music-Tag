@@ -8,11 +8,17 @@
 package finger
 
 import (
+	"context"
 	"encoding/json"
 	"math/bits"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// fpTimeout 单次 fpcalc 调用的超时上限：异常二进制/坏文件卡死时
+// 在超时后报错返回，不让识别任务永久假死。
+const fpTimeout = 60 * time.Second
 
 // Fpcalc wraps the Chromaprint fpcalc CLI. Callers control concurrency
 // (fpcalc is a short-lived subprocess; a small worker pool is fine).
@@ -31,7 +37,9 @@ func (f *Fpcalc) Available() bool {
 // Fingerprint returns the raw Chromaprint fingerprint (space-separated ints)
 // for a file. Raw fingerprints are used for local Hamming-distance matching.
 func (f *Fpcalc) Fingerprint(path string) (string, error) {
-	out, err := exec.Command(f.Bin, "-raw", path).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), fpTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, f.Bin, "-raw", path).Output()
 	if err != nil {
 		return "", err
 	}
@@ -41,7 +49,9 @@ func (f *Fpcalc) Fingerprint(path string) (string, error) {
 // CompressedFingerprint returns the compressed Chromaprint fingerprint
 // (fpcalc -json) for a file. This is the format required by the AcoustID API.
 func (f *Fpcalc) CompressedFingerprint(path string) (string, error) {
-	out, err := exec.Command(f.Bin, "-json", path).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), fpTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, f.Bin, "-json", path).Output()
 	if err != nil {
 		return "", err
 	}

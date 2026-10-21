@@ -130,6 +130,14 @@ export async function startBatchPoll(jobId) {
         state.batchJob = null;
         state.batchBusy = false;
         await refresh();
+      } else if (job.status === 'failed') {
+        // 后端 panic 兜底：任务异常终止（终态），停止轮询并提示崩溃原因
+        stopBatchPoll();
+        toast(t('jobFailed', { m: job.message || '' }), 'err');
+        state.selected.clear();
+        state.batchJob = null;
+        state.batchBusy = false;
+        await refresh();
       }
     } catch (e) {
       stopBatchPoll();
@@ -177,6 +185,12 @@ export async function startToolJob(jobId, total, kind = 'tool') {
         stopToolJob();
         tj.status = 'cancelled';
         tj.finished = true;
+      } else if (j.status === 'failed') {
+        // 后端 panic 兜底：任务异常终止（终态），停止轮询并把失败详情交给面板展示
+        stopToolJob();
+        tj.status = 'failed';
+        tj.finished = true;
+        tj.message = j.message || '';
       }
     } catch (e) {
       // 连续 15 次（约 12 秒）查询失败：判定任务丢失，结束轮询并标记 failed，

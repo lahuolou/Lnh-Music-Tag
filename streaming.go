@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"lnh-music-tag/internal/model"
 	cstore "lnh-music-tag/internal/store"
@@ -28,18 +30,33 @@ func bitRateParam(q url.Values) string {
 // encCache 按 ffmpeg 二进制路径缓存其可用音频编码器，避免每次流都跑 -encoders。
 var (
 	encMu    sync.Mutex
-	encCache = map[string]map[string]bool{}
+	encCache = map[string]encCacheEntry{}
 )
+
+// encProbeTimeout 单次编码器探测超时：异常二进制（权限/动态链接卡死）时
+// 3 秒内返回失败而不是永久阻塞，避免整个流媒体服务在 availableEncoders 上排队。
+const encProbeTimeout = 3 * time.Second
+
+// encCacheTTL 编码器探测结果的有效期：成功结果 10 分钟内复用；
+// 替换二进制后最多 10 分钟自动更新，不会永久固化旧结果。
+const encCacheTTL = 10 * time.Minute
+
+type encCacheEntry struct {
+	m   map[string]bool
+	at  time.Time
+}
 
 // availableEncoders 解析 `ffmpeg -encoders`，返回该二进制实际支持的音频编码器集合。
 func availableEncoders(bin string) map[string]bool {
 	encMu.Lock()
 	defer encMu.Unlock()
-	if m, ok := encCache[bin]; ok {
-		return m
+	if e, ok := encCache[bin]; ok && time.Since(e.at) < encCacheTTL {
+		return e.m
 	}
 	m := map[string]bool{}
-	if out, err := exec.Command(bin, "-hide_banner", "-encoders").Output(); err == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), encProbeTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, bin, "-hide_banner", "-encoders").Output(); err == nil {
 		for _, ln := range strings.Split(string(out), "\n") {
 			for _, tok := range strings.Fields(ln) {
 				if tok == "aac" || strings.Contains(tok, "mp3") || strings.Contains(tok, "opus") || strings.Contains(tok, "flac") {
@@ -47,8 +64,9 @@ func availableEncoders(bin string) map[string]bool {
 				}
 			}
 		}
+		encCache[bin] = encCacheEntry{m: m, at: time.Now()}
 	}
-	encCache[bin] = m
+	// 探测失败不写缓存（返回空集合），下次请求重新探测，避免把失败结果永久固化
 	return m
 }
 

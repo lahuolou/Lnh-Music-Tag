@@ -3,7 +3,10 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -300,7 +303,9 @@ type scrapeJob struct {
 	Total   int            `json:"total"`
 	Done    int            `json:"done"`
 	Current string         `json:"current"`
-	Status  string         `json:"status"` // "running" | "done" | "cancelled"
+	Status  string         `json:"status"` // "running" | "done" | "cancelled" | "failed" | "interrupted"
+	// Message 终态附加信息（如 panic 崩溃详情）；进度轮询返回给前端展示。
+	Message string         `json:"message,omitempty"`
 	Results []scrapeResult `json:"results"`
 	Summary jobSummary     `json:"summary"`
 	// CreatedAt 任务创建时间（落库与耗时统计用，restore 时从库回填）。
@@ -377,6 +382,60 @@ type jobStore struct {
 	mu   sync.Mutex
 	jobs map[string]*scrapeJob
 	db   *sql.DB // 持久化（nil 时跳过，测试用）
+}
+
+// jobSem 限制同时运行的后台批量任务数（固定容量信号量）。
+// 刮削源普遍有速率限制，无上限的并发批量任务只放大等待与超时概率；
+// 大曲库下内存与连接数上涨还可能触发 OOM / fd 耗尽。
+// 容量 2 是保守默认（文档建议），可作为配置项运行时调整。
+var jobSem = make(chan struct{}, 2)
+
+// runBounded 在固定容量的信号量下启动后台任务：空位不足时任务排队等待
+// （状态保持 running、进度 0，前端可见"处理中"，可照常取消）。
+// fn 正常返回或 panic 后都会释放信号量并统一收尾（终态 + 落库）。
+func (js *jobStore) runBounded(job *scrapeJob, fn func()) {
+	go func() {
+		jobSem <- struct{}{}
+		defer func() { <-jobSem }()
+		// recoverJob 先注册 → panic 时先执行（置 failed + 崩溃详情）；
+		// finish 后执行，负责终态兜底与落库。
+		defer recoverJob(job, "background job")
+		defer js.finish(job)
+		fn()
+	}()
+}
+
+// recoverJob 兜底 panic 恢复：任务置 failed（终态），崩溃详情写入
+// Message 与 Results（前端轮询即可感知并重试），并落栈日志便于排查。
+// 避免任一 stage/曲目 panic 后 goroutine 崩溃、任务永久停在 running。
+func recoverJob(job *scrapeJob, where string) {
+	if r := recover(); r != nil {
+		msg := fmt.Sprintf("panic: %v", r)
+		log.Printf("%s panic: %v\n%s", where, r, debug.Stack())
+		job.mu.Lock()
+		job.Status = "failed"
+		job.Message = "任务异常终止：" + msg
+		job.Current = ""
+		job.Results = append(job.Results, scrapeResult{ID: job.ID, FileName: where, OK: false, Message: job.Message})
+		job.mu.Unlock()
+	}
+}
+
+// finish 统一终态兜底 + 落库：任务内部正常收尾（done/cancelled）后保持原状；
+// 若因 panic 被 recoverJob 置为 failed 也不覆盖。仅当任务仍为 running
+// （异常提前返回等）时补写终态。
+func (js *jobStore) finish(job *scrapeJob) {
+	job.mu.Lock()
+	if job.Status == "running" {
+		if job.Cancel {
+			job.Status = "cancelled"
+		} else {
+			job.Status = "done"
+		}
+	}
+	job.Current = ""
+	job.mu.Unlock()
+	js.persist(job)
 }
 
 // newJobStore 创建任务表并恢复历史任务（重启前 running 的任务标记为
@@ -603,7 +662,7 @@ func (js *jobStore) active() []*scrapeJob {
 // 前端通过 GET /api/jobs/{id} 轮询可视化进度。用户取消时立即停止。
 func (js *jobStore) runProgressJob(kind string, total int, step func(j *scrapeJob, i int) scrapeResult) *scrapeJob {
 	job := js.create(total, kind)
-	go func() {
+	js.runBounded(job, func() {
 		for i := 0; i < total; i++ {
 			if jobCanceled(job) {
 				break
@@ -614,17 +673,8 @@ func (js *jobStore) runProgressJob(kind string, total int, step func(j *scrapeJo
 			job.Results = append(job.Results, r)
 			job.mu.Unlock()
 		}
-		job.mu.Lock()
-		if job.Cancel {
-			job.Status = "cancelled"
-		} else {
-			job.Status = "done"
-		}
-		job.Current = ""
-		job.mu.Unlock()
 		logJobDone(job) // 任务完成后统一写入操作日志
-		js.persist(job)
-	}()
+	})
 	return job
 }
 
@@ -653,10 +703,9 @@ func batchScrapeHandler(js *jobStore, store *store, ms *scrape.MultiSource, cfg 
 		}
 		fields := fieldsFromList(req.Fields, req.FetchCover, req.FetchLyrics)
 		job := js.create(len(req.IDs), "scrape")
-		go func() {
+		js.runBounded(job, func() {
 			runBatch(job, store, ms, cfg, req.Source, req.IDs, fields, req.SkipFilled)
-			js.persist(job) // 完成/中断后落库，重启可查历史
-		}()
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"jobId": job.ID, "total": job.Total})
 	}
 }
@@ -685,6 +734,7 @@ func jobProgressHandler(js *jobStore) http.HandlerFunc {
 			Done:       j.Done,
 			Current:    j.Current,
 			Status:     j.Status,
+			Message:    j.Message,
 			Stage:      j.Stage,
 			StageLabel: j.StageLabel,
 			HashDone:   j.HashDone,

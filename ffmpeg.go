@@ -7,11 +7,14 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	cstore "lnh-music-tag/internal/store"
 )
@@ -44,17 +47,44 @@ func ffmpegBin(cfg *cstore.Config) string {
 	return ""
 }
 
+// ffmpegVerTTL 版本探测结果的缓存有效期：探测是低频展示用，10 分钟内
+// 不重复执行外部进程（避免每次 /api/ffmpeg/status 都拉起一次 ffmpeg）。
+const ffmpegVerTTL = 10 * time.Minute
+
+// ffmpegVerTimeout 单次版本探测超时：异常二进制（权限/动态链接卡死）时
+// 3 秒内返回失败而不是永久阻塞调用方。
+const ffmpegVerTimeout = 3 * time.Second
+
+var ffVerMu sync.Mutex
+var ffVerCache = map[string]ffVerEntry{}
+
+type ffVerEntry struct {
+	ver string
+	at  time.Time
+}
+
 // ffmpegVersion 返回 ffmpeg -version 的第一行（供设置页展示），失败返回空。
+// 带超时与 TTL 缓存：探测失败不写缓存（下次重新探测），成功结果 10 分钟
+// 内复用——替换二进制后最多 10 分钟自动更新，不会永久固化旧版本。
 func ffmpegVersion(bin string) string {
 	if bin == "" {
 		return ""
 	}
-	out, err := exec.Command(bin, "-version").Output()
+	ffVerMu.Lock()
+	defer ffVerMu.Unlock()
+	if e, ok := ffVerCache[bin]; ok && time.Since(e.at) < ffmpegVerTTL {
+		return e.ver
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), ffmpegVerTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "-version").Output()
 	if err != nil {
-		return ""
+		return "" // 探测失败不写缓存，下次重新探测
 	}
 	line := strings.SplitN(string(out), "\n", 2)[0]
-	return strings.TrimSpace(line)
+	ver := strings.TrimSpace(line)
+	ffVerCache[bin] = ffVerEntry{ver: ver, at: time.Now()}
+	return ver
 }
 
 // ffmpegActive 判定转码是否真正可用：插件开关已开启，且探测到可执行文件。
@@ -82,6 +112,9 @@ func ffmpegStatus(cfg *cstore.Config) map[string]any {
 
 // installFFmpeg 尝试在容器内安装 ffmpeg（仅固定白名单命令，无注入面）。
 // 按发行版依次尝试 apk（Alpine）→ apt（Debian/Ubuntu）→ yum（RHEL）。
+// 每步带超时：包管理器在网络异常时可能挂起，不能让其永久阻塞安装流程。
+const installTimeout = 5 * time.Minute
+
 func installFFmpeg() (string, error) {
 	attempts := [][]string{
 		{"sh", "-c", "apk add --no-cache ffmpeg"},
@@ -90,7 +123,9 @@ func installFFmpeg() (string, error) {
 	}
 	var lastErr error
 	for _, args := range attempts {
-		out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
+		ctx, cancel := context.WithTimeout(context.Background(), installTimeout)
+		out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
+		cancel()
 		if err == nil {
 			return string(out), nil
 		}
@@ -209,7 +244,10 @@ func uninstallFFmpeg(cfg *cstore.Config) string {
 		{"sh", "-c", "yum remove -y ffmpeg"},
 	}
 	for _, args := range attempts {
-		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), installTimeout)
+		out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
+		cancel()
+		if err == nil {
 			_ = out
 			break
 		}

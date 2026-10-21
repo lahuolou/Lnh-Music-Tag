@@ -49,9 +49,9 @@ type store struct {
 	tracks map[string]*model.Track
 	byPath map[string]string // path -> id
 	order  map[string]int64  // id -> 扫描（插入）序号，保证 /api/tracks 按扫描顺序稳定返回
-	seq    int64
-	rev    int64   // 数据变更计数：add/remove/update 递增（插件/缓存失效锚点）
-	db     *sql.DB // 曲目持久化（可能为 nil：配置库不可用时退化为纯内存）
+	seq    atomic.Int64      // 原子序号生成器：新增/更新/DB 缺失回退统一走这里，不用时间戳
+	rev    int64             // 数据变更计数：add/remove/update 递增（插件/缓存失效锚点）
+	db     *sql.DB           // 曲目持久化（可能为 nil：配置库不可用时退化为纯内存）
 
 	coverMu    sync.RWMutex
 	coverCache map[string]coverEntry // id -> 封面字节缓存（mtime 变化自动失效）
@@ -66,23 +66,40 @@ func newStore(db *sql.DB) *store {
 	return &store{tracks: map[string]*model.Track{}, byPath: map[string]string{}, order: map[string]int64{}, db: db, coverCache: map[string]coverEntry{}}
 }
 
+// add 登记一首曲目（单条路径：编辑/手动添加等低频写操作）。
 func (s *store) add(t *model.Track) {
-	s.mu.Lock()
-	if _, exists := s.byPath[t.Path]; exists {
-		s.mu.Unlock()
+	s.addMany([]*model.Track{t})
+}
+
+// addMany 批量登记曲目（扫描等大库场景）：一次加锁写入内存，再批量落库
+// （upsertTracksDB 事务分批）。与单条 add 语义完全一致：byPath 冲突跳过、
+// 标记计算、原子 seq 递增、rev 变更计数；批量只优化了锁与事务次数。
+func (s *store) addMany(ts []*model.Track) {
+	if len(ts) == 0 {
 		return
 	}
-	t.HasTrad = detectTraditional(t.Tags)
-	t.Garbled = looksGarbledTags(t)
-	t.NeedsIdentify = needsIdentify(t)
-	s.tracks[t.ID] = t
-	s.byPath[t.Path] = t.ID
-	s.seq++
-	s.order[t.ID] = s.seq
-	s.rev++
+	s.mu.Lock()
+	var added []*model.Track
+	for _, t := range ts {
+		if _, exists := s.byPath[t.Path]; exists {
+			continue
+		}
+		t.HasTrad = detectTraditional(t.Tags)
+		t.Garbled = looksGarbledTags(t)
+		t.NeedsIdentify = needsIdentify(t)
+		s.tracks[t.ID] = t
+		s.byPath[t.Path] = t.ID
+		seq := s.seq.Add(1)
+		s.order[t.ID] = seq
+		s.rev++
+		added = append(added, t)
+	}
 	db := s.db
 	s.mu.Unlock()
-	upsertTrackDB(db, s, t)
+	if len(added) == 0 {
+		return
+	}
+	upsertTracksDB(db, s, added)
 }
 
 func (s *store) all() []*model.Track {
@@ -140,6 +157,10 @@ func (s *store) ensureHashes(tracks []*model.Track, prog func(cur string, done i
 	ch := make(chan *model.Track)
 	var wg sync.WaitGroup
 	var done atomic.Int64
+	// 批量落库：worker 只更新内存，全部完成后统一批量写库（事务分批），
+	// 避免大库去重时每文件一次独立事务的 fsync 开销。
+	var updMu sync.Mutex
+	var updated []*model.Track
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
@@ -153,13 +174,11 @@ func (s *store) ensureHashes(tracks []*model.Track, prog func(cur string, done i
 					s.mu.Lock()
 					if cur := s.tracks[t.ID]; cur != nil && cur.SHA256 == "" {
 						cur.SHA256 = h
-						curPtr := cur
-						db := s.db
-						s.mu.Unlock()
-						upsertTrackDB(db, s, curPtr)
-					} else {
-						s.mu.Unlock()
+						updMu.Lock()
+						updated = append(updated, cur)
+						updMu.Unlock()
 					}
+					s.mu.Unlock()
 				}
 				n := done.Add(1)
 				if prog != nil {
@@ -176,6 +195,9 @@ func (s *store) ensureHashes(tracks []*model.Track, prog func(cur string, done i
 	}
 	close(ch)
 	wg.Wait()
+	if db := s.db; db != nil && len(updated) > 0 {
+		upsertTracksDB(db, s, updated)
+	}
 	return int(done.Load())
 }
 
@@ -430,6 +452,11 @@ func main() {
 	pm.HandleFunc("POST /api/plugins/import", pluginsImportHandler(cfg, configDir))
 	pm.HandleFunc("DELETE /api/plugins/{name}", pluginsDeleteHandler(cfg))
 	pm.HandleFunc("POST /api/plugins/{name}/run", pluginsRunHandler())
+	// 回收站：列出 / 恢复 / 永久删除 / 清空（删除与去重先移入 trash/，此处提供人工管理）
+	pm.HandleFunc("GET /api/trash", trashListHandler(cfg))
+	pm.HandleFunc("POST /api/trash/restore", trashRestoreHandler(cfg))
+	pm.HandleFunc("POST /api/trash/delete", trashDeleteHandler(cfg))
+	pm.HandleFunc("POST /api/trash/clear", trashClearHandler(cfg))
 	pm.HandleFunc("GET /api/plugins/{name}/panel", pluginPanelHandler())
 	pm.HandleFunc("GET /api/plugins/{name}/panel/{path...}", panelAssetHandler(cfg, configDir))
 	pm.HandleFunc("POST /api/fs/scan-dir", fsScanDirHandler()) // 第三方插件面板通用目录扫描
@@ -975,6 +1002,9 @@ func scanDirLive(s *store, dir string, st *scanState, autoFix, autoRename bool) 
 		return 0, 0, fmt.Errorf("%q is not a directory", dir)
 	}
 	added := 0
+	// 扫描期间先收集新曲目，walk 结束后一次性批量登记并事务分批落库
+	// （逐首 add 会让 1000+ 首扫描产生 1000+ 次独立 SQLite 事务）。
+	var pending []*model.Track
 	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries
@@ -1008,13 +1038,10 @@ func scanDirLive(s *store, dir string, st *scanState, autoFix, autoRename bool) 
 			st.mu.Unlock()
 			return nil
 		}
-		// 文件重命名：去重复/错误音频后缀（先校验真实编码格式）
+		// 文件重命名：去重复/错误音频后缀（先校验真实编码格式）。
+		// 走到这里的曲目均为新发现（已在库中的在上面跳过），无需清理旧条目。
 		if autoRename {
-			oldPath := path
 			if np, rerr := renameCleanFile(path); rerr == nil && np != path {
-				if s.exists(oldPath) {
-					s.removeByPath(oldPath)
-				}
 				path = np
 			}
 		}
@@ -1040,13 +1067,15 @@ func scanDirLive(s *store, dir string, st *scanState, autoFix, autoRename bool) 
 		if !s.exists(path) {
 			added++
 		}
-		s.add(t)
+		pending = append(pending, t)
 		st.mu.Lock()
-		st.Added = s.allTracksCount()
+		st.Added = s.allTracksCount() + len(pending) // 已入库 + 本批待登记，保持进度即时
 		st.Done++
 		st.mu.Unlock()
 		return nil
 	})
+	// 无论 walk 是否被错误中断，先把已收集的曲目登记并落库（不丢已扫描部分）
+	s.addMany(pending)
 	if err != nil {
 		return added, 0, err
 	}
@@ -1139,8 +1168,7 @@ func refreshTrack(s *store, path string) {
 	s.byPath[path] = t.ID
 	s.rev++
 	if _, ok := s.order[t.ID]; !ok {
-		s.seq++
-		s.order[t.ID] = s.seq
+		s.order[t.ID] = s.seq.Add(1)
 	}
 	db := s.db
 	s.mu.Unlock()

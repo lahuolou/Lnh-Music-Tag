@@ -151,7 +151,7 @@ func registerBuiltinPlugins(ms *scrape.MultiSource, cfg *cstore.Config) {
 	registerPlugin(&Plugin{
 		Name: "tool.streaming_gateway", Label: "音乐统一网关（Subsonic / Jellyfin / Emby / Navidrome）", Kind: PluginTool,
 		Enabled: gatewayEnabled, Builtin: true, Version: AppVersion(),
-		Hint: "为第三方音乐播放器提供 Subsonic / OpenSubsonic、Jellyfin、Emby 与 Navidrome 兼容接口；四个协议统一仅用下面的流媒体密码认证（用户名任意填写）。",
+		Hint: "为第三方音乐播放器提供 Subsonic / OpenSubsonic、Jellyfin、Emby 与 Navidrome 兼容接口；四个协议统一仅用下面的流媒体密码认证（用户名任意填写）。必须设置流媒体密码后才能启用网关。",
 		Fields: []PluginField{
 			{Key: "stream_pass", Label: "流媒体密码（四协议播放器连接的唯一凭证；留空则播放器一律无法连接）", Type: "password", Placeholder: "设置播放器连接密码"},
 		},
@@ -192,6 +192,14 @@ func pluginsHandler(cfg *cstore.Config) http.HandlerFunc {
 				if !p.Available {
 					p.Enabled = false
 					p.Unavailable = "key_missing"
+				}
+			case "tool.streaming_gateway":
+				// 音乐统一网关强制设置密码：未配置流媒体密码（stream_pass，
+				// 兼容 LNH_STREAM_PASS 环境变量）时网关视为不可用，强制回显为关闭。
+				p.Available = strings.TrimSpace(cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS"))) != ""
+				if !p.Available {
+					p.Enabled = false
+					p.Unavailable = "gateway_password_missing"
 				}
 			default:
 				if p.NeedsKey {
@@ -467,6 +475,16 @@ func pluginsUpdateHandler(cfg *cstore.Config, ms *scrape.MultiSource) http.Handl
 					applyPluginState(name, false, nil)
 					enabled = false
 					changes = append(changes, "停用 "+p.Label+"（未配置 Key）")
+				}
+			}
+			// 门控 3：音乐统一网关强制设置密码——开启但未配置流媒体密码
+			// （stream_pass，兼容 LNH_STREAM_PASS）→ 拒绝开启，避免
+			// "网关开着却无法连接"的死状态。
+			if name == "tool.streaming_gateway" && enabled {
+				if strings.TrimSpace(cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS"))) == "" {
+					applyPluginState(name, false, nil)
+					writeErr(w, http.StatusBadRequest, "请先在插件配置中设置流媒体密码，再开启音乐统一网关")
+					return
 				}
 			}
 		}

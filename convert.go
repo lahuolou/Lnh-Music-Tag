@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	cstore "lnh-music-tag/internal/store"
 )
@@ -148,6 +150,10 @@ func convertHandler(js *jobStore, s *store, cfg *cstore.Config) http.HandlerFunc
 	}
 }
 
+// convertTimeout 单首转换的超时上限：异常输入/卡死的 ffmpeg 在超时后报错
+// 跳过该曲目，不让整个转换任务永久假死。
+const convertTimeout = 30 * time.Minute
+
 // ffmpegConvert re-encodes src to dst with the given audio codec args,
 // keeping metadata tags via -map_metadata 0. bin is the resolved ffmpeg path.
 func ffmpegConvert(bin, src, dst, codecArgs, bitrate, sampleRate string, lossless bool) error {
@@ -161,9 +167,14 @@ func ffmpegConvert(bin, src, dst, codecArgs, bitrate, sampleRate string, lossles
 		args = append(args, "-ar", sampleRate)
 	}
 	args = append(args, dst)
-	cmd := exec.Command(bin, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), convertTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("ffmpeg 转换超时（>%s）", convertTimeout)
+		}
 		return fmt.Errorf("ffmpeg: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil

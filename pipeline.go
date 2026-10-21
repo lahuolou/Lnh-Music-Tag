@@ -49,10 +49,9 @@ func oneKeyScrapeHandler(js *jobStore, s *store, ms *scrape.MultiSource, cfg *cs
 			return
 		}
 		job := js.create(len(list), "onekey")
-		go func() {
+		js.runBounded(job, func() {
 			runOneKeyPipeline(job, s, ms, list, req.Dedup, cfg)
-			js.persist(job) // 完成/中断后落库，重启可查历史
-		}()
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"jobId": job.ID, "total": job.Total})
 	}
 }

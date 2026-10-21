@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"lnh-music-tag/internal/finger"
 	"lnh-music-tag/internal/model"
@@ -48,11 +50,20 @@ func identifyNeedsTranscode(ext string) bool {
 	}
 }
 
+// identifyTranscodeTimeout 识别前转码的单文件超时：ffmpeg 卡死（权限/坏文件）
+// 时该曲目在超时后报错跳过，不阻塞整个识别任务。
+const identifyTranscodeTimeout = 2 * time.Minute
+
 // ffmpegToWAV 用 FFmpeg 把任意音频转成 16bit/44.1kHz/双声道 WAV（指纹输入）。
 func ffmpegToWAV(bin, src, dst string) error {
-	cmd := exec.Command(bin, "-y", "-loglevel", "error", "-i", src,
+	ctx, cancel := context.WithTimeout(context.Background(), identifyTranscodeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-y", "-loglevel", "error", "-i", src,
 		"-f", "wav", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", dst)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("ffmpeg 转码超时（>%s）", identifyTranscodeTimeout)
+		}
 		return fmt.Errorf("ffmpeg 转码失败: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil

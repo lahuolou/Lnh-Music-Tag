@@ -56,7 +56,7 @@ async function run() {
       const tj = state.toolJob;
       if (tj && tj.finished) {
         clearInterval(iv);
-        if (tj.status === 'failed') { toast(t('fmtFail', { m: t('jobLost') }), 'err'); }
+        if (tj.status === 'failed') { toast(t('fmtFail', { m: tj.message || t('jobLost') }), 'err'); }
         else { toast(t('fmtDone', { ok: tj.ok, t: tj.total }), tj.ok === tj.total ? 'ok' : 'err'); }
         state.selected.clear();
         busy.value = false;
