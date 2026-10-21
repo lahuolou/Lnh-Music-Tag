@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { state, toast, refresh, loadSources, busy } from '../store.js'
+import { state, toast, refresh, loadSources, busy, startBatchPoll } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
 const q = ref('');
@@ -138,7 +138,6 @@ function retryCover(e, item) {
 }
 // 列表瘦身：歌词正文不下发，以内嵌标志判断（含时间戳细分无法在列表层判断）。
 function hasLyrics(t) { return !!t.hasLyrics; }
-function hasLrc(t) { return t.hasLyrics; }
 function lrcMark(it) {
   const a = hasLrc(it), b = !!it.hasLrcFile;
   return a && b ? t('lyrBoth') : a ? t('lyrEmbed') : b ? t('lyrLrc') : t('lyrNone');
@@ -182,6 +181,28 @@ async function delSel() {
     state.selected.clear();
     await refresh();
   } catch (e) { toast(t('delFail', { m: e.message }), 'err'); }
+}
+
+// 无歌词筛选：一键在线补歌词。勾选时只补所选，否则补当前筛选出的全部；
+// 仅写 LYRICS 字段并智能跳过已有词的曲目，复用批量刮削任务与进度条。
+async function fillLyricsBatch() {
+  const ids = state.selected.size ? [...state.selected] : filtered.value.map(x => x.id);
+  if (!ids.length) { toast(t('selFirst'), 'err'); return; }
+  state.batchBusy = true;
+  state.batchJob = null;
+  try {
+    const r = await api('/api/scrape/batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        ids, source: state.bSource || 'auto',
+        fields: ['lyrics'], skipFilled: true
+      })
+    });
+    startBatchPoll(r.jobId);
+  } catch (e) {
+    toast(t('batchStartFail', { m: e.message }), 'err');
+    state.batchBusy = false;
+  }
 }
 
 async function scan() {
@@ -254,6 +275,12 @@ onBeforeUnmount(stopPoll);
       </div>
       <div class="filters" style="margin-top:8px">
         <button v-for="f in filterOpts" :key="f.id" class="chip" :class="{ on: filter === f.id }" @click="filter = f.id">{{ f.label() }}</button>
+      </div>
+      <div v-if="filter === 'nolyric'" style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="sm" :disabled="busy()" @click="fillLyricsBatch">
+          {{ t('fillLyricsBatch', { n: state.selected.size || filtered.length }) }}
+        </button>
+        <span class="muted" style="font-size:12px">{{ t('fillLyricsHint') }}</span>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
         <button v-if="state.selected.size > 0" class="ghost sm danger" :disabled="busy()" @click="delSel">{{ t('deleteSel', { n: state.selected.size }) }}</button>

@@ -267,7 +267,7 @@ async function oneKey() {
         </template>
         <template v-else-if="curJob.status === 'done'">
           {{ curIsBatch
-            ? t('batchDone', { ok: (curJob.summary || {}).ok || 0, t: curJob.total })
+            ? t('batchDone', { ok: (curJob.summary || {}).ok || 0, fail: (curJob.summary || {}).fail || 0, skip: (curJob.summary || {}).skip || 0, t: curJob.total })
             : t('jobDone', { ok: curJob.ok, fail: curJob.fail, skip: curJob.skip, t: curJob.total }) }}
         </template>
         <template v-else-if="curJob.status === 'cancelled'">{{ t('jobCancelled') }}</template>

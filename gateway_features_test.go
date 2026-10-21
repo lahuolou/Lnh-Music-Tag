@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	cstore "lnh-music-tag/internal/store"
 	"lnh-music-tag/internal/model"
+	cstore "lnh-music-tag/internal/store"
 )
 
 func newTestGateway(t *testing.T, kind string, tracks ...*model.Track) *mediaGateway {
@@ -157,6 +157,40 @@ func TestMediaAuthStreamPass(t *testing.T) {
 	g.authenticate(rec, req, "jellyfin")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong pass status=%d, want 401", rec.Code)
+	}
+}
+
+// JF/Emby 路由分发须识别标准登录路径：裸、/Public、/{userId} 三种都能 200 发 token，
+// 不得落到 authorized 拦截返回 401（真实客户端使用 /Users/Public/AuthenticateByName）。
+func TestMediaPublicLoginRoute(t *testing.T) {
+	paths := []string{
+		"users/authenticatebyname",
+		"users/public/authenticatebyname",
+		"users/lnh-admin/authenticatebyname",
+	}
+	for _, kind := range []string{"jellyfin", "emby"} {
+		g := newTestGateway(t, kind)
+		_ = g.cfg.Set("stream_pass", "test")
+		for _, p := range paths {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/"+p, strings.NewReader(`{"Username":"admin","Pw":"test"}`))
+			req.Header.Set("Content-Type", "application/json")
+			if kind == "jellyfin" {
+				g.serveJellyfin(rec, req, p)
+			} else {
+				g.serveEmby(rec, req, p)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s %s status=%d body=%s", kind, p, rec.Code, rec.Body.String())
+			}
+			var ok struct {
+				AccessToken string `json:"AccessToken"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &ok)
+			if ok.AccessToken == "" {
+				t.Fatalf("%s %s no token: %s", kind, p, rec.Body.String())
+			}
+		}
 	}
 }
 
@@ -356,5 +390,21 @@ func TestAlbumNodeCarriesTitle(t *testing.T) {
 	}
 	if n.Attr["coverArt"] != "t1" {
 		t.Fatalf("album coverArt should reference track id, got %q", n.Attr["coverArt"])
+	}
+}
+
+// 歌单计数只统计库中仍存在的有效曲目：失效/已删除的残留 id 不计入 ChildCount，
+// 避免列表“3首”而详情只有 2 首的漂移。
+func TestPlaylistCountSkipsStaleIDs(t *testing.T) {
+	g := newTestGateway(t, "jellyfin",
+		&model.Track{ID: "t1", Path: "/m/a.flac", FileName: "a.flac"},
+		&model.Track{ID: "t2", Path: "/m/b.flac", FileName: "b.flac"})
+	pl := subsonicPlaylist{ID: "pl-x", Name: "盒饭", TrackIDs: []string{"t1", "t2", "t999"}}
+	if c := g.validSongCount(pl); c != 2 {
+		t.Fatalf("validSongCount=%d, want 2 (stale t999 skipped)", c)
+	}
+	dto := g.playlistDTO(pl)
+	if cc, _ := dto["ChildCount"].(int); cc != 2 {
+		t.Fatalf("ChildCount=%v, want 2", dto["ChildCount"])
 	}
 }

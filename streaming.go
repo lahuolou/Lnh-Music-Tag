@@ -134,6 +134,9 @@ func serveDirect(w http.ResponseWriter, r *http.Request, t *model.Track, attachm
 	disposition := "inline"
 	if attachment {
 		disposition = "attachment"
+		// 附件落盘场景一次性全量下发：忽略客户端 Range，强制 200 完整响应，
+		// 避免部分下载器把 206 分段误判为失败而卡在 0%。
+		r.Header.Del("Range")
 	}
 	w.Header().Set("Content-Disposition", disposition+"; filename*=UTF-8''"+urlEscape(t.FileName))
 	http.ServeContent(w, r, t.FileName, st.ModTime(), f)

@@ -371,11 +371,14 @@ func main() {
 		"/api/song", "/api/song/{id}", "/api/song/{id}/stream",
 		"/api/album", "/api/album/{id}", "/api/album/{id}/songs", "/api/album/{id}/coverart",
 		"/api/artist", "/api/artist/{id}", "/api/artist/{id}/albums", "/api/artist/{id}/coverart",
-		"/api/playlist", "/api/playlist/{id}", "/api/playlist/{id}/songs",
+		"/api/artist/{id}/tracks", "/api/artist/{id}/image",
+		"/api/playlist", "/api/playlist/{id}", "/api/playlist/{id}/songs", "/api/playlist/{id}/tracks",
+		"/api/album/{id}/tracks",
 		"/api/search", "/api/search/songs", "/api/search/albums", "/api/search/artists",
 		"/api/starred", "/api/starred/{id}", "/api/genres", "/api/albumlist/{type}", "/api/songlist/{type}",
 		"/api/library/scanstatus", "/api/library/statistics", "/api/statistics", "/api/nowplaying", "/api/lyrics/{songId}",
 		"/api/stream/{id}", "/api/coverart/{id}",
+		"/api/coverArt", "/api/coverArt/{id}",
 	} {
 		mux.HandleFunc(path, navidromeHandler(store, cfg).ServeHTTP)
 	}
@@ -395,6 +398,14 @@ func main() {
 	// /api/me 同时服务 Web 后台会话与 Navidrome 客户端：ND Bearer 令牌优先，否则回退 Web 会话。
 	ndAPI := NewNavidromeAPI(store, cfg)
 	mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
+		if ndAPI.Valid(r) {
+			ndAPI.WriteMe(w)
+			return
+		}
+		sessions.meHandler(w, r)
+	})
+	// /api/user/{name}：Navidrome 客户端按用户名拉取资料，ND Bearer 令牌优先，否则回退 Web 会话。
+	mux.HandleFunc("GET /api/user/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if ndAPI.Valid(r) {
 			ndAPI.WriteMe(w)
 			return

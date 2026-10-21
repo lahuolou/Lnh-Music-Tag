@@ -1227,6 +1227,7 @@ func (a *subsonicAPI) savePlaylists(p []subsonicPlaylist) {
 		_ = a.cfg.Set("streaming_playlists", string(b))
 	}
 }
+
 // appendUniqueSongs 把待加入曲目去重后追加到歌单（忽略空 id 与已存在项）。
 func appendUniqueSongs(dst []string, ids []string) []string {
 	have := make(map[string]bool, len(dst)+len(ids))
@@ -1257,22 +1258,21 @@ func addSongIDs(q url.Values) []string {
 func (a *subsonicAPI) playlistNode(p subsonicPlaylist, includeSongs bool) sxNode {
 	// getPlaylist 标准把曲目序列化为 <entry> 子节点（不是 <song>）；
 	// 音流等客户端按 entry 解析，输出 song 会导致详情页读不到任何曲目。
-	// songCount 以实际成功解析的曲目数为准，避免与可见条目数矛盾。
+	// songCount 始终以实际能解析到的有效曲目数为准：失效/已删除的残留 id 不计入，
+	// 保证列表(getPlaylists)与详情(getPlaylist)的计数一致，不出现“列表3首/详情2首”。
 	resolved := 0
-	parts := []sxNode{attr("id", p.ID), attr("name", p.Name), attr("owner", a.cfg.GetDefault("admin_user", "admin")), attr("public", "false"), attr("songCount", strconv.Itoa(len(p.TrackIDs))), attr("created", p.Created), attr("changed", p.Changed)}
+	for _, id := range p.TrackIDs {
+		if a.track(id) != nil {
+			resolved++
+		}
+	}
+	parts := []sxNode{attr("id", p.ID), attr("name", p.Name), attr("owner", a.cfg.GetDefault("admin_user", "admin")), attr("public", "false"), attr("songCount", strconv.Itoa(resolved)), attr("created", p.Created), attr("changed", p.Changed)}
 	if includeSongs {
 		for _, id := range p.TrackIDs {
 			if t := a.track(id); t != nil {
-				resolved++
 				e := a.songNode(t)
 				e.Name = "entry"
 				parts = append(parts, e)
-			}
-		}
-		// 详情页：songCount 与实际返回的 entry 数对齐（覆盖上面的占位值）
-		for i := range parts {
-			if parts[i].Name == "@songCount" {
-				parts[i] = attr("songCount", strconv.Itoa(resolved))
 			}
 		}
 	}
@@ -1951,12 +1951,41 @@ func (a *subsonicAPI) stream(w http.ResponseWriter, r *http.Request, op string) 
 }
 func urlEscape(s string) string { return url.PathEscape(s) }
 func (a *subsonicAPI) cover(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
+	q := r.URL.Query()
+	id := q.Get("id")
 	t := a.track(id)
+	// 专辑 id(al-) 兜底：取该专辑任一曲目封面。
 	if t == nil {
 		for _, x := range a.all() {
 			if albumID(x) == id {
 				t = x
+				break
+			}
+		}
+	}
+	// 艺术家(ar-)或 artist_name：取该艺人任一曲目的内嵌封面作为头像。
+	if t == nil && (strings.HasPrefix(id, "ar-") || q.Get("artist_name") != "") {
+		want := id
+		if name := q.Get("artist_name"); name != "" {
+			want = artistIDByName(name)
+		}
+		for _, x := range a.all() {
+			if artistID(x) == want {
+				t = x
+				break
+			}
+		}
+	}
+	// 歌单(pl-)：取歌单第一首有效曲目的封面。
+	if t == nil && strings.HasPrefix(id, "pl-") {
+		for _, pl := range a.loadPlaylists() {
+			if pl.ID == id {
+				for _, sid := range pl.TrackIDs {
+					if x := a.track(sid); x != nil {
+						t = x
+						break
+					}
+				}
 				break
 			}
 		}

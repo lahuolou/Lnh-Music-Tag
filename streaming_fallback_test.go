@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	cstore "lnh-music-tag/internal/store"
 	"lnh-music-tag/internal/model"
+	cstore "lnh-music-tag/internal/store"
 )
 
 // 转码失败必须回退直传（不得吐出空流/截断流导致“无法播放”）；

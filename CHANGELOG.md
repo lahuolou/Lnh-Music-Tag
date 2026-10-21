@@ -4,6 +4,37 @@
 
 ---
 
+## 1.0.6
+
+修复 Emby 歌词缺失、四协议艺术家/歌单浏览为空、原品质下载失败与批量补歌词假成功等实机问题，并清理冗余代码。
+
+### Emby 歌词
+
+- Emby 客户端不从 `plainLyrics`/`syncedLyrics` 或 `/Lyrics` 读取歌词：改由 MediaStreams 字幕流（`Codec=text`、`Extradata` 内完整 LRC）提供歌词，并在 item 对象内嵌 `Lyrics`/`plainLyrics` 作为兜底，此前多数无词的曲目恢复显示。
+- 歌词读取来源扩展：内嵌 `LYRICS` 之外，回退同名 `.lrc` 与备注/`COMMENT` 等文本字段。
+
+### 登录与认证（Jellyfin / Emby）
+
+- 标准 public 路径 `/Users/AuthenticateByName`（含大小写变体）此前返回 401：登录路由前置于通用 authorized 检查并按后缀匹配。
+
+### 艺术家 / 歌单浏览
+
+- Navidrome：艺术家详情内嵌 `albums`、歌单详情内嵌 `tracks`；新增 `/api/artist/{id}/tracks`、`/api/song/{id}/download`、查询式 `/api/coverArt`；路由段统一小写归一，兼容 `coverArt`/`tracks`/`image` 别名与 `/api/user/{name}`。
+- Jellyfin / Emby：艺术家头像聚合首曲封面，艺术家/歌单对象详情与曲目列表路由统一，修复点进去空列表。
+- 歌单计数：失效/已删除的残留曲目 id 不计入 `songCount`（Subsonic / Navidrome / Jellyfin / Emby 一致），消除“列表 N 首 / 详情 M 首”的计数漂移。
+
+### 原品质下载
+
+- `/rest/download`、ND `/api/song/{id}/download`、JF/Emby download 始终直传原始文件、不转码；附件落盘忽略客户端 Range，强制 200 完整响应，避免下载器把 206 分段误判为失败而卡在 0%。
+
+### 批量补歌词计数
+
+- 未取到歌词不再计为成功：目标歌词未写入时如实返回“未取到歌词”并计入失败；其他字段成功但歌词缺失时，在提示末尾附“歌词未取到”。前端批量完成汇总同时显示成功 / 失败 / 跳过。
+
+### 清理
+
+- 删除未使用的 Emby 纯文本歌词函数与前端重复辅助；合并重复的专辑/艺术家过滤块；全量 gofmt、vet、单元测试通过。
+
 ## 1.0.5
 
 修复音流（Subsonic 协议）「我的歌单」列表计数正确、但点进详情看不到任何歌曲、退回后计数归零的问题。

@@ -67,6 +67,19 @@ func (g *mediaGateway) serve(w http.ResponseWriter, r *http.Request, kind string
 	}
 	// Emby/Jellyfin 客户端路径大小写不敏感，统一小写匹配
 	p = strings.ToLower(p)
+	// 主取词：客户端直接从 MediaStreams 字幕流(Codec=text)的 Extradata 读完整 LRC。
+	// 这里仅兜底处理个别客户端回退请求的 /Items/{id}/Subtitles/{idx}/Stream(.js)。
+	if strings.Contains(p, "/subtitles/") {
+		rest := p
+		if j := strings.Index(rest, "items/"); j >= 0 {
+			rest = rest[j+len("items/"):]
+		}
+		parts := strings.Split(rest, "/")
+		if len(parts) >= 4 && parts[1] == "subtitles" {
+			g.subtitleStream(w, r, parts[0], parts[2])
+			return
+		}
+	}
 	if kind == "emby" {
 		g.serveEmby(w, r, p)
 		return
@@ -105,6 +118,7 @@ func (g *mediaGateway) userPass(r *http.Request) (string, string) {
 	}
 	return x.Username, x.Pw
 }
+
 // token base 仅取流媒体密码 stream_pass（唯一凭证）；未配置则为空，token 校验自然失败。
 func (g *mediaGateway) tokenBase() string {
 	return strings.TrimSpace(g.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
@@ -411,13 +425,30 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 		g.json(w, 200, map[string]any{})
 		return
 	}
-	if p == "users/authenticatebyname" {
+	// 兼容标准登录路径：/Users/AuthenticateByName、/Users/Public/AuthenticateByName、/Users/{userId}/AuthenticateByName
+	if strings.HasSuffix(p, "authenticatebyname") {
 		g.authenticate(w, r, "jellyfin")
 		return
 	}
 	if !g.authorized(r) {
 		w.Header().Set("WWW-Authenticate", `MediaBrowser`)
 		g.json(w, 401, map[string]any{"Message": "Unauthorized"})
+		return
+	}
+	// 下载（兼容 /Users/{uid} 前缀）：附件直传原始文件，优先于对象路由。
+	if strings.HasSuffix(p, "/download") && (strings.Contains(p, "/items/") || strings.Contains(p, "/audio/")) {
+		var id string
+		if i := strings.Index(p, "/items/"); i >= 0 {
+			id = p[i+len("/items/"):]
+		} else if i := strings.Index(p, "/audio/"); i >= 0 {
+			id = p[i+len("/audio/"):]
+		}
+		id = strings.TrimSuffix(id, "/download")
+		g.directDownload(w, r, id)
+		return
+	}
+	// 歌单/艺术家对象的详情、曲目列表与加删歌（兼容 users 前缀），优先于旧的吞吃式分支。
+	if g.matchObjectRoute(w, r, p) {
 		return
 	}
 	if p == "users/me" || p == "users/"+gatewayUserID {
@@ -529,7 +560,7 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 	// 兼容 Items/Artists/Audio 三类对象的 Images/Primary 封面路径（须在 audio 流与 users/items 拦截之前）
 	if strings.Contains(p, "/images/") {
 		rest := p
-		for _, key := range []string{"items/", "artists/", "audio/"} {
+		for _, key := range []string{"items/", "artists/", "audio/", "playlists/"} {
 			if i := strings.Index(rest, key); i >= 0 {
 				rest = rest[i+len(key):]
 				break
@@ -590,6 +621,11 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 		rest := strings.TrimPrefix(p, "items/")
 		parts := strings.Split(rest, "/")
 		id := parts[0]
+		// Emby/Jellyfin 下载：/Items/{id}/Download（路由已小写归一为 download），附件直传原始文件。
+		if len(parts) >= 2 && parts[1] == "download" {
+			g.directDownload(w, r, id)
+			return
+		}
 		if len(parts) >= 3 && parts[1] == "images" {
 			g.cover(w, r, id)
 			return
@@ -607,6 +643,16 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 			g.json(w, 200, g.item(t))
 			return
 		}
+	}
+	if strings.HasPrefix(p, "audio/") && (strings.HasSuffix(p, "/download") || strings.HasSuffix(p, "/Download")) {
+		id := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(p, "audio/"), "/download"), "/Download")
+		g.directDownload(w, r, id)
+		return
+	}
+	if strings.HasPrefix(p, "items/") && (strings.HasSuffix(p, "/download") || strings.HasSuffix(p, "/Download")) {
+		id := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(p, "items/"), "/download"), "/Download")
+		g.directDownload(w, r, id)
+		return
 	}
 	if strings.HasPrefix(p, "audio/") && strings.HasSuffix(p, "/stream") {
 		g.stream(w, r, strings.TrimSuffix(strings.TrimPrefix(p, "audio/"), "/stream"))
@@ -656,6 +702,29 @@ func (g *mediaGateway) trackLyricsText(t *model.Track) string {
 		}
 	}
 	return strings.TrimSpace(text)
+}
+
+// plainLyrics 返回剥离 LRC 时间戳与元信息行后的纯文本歌词，供 Emby/JF item 对象内嵌 Lyrics 字段（Emby 客户端不另发 /Lyrics，直接读该字段）。
+func (g *mediaGateway) plainLyrics(t *model.Track) string {
+	text := g.trackLyricsText(t)
+	if text == "" {
+		return ""
+	}
+	out := make([]string, 0)
+	for _, ln := range strings.Split(text, "\n") {
+		ln = strings.TrimRight(ln, "\r")
+		if lrcMetaLineRe.MatchString(ln) {
+			continue
+		}
+		if m := lrcLineRe.FindStringSubmatch(ln); m != nil {
+			if txt := strings.TrimSpace(m[3]); txt != "" {
+				out = append(out, txt)
+			}
+		} else if strings.TrimSpace(ln) != "" {
+			out = append(out, strings.TrimSpace(ln))
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // lrcMetaLineRe 匹配 LRC 元信息标签行：[ti:]/[ar:]/[al:]/[by:]/[offset:]/[length:] 等。
@@ -728,11 +797,94 @@ func (g *mediaGateway) jellyfinLyrics(w http.ResponseWriter, r *http.Request, id
 	if t != nil {
 		meta = &lyricMeta{Artist: songArtist(t), Album: songAlbum(t), Title: songTitle(t)}
 	}
-	body, _ := json.Marshal(map[string]any{"Lyrics": lines, "Metadata": meta})
+	// 兼容多种客户端取词约定：lrclib 风格 lrclist[{time(秒),lyric}]、纯文本 lyrics/value/text。
+	lrcList := make([]map[string]any, 0, len(lines))
+	for _, ln := range lines {
+		sec := float64(ln.Start) / 1e7
+		lrcList = append(lrcList, map[string]any{
+			"time":  sec,
+			"start": sec,
+			"lyric": ln.Text,
+			"text":  ln.Text,
+		})
+	}
+	plain := g.plainLyrics(t)
+	// Emby 原生结构：TrackEvents[{Text,StartPositionTicks,EndPositionTicks}]（100ns ticks），
+	// 与 Jellyfin 的 Lyrics[{Start,Text}] 并存以兼容两类客户端。
+	totalTicks := int64(0)
+	if t != nil && t.Duration > 0 {
+		totalTicks = int64(t.Duration * 10000000)
+	}
+	trackEvents := make([]map[string]any, 0, len(lines))
+	for i, ln := range lines {
+		s := ln.Start
+		e := int64(0)
+		if i+1 < len(lines) {
+			e = lines[i+1].Start
+		} else if totalTicks > 0 {
+			e = totalTicks
+		} else {
+			e = s + 30000000
+		}
+		if e <= s {
+			e = s + 30000000
+		}
+		trackEvents = append(trackEvents, map[string]any{
+			"Text":               ln.Text,
+			"StartPositionTicks": s,
+			"EndPositionTicks":   e,
+		})
+	}
+	// Emby 原生 /Audio/{id}/Lyrics 部分客户端接受纯文本 LRC；按 query/Accept 降级返回。
+	if qv(r, "format", "") == "lrc" || qv(r, "format", "") == "plain" || strings.HasPrefix(r.Header.Get("Accept"), "text/plain") {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(200)
+		w.Write([]byte(text))
+		return
+	}
+	dataObj := map[string]any{
+		"Lyrics":       lines,
+		"TrackEvents":  trackEvents,
+		"lrclist":      lrcList,
+		"lyrics":       plain,
+		"value":        plain,
+		"text":         plain,
+		"plainLyrics":  plain,
+		"syncedLyrics": text,
+		"plainlyrics":  plain,
+		"syncedlyrics": text,
+		"Title":        "Lyrics",
+		"Extradata":    text,
+	}
+	body, _ := json.Marshal(map[string]any{
+		"Lyrics":       lines,
+		"TrackEvents":  trackEvents,
+		"Metadata":     meta,
+		"lrclist":      lrcList,
+		"lyrics":       plain,
+		"value":        plain,
+		"text":         plain,
+		"plainLyrics":  plain,
+		"syncedLyrics": text,
+		"plainlyrics":  plain,
+		"syncedlyrics": text,
+		"Title":        "Lyrics",
+		"Extradata":    text,
+		"data":         dataObj,
+	})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 	w.Write(body)
 }
+
+// subtitleStream 兜底处理个别客户端回退请求的
+// /Items/{id}/Subtitles/{index}/Stream(.js)。客户端 Accept=application/json，
+// 返回 Emby 原生 TrackEvents JSON（与 /Lyrics 同源，含 TrackEvents/Lyrics/lrclist）；
+// Accept:text/plain 时由 jellyfinLyrics 自动降级为纯 LRC。
+func (g *mediaGateway) subtitleStream(w http.ResponseWriter, r *http.Request, id, index string) {
+	g.jellyfinLyrics(w, r, id)
+}
+
 func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p string) {
 	if p == "system/info/public" || p == "system/info" {
 		g.json(w, 200, map[string]any{"ServerName": "Lnh-Music-Tag", "Version": "4.8.0.0", "ProductName": "Lnh-Music-Tag", "Id": "lnh-music-tag", "OperatingSystem": "Linux", "StartupWizardCompleted": true, "SystemArchitecture": "x64", "LocalNetworkAddresses": []string{}, "CanSelfRestart": false, "CanLaunchWebBrowser": false})
@@ -742,7 +894,8 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 		g.ok(w)
 		return
 	}
-	if p == "users/authenticatebyname" {
+	// 兼容标准登录路径：/Users/AuthenticateByName、/Users/Public/AuthenticateByName、/Users/{userId}/AuthenticateByName
+	if strings.HasSuffix(p, "authenticatebyname") {
 		g.authenticate(w, r, "emby")
 		return
 	}
@@ -750,14 +903,34 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 		g.json(w, 401, map[string]any{"Message": "Unauthorized"})
 		return
 	}
-	// 标准歌词接口（与 Jellyfin 共用 LyricDto）：/Audio/{id}/Lyrics、/Items/{id}/Lyrics、/Users/{uid}/Items/{id}/Lyrics
+	// 下载（兼容 /Users/{uid} 前缀）：附件直传原始文件，优先于对象路由。
+	if strings.HasSuffix(p, "/download") && (strings.Contains(p, "/items/") || strings.Contains(p, "/audio/")) {
+		var id string
+		if i := strings.Index(p, "/items/"); i >= 0 {
+			id = p[i+len("/items/"):]
+		} else if i := strings.Index(p, "/audio/"); i >= 0 {
+			id = p[i+len("/audio/"):]
+		}
+		id = strings.TrimSuffix(id, "/download")
+		g.directDownload(w, r, id)
+		return
+	}
+	// 歌单/艺术家对象的详情、曲目列表与加删歌（兼容 users 前缀），优先于旧的吞吃式分支。
+	if g.matchObjectRoute(w, r, p) {
+		return
+	}
+	// 歌词端点统一返回结构化 JSON（客户端解析 data.lrclist / data.lyrics）；
+	// jellyfinLyrics 内部已按 Accept:text/plain 或 format=lrc/plain 降级为纯文本。
 	if strings.HasPrefix(p, "audio/") && strings.HasSuffix(p, "/lyrics") {
 		g.jellyfinLyrics(w, r, strings.TrimSuffix(strings.TrimPrefix(p, "audio/"), "/lyrics"))
 		return
 	}
-	if strings.Contains(p, "/items/") && strings.HasSuffix(p, "/lyrics") {
-		id := p[strings.LastIndex(p, "/items/")+len("/items/"):]
-		g.jellyfinLyrics(w, r, strings.TrimSuffix(id, "/lyrics"))
+	if (strings.HasPrefix(p, "items/") || strings.Contains(p, "/items/")) && strings.HasSuffix(p, "/lyrics") {
+		rest := p
+		if i := strings.LastIndex(rest, "items/"); i >= 0 {
+			rest = rest[i+len("items/"):]
+		}
+		g.jellyfinLyrics(w, r, strings.TrimSuffix(rest, "/lyrics"))
 		return
 	}
 	if p == "users/me" || p == "users/"+gatewayUserID {
@@ -798,7 +971,7 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 	// 兼容 Items/Artists/Audio 三类对象的 Images/Primary 封面路径（须在 audio 流与 users/items 拦截之前）
 	if strings.Contains(p, "/images/") {
 		rest := p
-		for _, key := range []string{"items/", "artists/", "audio/"} {
+		for _, key := range []string{"items/", "artists/", "audio/", "playlists/"} {
 			if i := strings.Index(rest, key); i >= 0 {
 				rest = rest[i+len(key):]
 				break
@@ -887,7 +1060,7 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 	// 兼容 Items/Artists/Audio 三类对象的 Images/Primary 封面路径
 	if strings.Contains(p, "/images/") {
 		rest := p
-		for _, key := range []string{"items/", "artists/", "audio/"} {
+		for _, key := range []string{"items/", "artists/", "audio/", "playlists/"} {
 			if i := strings.Index(rest, key); i >= 0 {
 				rest = rest[i+len(key):]
 				break
@@ -897,8 +1070,18 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 		g.cover(w, r, id)
 		return
 	}
-	if strings.HasPrefix(p, "items/") {
-		id := strings.TrimPrefix(p, "items/")
+	if strings.HasPrefix(p, "items/") || strings.Contains(p, "/items/") {
+		raw := p
+		if i := strings.Index(raw, "items/"); i >= 0 {
+			raw = raw[i:]
+		}
+		parts := strings.Split(strings.TrimPrefix(raw, "items/"), "/")
+		// Emby 下载：/Items/{id}/Download（路由已小写），附件直传原始文件。
+		if len(parts) >= 2 && parts[1] == "download" {
+			g.directDownload(w, r, parts[0])
+			return
+		}
+		id := parts[0]
 		if t := g.library.get(id); t != nil {
 			g.json(w, 200, g.item(t))
 			return
@@ -920,6 +1103,11 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 		second := ""
 		if len(segs) >= 2 {
 			second = segs[1]
+		}
+		// Emby 下载：/Audio/{id}/download 附件直传原始文件。
+		if second == "download" {
+			g.directDownload(w, r, id)
+			return
 		}
 		// Emby HLS：/Audio/{id}/main.m3u8 返回单分片播放列表，hls0.ts 走 mpegts 实时转码
 		if second == "main.m3u8" {
@@ -982,6 +1170,7 @@ func (g *mediaGateway) mediaSources(t *model.Track) []any {
 		"Path":                  "",
 		"Protocol":              "File",
 		"Type":                  "Default",
+		"CanDownload":           true,
 		"Container":             strings.TrimPrefix(strings.ToLower(t.Ext), "."),
 		"Size":                  t.Size,
 		"IsRemote":              false,
@@ -1008,7 +1197,7 @@ func (g *mediaGateway) mediaSources(t *model.Track) []any {
 }
 
 func (g *mediaGateway) mediaStreams(t *model.Track) []any {
-	return []any{map[string]any{
+	ms := []any{map[string]any{
 		"Type":                   "Audio",
 		"Codec":                  strings.TrimPrefix(strings.ToLower(t.Ext), "."),
 		"BitRate":                t.Bitrate * 1000,
@@ -1022,6 +1211,29 @@ func (g *mediaGateway) mediaStreams(t *model.Track) []any {
 		"IsTextSubtitleStream":   false,
 		"SupportsExternalStream": false,
 	}}
+	// Emby：把内嵌歌词作为文本字幕流挂出。参考音流实现：客户端直接从
+	// MediaStreams 字幕流的 Extradata 读取完整 LRC（Codec=text），无需再请求 Stream.js。
+	if g.kind == "emby" && g.trackLyricsText(t) != "" {
+		lrc := g.trackLyricsText(t)
+		ms = append(ms, map[string]any{
+			"Index":                  1,
+			"Type":                   "Subtitle",
+			"Codec":                  "text",
+			"Title":                  "Lyrics",
+			"DisplayTitle":           "Und (TEXT)",
+			"Extradata":              lrc,
+			"Language":               "",
+			"IsDefault":              true,
+			"IsForced":               false,
+			"IsExternal":             false,
+			"IsTextSubtitleStream":   true,
+			"SupportsExternalStream": true,
+			"Protocol":               "File",
+			"SubtitleLocationType":   "InternalStream",
+			"Size":                   int64(len(lrc)),
+		})
+	}
+	return ms
 }
 func (g *mediaGateway) item(t *model.Track) map[string]any {
 	year := 0
@@ -1036,7 +1248,11 @@ func (g *mediaGateway) item(t *model.Track) map[string]any {
 	if gv := tag(t, "GENRE"); gv != "" {
 		genres = []string{gv}
 	}
-	return map[string]any{"Name": songTitle(t), "ServerId": "lnh-music-tag", "Id": t.ID, "Type": "Audio", "MediaType": "Audio", "IsFolder": false, "Album": songAlbum(t), "AlbumId": albumID(t), "AlbumArtist": songArtist(t), "Artists": []string{songArtist(t)}, "ArtistItems": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "AlbumArtists": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "RunTimeTicks": int64(t.Duration * 10000000), "ProductionYear": year, "IndexNumber": intValue(tag(t, "TRACKNUMBER", "TRACK")), "ParentIndexNumber": intValue(tag(t, "DISCNUMBER", "DISC")), "Container": strings.TrimPrefix(strings.ToLower(t.Ext), "."), "Path": t.Path, "Size": t.Size, "Bitrate": t.Bitrate * 1000, "HasPrimaryImage": t.HasCover, "ImageTags": imageTags, "Genres": genres, "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": g.isStarred(t.ID), "Rating": ratingFor(g.cfg, t.ID), "Played": false}, "MediaSources": g.mediaSources(t)}
+	m := map[string]any{"Name": songTitle(t), "ServerId": "lnh-music-tag", "Id": t.ID, "Type": "Audio", "MediaType": "Audio", "IsFolder": false, "Album": songAlbum(t), "AlbumId": albumID(t), "AlbumArtist": songArtist(t), "Artists": []string{songArtist(t)}, "ArtistItems": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "AlbumArtists": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "RunTimeTicks": int64(t.Duration * 10000000), "ProductionYear": year, "IndexNumber": intValue(tag(t, "TRACKNUMBER", "TRACK")), "ParentIndexNumber": intValue(tag(t, "DISCNUMBER", "DISC")), "Container": strings.TrimPrefix(strings.ToLower(t.Ext), "."), "Path": t.Path, "Size": t.Size, "Bitrate": t.Bitrate * 1000, "HasPrimaryImage": t.HasCover, "CanDownload": true, "ImageTags": imageTags, "Lyrics": g.plainLyrics(t), "Overview": g.plainLyrics(t), "Comment": g.plainLyrics(t), "Genres": genres, "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": g.isStarred(t.ID), "Rating": ratingFor(g.cfg, t.ID), "Played": false}, "MediaSources": g.mediaSources(t)}
+	if g.kind == "emby" && g.trackLyricsText(t) != "" {
+		m["SubtitleStreamIndex"] = 1
+	}
+	return m
 }
 func intValue(s string) int { n, _ := strconv.Atoi(firstNumber(s)); return n }
 
@@ -1412,10 +1628,23 @@ func (g *mediaGateway) mutatePlaylistItems(w http.ResponseWriter, r *http.Reques
 	g.json(w, http.StatusOK, g.playlistDTO(ps[idx]))
 }
 
+// validSongCount 统计歌单里当前库中仍存在的有效曲目数；失效/已删除的残留 id 不计入，
+// 使列表 ChildCount 与实际可见曲目数一致，避免“列表N首/详情M首”漂移。
+func (g *mediaGateway) validSongCount(pl subsonicPlaylist) int {
+	n := 0
+	for _, id := range pl.TrackIDs {
+		if g.library.get(id) != nil {
+			n++
+		}
+	}
+	return n
+}
+
 func (g *mediaGateway) playlistDTO(pl subsonicPlaylist) map[string]any {
 	return map[string]any{
 		"Name": pl.Name, "Id": pl.ID, "Type": "Playlist", "IsFolder": true,
-		"ChildCount": len(pl.TrackIDs), "ServerId": "lnh-music-tag",
+		"ChildCount": g.validSongCount(pl), "ServerId": "lnh-music-tag",
+		"HasPrimaryImage": true, "ImageTags": map[string]string{"Primary": "primary"},
 		"UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": false, "Played": false},
 	}
 }
@@ -1424,9 +1653,80 @@ func (g *mediaGateway) playlistItems(r *http.Request) map[string]any {
 	p := g.loadPlaylists()
 	var items []any
 	for _, pl := range p {
-		items = append(items, map[string]any{"Name": pl.Name, "Id": pl.ID, "Type": "Playlist", "IsFolder": true, "ChildCount": len(pl.TrackIDs), "ServerId": "lnh-music-tag", "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": false, "Played": false}})
+		items = append(items, map[string]any{"Name": pl.Name, "Id": pl.ID, "Type": "Playlist", "IsFolder": true, "ChildCount": g.validSongCount(pl), "ServerId": "lnh-music-tag", "HasPrimaryImage": true, "ImageTags": map[string]string{"Primary": "primary"}, "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": false, "Played": false}})
 	}
 	return pageItems(items, r)
+}
+
+// cloneWithQuery 克隆请求并覆盖指定 query 参数，供复用 itemQuery 按歌单/艺术家过滤。
+func (g *mediaGateway) cloneWithQuery(r *http.Request, kv map[string]string) *http.Request {
+	r2 := r.Clone(r.Context())
+	u := *r.URL
+	q := u.Query()
+	for k, v := range kv {
+		q.Set(k, v)
+	}
+	u.RawQuery = q.Encode()
+	r2.URL = &u
+	return r2
+}
+
+// matchObjectRoute 统一处理歌单/艺术家对象的详情、曲目列表与加删歌，兼容
+// /Playlists/{id} 与 /Users/{uid}/Playlists/{id} 两种前缀；已响应返回 true。
+// /Artists/{id}/Albums、列表 /Playlists、建歌单等不在此处理，返回 false 走原分支。
+func (g *mediaGateway) matchObjectRoute(w http.ResponseWriter, r *http.Request, p string) bool {
+	norm := p
+	// 去掉 users/{uid}/ 前缀（标准客户端常带用户路径）
+	if strings.HasPrefix(norm, "users/") {
+		segs0 := strings.SplitN(norm, "/", 3)
+		if len(segs0) == 3 {
+			norm = segs0[2]
+		}
+	}
+	segs := strings.Split(norm, "/")
+
+	// ---- 歌单：/Playlists/{id} 详情、/Playlists/{id}/Items 曲目与加删 ----
+	if segs[0] == "playlists" {
+		if len(segs) == 2 {
+			if pl, idx := g.playlistByID(segs[1]); idx >= 0 {
+				g.json(w, 200, g.playlistDTO(pl))
+			} else {
+				http.NotFound(w, r)
+			}
+			return true
+		}
+		if len(segs) == 3 && segs[2] == "items" {
+			id := segs[1]
+			if r.Method == http.MethodGet {
+				if _, idx := g.playlistByID(id); idx < 0 {
+					http.NotFound(w, r)
+					return true
+				}
+				g.json(w, 200, g.itemQuery(g.cloneWithQuery(r, map[string]string{"ParentId": id})))
+				return true
+			}
+			// POST 追加 / DELETE 移除
+			g.mutatePlaylistItems(w, r, id)
+			return true
+		}
+	}
+
+	// ---- 艺术家：/Artists/{id} 详情、/Artists/{id}/Items 曲目 ----
+	if segs[0] == "artists" {
+		if len(segs) == 2 {
+			if it := g.artistItem(segs[1]); it != nil {
+				g.json(w, 200, it)
+			} else {
+				http.NotFound(w, r)
+			}
+			return true
+		}
+		if len(segs) == 3 && segs[2] == "items" {
+			g.json(w, 200, g.itemQuery(g.cloneWithQuery(r, map[string]string{"ArtistIds": segs[1]})))
+			return true
+		}
+	}
+	return false
 }
 func (g *mediaGateway) albumItems(r *http.Request, artists string) map[string]any {
 	artistSet := map[string]bool{}
@@ -1487,7 +1787,25 @@ func (g *mediaGateway) stream(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	q := r.URL.Query()
+	// 下载语义（download=1/true、static=true）：始终直传原始文件并以附件形式下发，不转码。
+	dl := strings.EqualFold(q.Get("download"), "1") ||
+		strings.EqualFold(q.Get("download"), "true") ||
+		q.Get("static") == "true"
+	if dl {
+		streamTrack(w, r, g.cfg, t, "", "", true)
+		return
+	}
 	streamTrack(w, r, g.cfg, t, q.Get("format"), bitRateParam(q), false)
+}
+
+// directDownload 以附件形式直传原始文件（JF/Emby 的 /audio/{id}/download、/items/{id}/Download）。
+func (g *mediaGateway) directDownload(w http.ResponseWriter, r *http.Request, id string) {
+	t := g.library.get(id)
+	if t == nil {
+		http.NotFound(w, r)
+		return
+	}
+	streamTrack(w, r, g.cfg, t, "", "", true)
 }
 
 // embyHLSPlaylist 输出 Emby HLS 单分片播放列表（VOD，整曲一个分片）。
@@ -1529,10 +1847,32 @@ func (g *mediaGateway) cover(w http.ResponseWriter, r *http.Request, id string) 
 		}
 	}
 	if t == nil && strings.HasPrefix(id, "ar-") {
+		// 优先取已标记 HasCover 的曲目；没有标记时退而取该艺术家任一曲目，
+		// 交由下方 ReadCover 直接尝试读内嵌封面，避免“有封面却因标记缺失 404”。
+		var fallback *model.Track
 		for _, x := range g.library.all() {
-			if artistID(x) == id && x.HasCover {
-				t = x
-				break
+			if artistID(x) == id {
+				if fallback == nil {
+					fallback = x
+				}
+				if x.HasCover {
+					t = x
+					break
+				}
+			}
+		}
+		if t == nil {
+			t = fallback
+		}
+	}
+	if t == nil && strings.HasPrefix(id, "pl-") {
+		// 歌单封面：取歌单首个仍存在的曲目，读其内嵌封面。
+		if pl, idx := g.playlistByID(id); idx >= 0 {
+			for _, sid := range pl.TrackIDs {
+				if x := g.library.get(sid); x != nil {
+					t = x
+					break
+				}
 			}
 		}
 	}

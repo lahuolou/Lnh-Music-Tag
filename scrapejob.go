@@ -797,6 +797,8 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	var title string       // 函数级：封面纯标题兜底用（effectiveSearchTerms 的标题）
 	var artist string      // 函数级：歌词兜底用（搜索 0 命中时仍按标题+艺术家直查歌词）
 	var coverErrMsg string // 封面失败原因（写入结果消息便于排查）
+	lyricWritten := false  // 本次是否真正写入歌词（用于区分“补歌词成功”与“未取到却误报成功”）
+	var lyricErrMsg string
 	if hasSearch {
 		// 搜索关键词：优先真实标签；标签为空/“Unknown”/乱码时回退文件名解析
 		// （如 `Unknown - 蓝色蝴蝶.mp3` → 用“蓝色蝴蝶”去刮削）。
@@ -812,11 +814,12 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 			// 源降级：首选源（或 auto 语言优选链）无结果时自动匹配下一条源，
 			// 保证"这个源没搜到 → 自动换下一个源"。auto 时等价于语言优选链。
 			results, err := ms.SearchWithFallback(source, query, 3)
-			if err != nil {
-				if !needOp {
-					return "搜索失败: " + err.Error(), false
-				}
-			} else if len(results) > 0 {
+			// 元数据搜索报错时，若还要独立补歌词（歌词兜底不依赖元数据命中）或有
+			// 本地操作项，不提前失败返回，继续走到下方歌词/属性写入，避免“仅补歌词”
+			// 因源限流/风控被整体判失败而什么都没写。
+			if err != nil && !fields.Lyrics && !needOp {
+				return "搜索失败: " + err.Error(), false
+			} else if err == nil && len(results) > 0 {
 				searched = true
 				// 先对每个 MusicBrainz 候选补全发行详情（专辑艺术家/流派/年代/
 				// 语言/专辑类型/总数），再参与跨源按字段融合，避免只 enrich 单条。
@@ -923,15 +926,25 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	// 解析出的标题+艺术家直接查歌词——FetchLyrics 内部自带 netease→qq→lrclib
 	// 多级兜底，不依赖刮削搜索是否命中（手动 /api/lyrics 同路径已验证可命中）。
 	if fields.Lyrics {
-		lyricSr := sr
+		// 歌词以本地（标签/文件名解析出的）准确标题+艺人为准，避免融合候选 sr 的
+		// 错位艺人/标题把 QQ/网易候选淘汰掉（手动“获取歌词”同口径，故能搜到而批量落空）。
+		// 仅当本地缺标题时退回融合结果；代表源为网易/QQ 且带 ID 时保留，优先按 ID 直取，
+		// 直取失败再用本地标题+艺人走搜索兜底。
+		lyricSr := scrape.SearchResult{Title: title}
+		if artist != "" && !looksUnknown(artist) && !looksGarbled(artist) {
+			lyricSr.Artists = []string{artist}
+		}
 		if lyricSr.Title == "" {
-			lyricSr = scrape.SearchResult{Title: title}
-			if artist != "" && !looksUnknown(artist) && !looksGarbled(artist) {
-				lyricSr.Artists = []string{artist}
-			}
+			lyricSr = sr
+		} else if (sr.Source == "netease" || sr.Source == "qq") && sr.SourceID != "" {
+			lyricSr.Source = sr.Source
+			lyricSr.SourceID = sr.SourceID
 		}
 		if lyric, err := ms.FetchLyrics(lyricSr); err == nil && strings.TrimSpace(lyric) != "" {
 			tags[taglibx.Lyrics] = []string{simpConverter(lyric)}
+			lyricWritten = true
+		} else if err != nil {
+			lyricErrMsg = err.Error()
 		}
 	}
 	// 音频属性写标签（本地探测值，无源依赖）
@@ -1051,6 +1064,14 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 		if coverErrMsg != "" {
 			return coverErrMsg, true
 		}
+		// 本次目标就是补歌词但没取到：判失败并带原因，避免“未补到却报成功”。
+		if fields.Lyrics && !lyricWritten {
+			msg := "未取到歌词"
+			if lyricErrMsg != "" {
+				msg += ": " + lyricErrMsg
+			}
+			return msg, false
+		}
 		if searched {
 			return "标签已完整，智能跳过", true
 		}
@@ -1067,6 +1088,10 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	}
 	if coverErrMsg != "" {
 		msg += "；" + coverErrMsg
+	}
+	// 部分成功：已写其他字段但歌词没取到时，把歌词缺口附进提示，避免静默忽略。
+	if fields.Lyrics && !lyricWritten {
+		msg += "；歌词未取到"
 	}
 	return msg, true
 }

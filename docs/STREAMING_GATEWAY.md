@@ -48,11 +48,11 @@
 
 | 类别 | 路由 |
 |---|---|
-| 认证/用户 | `POST /auth/login`、`POST /auth/token`、`GET /ping`、`GET /api/me`（ND Bearer 优先，否则回退 Web 会话） |
-| 曲目 | `GET /api/song`、`/api/song/{id}`、`/api/song/{id}/stream`、`/api/stream/{id}`、`/api/coverart/{id}` |
-| 专辑 | `GET /api/album`、`/api/album/{id}`、`/api/album/{id}/songs`、`/api/album/{id}/coverart` |
-| 艺人 | `GET /api/artist`、`/api/artist/{id}`、`/api/artist/{id}/albums`、`/api/artist/{id}/coverart`（聚合首曲封面） |
-| 歌单 | 读 `GET /api/playlist`、`/api/playlist/{id}`、`/api/playlist/{id}/songs`；写 `POST /api/playlist`、`PUT/DELETE /api/playlist/{id}`、`POST/DELETE /api/playlist/{id}/songs`（与 Subsonic 共用存储） |
+| 认证/用户 | `POST /auth/login`、`POST /auth/token`、`GET /ping`、`GET /api/me`、`GET /api/user/{name}`（ND Bearer 优先，否则回退 Web 会话） |
+| 曲目 | `GET /api/song`、`/api/song/{id}`、`/api/song/{id}/stream`、`/api/song/{id}/download`（附件直传原文件）、`/api/stream/{id}`、`/api/coverart/{id}`、`/api/coverArt?id=/artistId=/albumId=`（查询式取封面） |
+| 专辑 | `GET /api/album`、`/api/album/{id}`、`/api/album/{id}/songs`（兼容 `/tracks`）、`/api/album/{id}/coverart`（兼容 `/image`） |
+| 艺人 | `GET /api/artist`、`/api/artist/{id}`（详情内嵌 `albums`）、`/api/artist/{id}/albums`、`/api/artist/{id}/tracks`、`/api/artist/{id}/coverart`（兼容 `/image`，聚合首曲封面） |
+| 歌单 | 读 `GET /api/playlist`、`/api/playlist/{id}`（详情内嵌 `tracks`）、`/api/playlist/{id}/songs`（兼容 `/tracks`）；写 `POST /api/playlist`、`PUT/DELETE /api/playlist/{id}`、`POST/DELETE /api/playlist/{id}/songs`（与 Subsonic 共用存储） |
 | 收藏 | `GET /api/starred`；写 `PUT/DELETE /api/starred/{id}`（204）；曲目 DTO `rating` 回传与 Subsonic 共享的星级（ND 原生无公开星级写端点，评分以收藏/星形表达） |
 | 其他 | `/api/search`、`/api/search/{songs|albums|artists}`、`/api/genres`、`/api/albumlist/{type}`、`/api/songlist/{type}`、`/api/library/scanstatus`、`/api/library/statistics`、`/api/statistics`、`/api/nowplaying`、`/api/lyrics/{songId}` |
 
@@ -74,7 +74,7 @@
 
 ## 5. Emby（`/emby/*`）
 
-覆盖服务信息、`/Users/AuthenticateByName`、用户/视图、`/Items`、`/Albums`、`/Playlists`、`/Library/MediaFolders`、三类 `Images/Primary` 封面、`/Items/{id}/File`（直传/按需转码）、`/Audio/{id}/stream`、播放信息、歌词与基础播放事件。`/Items/{id}/File?format=mp3` 与 HLS `main.m3u8` 仅在 FFmpeg 就绪时转码，否则回退直传。与 Jellyfin 共用同一套写端点：收藏 `FavoriteItems`、星级 `Items/{id}/Rating`、歌单建/加/删 `Playlists*`，存储与其余协议共享。未实现完整设备会话、策略、管理与同步。
+覆盖服务信息、`/Users/AuthenticateByName`（兼容 public 大小写变体）、用户/视图、`/Items`、`/Albums`、`/Playlists`、`/Library/MediaFolders`、三类 `Images/Primary` 封面、`/Items/{id}/File`（直传/按需转码）、`/Audio/{id}/stream`、播放信息与基础播放事件。歌词经 MediaStreams 字幕流（`Codec=text`、`Extradata` 内完整 LRC）下发，item 对象内嵌 `Lyrics`/`plainLyrics` 作为兜底；客户端不读 `/Lyrics` 纯文本端点。`/Items/{id}/File?format=mp3` 与 HLS `main.m3u8` 仅在 FFmpeg 就绪时转码，否则回退直传。与 Jellyfin 共用同一套写端点：收藏 `FavoriteItems`、星级 `Items/{id}/Rating`、歌单建/加/删 `Playlists*`，存储与其余协议共享。未实现完整设备会话、策略、管理与同步。
 
 ## 6. 通用限制
 
