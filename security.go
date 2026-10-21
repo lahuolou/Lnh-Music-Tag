@@ -106,6 +106,18 @@ func isPluginPanelPath(p string) bool {
 	return len(seg) >= 2 && seg[0] != "" && seg[1] == "panel"
 }
 
+// isPluginRunPath 报告是否为第三方插件运行端点 POST /api/plugins/{name}/run。
+// 面板是同源 iframe、插件自带页面用原生 fetch 调用，无法强制携带自定义
+// CSRF 头；该端点仍经外层 requireAuth 校验登录，故在此豁免 CSRF 头检查。
+func isPluginRunPath(p string) bool {
+	rest, ok := strings.CutPrefix(p, "/api/plugins/")
+	if !ok {
+		return false
+	}
+	seg := strings.SplitN(rest, "/", 3)
+	return len(seg) >= 2 && seg[0] != "" && seg[1] == "run"
+}
+
 // limitBody caps request bodies (e.g. batch IDs, tags, settings) to 8 MiB and
 // rejects anything larger, protecting the JSON decoders from memory abuse.
 // 插件导入允许大包（handler 内部已有 256MiB 上限），其余 API 保持 8MiB 防滥用。
@@ -123,11 +135,13 @@ const csrfValue = "Lnh-Music-Tag"
 
 // csrfGuard rejects state-changing requests that do not carry the custom
 // header, closing the remaining CSRF gap beyond SameSite=Lax cookies.
-// /api/login is exempt (no session cookie involved, nothing to hijack).
+// /api/login is exempt (no session cookie involved, nothing to hijack);
+// /api/plugins/{name}/run is exempt because the same-origin plugin panel
+// calls it with a plain fetch and cannot carry the custom header (still auth-checked).
 func csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !strings.HasPrefix(r.URL.Path, "/api/login") {
+			if !strings.HasPrefix(r.URL.Path, "/api/login") && !isPluginRunPath(r.URL.Path) {
 				if r.Header.Get(csrfHeader) != csrfValue {
 					writeErr(w, http.StatusForbidden, "forbidden: missing CSRF header")
 					return

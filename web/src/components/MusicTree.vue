@@ -139,7 +139,7 @@ function retryCover(e, item) {
 // 列表瘦身：歌词正文不下发，以内嵌标志判断（含时间戳细分无法在列表层判断）。
 function hasLyrics(t) { return !!t.hasLyrics; }
 function lrcMark(it) {
-  const a = hasLrc(it), b = !!it.hasLrcFile;
+  const a = hasLyrics(it), b = !!it.hasLrcFile;
   return a && b ? t('lyrBoth') : a ? t('lyrEmbed') : b ? t('lyrLrc') : t('lyrNone');
 }
 function fmtSize(s) {

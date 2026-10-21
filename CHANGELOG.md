@@ -4,6 +4,15 @@
 
 ---
 
+## 1.0.7
+
+修复 1.0.6 引入的列表页崩溃，并放行第三方插件面板调用。
+
+### 修复
+
+- **点「扫描歌曲」后曲目列表消失**：1.0.6 删除 `hasLrc` 辅助函数后，歌词标记 `lrcMark` 仍调用它，渲染期抛 `ReferenceError: hasLrc is not defined` 导致整个列表区崩溃空白；改为使用已有的 `hasLyrics`。
+- **第三方插件面板报 `forbidden: missing CSRF header`**：同源 iframe 内的插件页面用原生 fetch 调用 `POST /api/plugins/{name}/run`，无法携带自定义 CSRF 头；后端对该运行端点豁免 CSRF 检查（仍经外层登录校验），面板请求同时修正为标准头值。
+
 ## 1.0.6
 
 修复 Emby 歌词缺失、四协议艺术家/歌单浏览为空、原品质下载失败与批量补歌词假成功等实机问题，并清理冗余代码。
