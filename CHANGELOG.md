@@ -4,6 +4,43 @@
 
 ---
 
+## 1.0.9
+
+修复音流（SoundFlow）概览统计「未知」与 CarPlay 无封面问题，并修正网关接入路径文档。
+
+### 网关统计（音流「未知」）
+
+- Subsonic 列表响应补 `X-Total-Count` 响应头（`getAlbumList2` / `getArtists` / `getPlaylists` 等报告**截断前**全量总数），对齐 Navidrome Subsonic API 行为；音流等客户端依赖该头获取音乐库统计，缺失时概览页专辑/歌手/歌单显示「未知」。
+- 注册 Navidrome keepalive 路由，兼容部分客户端的心跳探测。
+
+### 封面兜底
+
+- `getCoverArt` 在当前曲目无内嵌封面时回退取**同专辑任一曲目**的封面（专辑级封面），解决 CarPlay 等播放器请求歌曲封面 404 导致无图。
+
+### 文档
+
+- 明确 Jellyfin/Emby 网关路径**必须带** `/jellyfin`、`/emby` 后缀（根路径仅 Subsonic/Navidrome 兼容适用）。
+
+## 1.0.8
+
+音乐统一网关改为**强制设置密码**，补全回收站界面与功能，并全量重写项目文档。
+
+### 网关强制密码
+
+- 网关开启前必须先配置流媒体密码 `stream_pass`：插件列表显示红色警告「未设置流媒体密码」、开关禁用、强行调用 API 拒绝开启；未配置时兼容 `LNH_STREAM_PASS` 环境变量兜底。
+
+### 回收站
+
+- 补全回收站界面（列表 / 恢复 / 永久删除 / 清空）、后端 API（`GET /api/trash`、`POST /api/trash/restore|delete|clear`）与主界面入口；条目 `name` 校验防路径穿越。
+
+### 文档
+
+- 重写 README（中英）、docs/（API、部署、开发、插件、网关）全部项目文档，不参考旧版。
+
+### 许可证
+
+- 声明统一为 **GPL-3.0**（LICENSE、README 中英、前端 package.json）。
+
 ## 1.0.7
 
 修复 1.0.6 引入的列表页崩溃，并放行第三方插件面板调用。

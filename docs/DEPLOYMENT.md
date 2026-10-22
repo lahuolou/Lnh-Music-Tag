@@ -32,7 +32,7 @@ Lnh-Music-Tag 是**单二进制**应用：前端静态资源（Vue 构建产物�
 | `LNH_ADMIN_USER` | `admin` | 首次启动管理员账号 |
 | `LNH_ADMIN_PASS` | 随机 | 首次启动管理员密码；留空则打印到日志 |
 | `LNH_STREAM_PASS` | 空 | 流媒体密码兜底（推荐在插件页配置 `stream_pass`） |
-| `LNH_INSTALL_FFMPEG` | `false` | `true/1/on` 时容器启动自动 `apk add ffmpeg`（需 root） |
+| `LNH_INSTALL_FFMPEG` | `true` | 容器启动自动 `apk add ffmpeg`（需 root）；设 `false/0` 关闭，可改用插件页一键安装或挂载宿主机路径 |
 
 > 账号/密码/Key 写入 `config/lnh.db` 后，环境变量不再生效（仅首次启动种子）。
 
@@ -40,22 +40,26 @@ Lnh-Music-Tag 是**单二进制**应用：前端静态资源（Vue 构建产物�
 
 ## 4. Docker 部署
 
-### 4.1 直接运行
+### 4.1 Docker Compose（推荐）
+
+仓库自带 [docker-compose.yml](../docker-compose.yml)，修改两处后一键启动：
+
+1. 编辑 `docker-compose.yml`：
+   - `volumes` 下把宿主机路径改为你的音乐目录（应用会把标签/封面**写回文件**，必须可读写，勿挂 `:ro`）
+   - `LNH_ADMIN_PASS` 设置首次启动的管理员密码（留空则随机生成并打印到日志）
+2. 启动：
 
 ```bash
-docker run -d \
-  --name lnh-music-tag \
-  -p 10248:10248 \
-  -v /mnt/music:/music \
-  -v lnh_config:/config \
-  -e LNH_ADMIN_USER=admin \
-  -e LNH_ADMIN_PASS=change-me \
-  ghcr.io/lahuolou/lnh-music-tag:latest
+docker compose up -d
 ```
 
-### 4.2 docker-compose
+启动后浏览器访问 `http://服务器IP:10248`。配置 / 数据库 / 回收站 / 插件数据持久化在命名卷 `lnh_config`，升级只需：
 
-仓库自带 `docker-compose.yml`：
+```bash
+docker compose pull && docker compose up -d
+```
+
+仓库自带 compose 参考：
 
 ```yaml
 services:
@@ -70,15 +74,25 @@ services:
     environment:
       - LNH_ADMIN_USER=admin
       - LNH_ADMIN_PASS=              # 留空首次启动随机生成并打印日志
-      - LNH_INSTALL_FFMPEG=false
+      - LNH_INSTALL_FFMPEG=true      # 默认安装 FFmpeg（格式转换/流媒体转码）
     restart: unless-stopped
 
 volumes:
   lnh_config:
 ```
 
+### 4.2 Docker run（等效，备选）
+
 ```bash
-docker compose up -d
+docker run -d \
+  --name lnh-music-tag \
+  -p 10248:10248 \
+  -v /mnt/music:/music \
+  -v lnh_config:/config \
+  -e LNH_ADMIN_USER=admin \
+  -e LNH_ADMIN_PASS=change-me \
+  -e LNH_INSTALL_FFMPEG=true \
+  ghcr.io/lahuolou/lnh-music-tag:latest
 ```
 
 ### 4.3 1Panel 部署

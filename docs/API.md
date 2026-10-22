@@ -140,6 +140,7 @@
 | GET | `/api/settings` | 设置项（管理员信息、音乐目录、开关） |
 | POST | `/api/settings` | 更新设置 |
 | GET | `/api/version/check` | GitHub Release 更新检查 |
+| GET | `/api/metrics` | 轻量文本指标（需登录）：曲目总数、后台任务活跃/容量、封面缓存条目、FFmpeg 可用性 |
 | GET | `/api/logs` | 操作日志列表 |
 | POST | `/api/logs/delete` | 删除指定日志。Body：`{"ids":[...]}` |
 | POST | `/api/logs/clear` | 清空日志。Body：`{}` |

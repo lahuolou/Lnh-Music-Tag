@@ -1,6 +1,6 @@
 # 开发文档
 
-面向在本地构建、调试、扩展 Lnh-Music-Tag 的开发者。本文基于当前代码库（v1.0.7）的实际实现编写。
+面向在本地构建、调试、扩展 Lnh-Music-Tag 的开发者。本文基于当前代码库（v1.0.9）的实际实现编写。
 
 ---
 
@@ -39,6 +39,8 @@ Lnh-Music-Tag-main/
 ├── renameclean.go       # 文件名后缀清理
 ├── zhscript.go          # 简繁转换任务
 ├── streaming.go         # 流媒体直传 / 转码回退
+├── lyrics_cache.go      # 歌词短 TTL 缓存（30s，四协议共享）
+├── entity_cache.go      # 网关实体响应缓存（30s TTL / 1024 上限，写时失效）
 ├── subsonic.go          # Subsonic / OpenSubsonic 协议实现
 ├── navidrome.go         # Navidrome 兼容 REST 子集
 ├── media_servers.go     # Jellyfin / Emby 协议适配
@@ -113,6 +115,18 @@ Lnh-Music-Tag-main/
 | 流媒体转码探测 | 3s | 10 分钟 TTL（失败不缓存） |
 | 批量转换 | 30min | — |
 | FFmpeg 安装/卸载 | 5min | — |
+
+### 3.6 网关响应缓存（性能）
+
+四协议网关对高重复、高体积的响应做进程内缓存，降低大库下列表/单曲/歌词/封面的重复组装与序列化开销：
+
+| 缓存 | 键 | 失效策略 |
+|---|---|---|
+| 封面（`coverCache`，store 内） | 文件路径 | 按文件 mtime 校验，文件更新即失效 |
+| 歌词（`lyrics_cache.go`） | 曲目 ID | 30s TTL |
+| 实体响应（`entity_cache.go`） | `协议:类型:ID[:json]` | 30s TTL + 写时失效：曲库增删/标签刷新/收藏/评分变动即清 |
+
+> 注意：实体缓存是「序列化结果」缓存（非查库缓存）。曲库改动、收藏、评分必须经过对应失效挂点（`store.addMany/remove/removeByPath`、`refreshTrack`、`saveStarred`、`saveRatings` 等），新增写路径时需同步挂失效，否则客户端会看到陈旧状态。
 
 ---
 

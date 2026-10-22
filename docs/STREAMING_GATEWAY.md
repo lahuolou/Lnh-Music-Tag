@@ -36,7 +36,9 @@
 已实现的端点（按能力分组）：
 
 **浏览与索引**
-`ping`、`getLicense`、`getMusicFolders`、`getIndexes`、`getArtists`、`getArtist`、`getAlbum`、`getAlbumList2`、`getSong`、`getMusicDirectory`、`getGenres`、`getSongsByGenre`、`getRandomSongs`、`getTopSongs`、`getNewestSongs`、`getSimilarSongs`、`getStarred`、`getStarred2`、`search` / `search2` / `search3`、`getAlbumInfo`、`getArtistInfo`、`getAvatar`、`getCoverArt`
+`ping`、`getLicense`、`getMusicFolders`、`getIndexes`、`getArtists`、`getArtist`、`getAlbum`、`getAlbumList2`、`getSong`、`getMusicDirectory`、`getGenres`、`getSongsByGenre`、`getRandomSongs`、`getTopSongs`、`getNewestSongs`、`getSimilarSongs`、`getStarred`、`getStarred2`、`search` / `search2` / `search3`、`getAlbumInfo`、`getArtistInfo`、`getCoverArt`
+
+> `getAvatar` 不支持（单用户服务器返回明确错误）。
 
 **播放与流媒体**
 `stream`（直传/转码，支持 `format`、`maxBitRate`、`timeOffset`）、`download`（原始文件直传）、`getLyrics`、`getOpenSubsonicExtensions`
