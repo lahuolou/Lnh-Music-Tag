@@ -160,6 +160,6 @@ Pick the matching protocol when adding the server in your client. Full endpoint 
 
 ## License
 
-Licensed under the **Apache License 2.0**. See [LICENSE](./LICENSE).
+Licensed under the **GNU General Public License v3.0 (GPL-3.0)**. See [LICENSE](./LICENSE).
 
 > Reminder: this project is a management tool for learning/reference purposes only. It contains no audio content. Use at your own risk.

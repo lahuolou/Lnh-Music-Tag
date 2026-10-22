@@ -160,6 +160,6 @@ LNH_CONFIG_DIR=./config LNH_PORT=:10248 ./lnh-music-tag
 
 ## 开源许可
 
-本项目基于 **Apache License 2.0** 开源，详见 [LICENSE](./LICENSE)。
+本项目基于 **GNU General Public License v3.0（GPL-3.0）** 开源，详见 [LICENSE](./LICENSE)。
 
 > 再次提醒：本项目为学习参考用途的管理工具，不含任何音源内容，使用风险自负。
