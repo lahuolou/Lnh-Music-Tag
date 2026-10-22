@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -687,21 +686,9 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 }
 
 // trackLyricsText 返回曲目的歌词文本：优先嵌入 LYRICS 标签，其次同名 .lrc 文件。
+// 复用全局短 TTL 歌词缓存（cachedLyrics），避免播放会话内反复读盘。
 func (g *mediaGateway) trackLyricsText(t *model.Track) string {
-	if t == nil {
-		return ""
-	}
-	text := ""
-	if v := tag(t, "LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS"); v != "" {
-		text = v
-	}
-	if text == "" {
-		b, err := os.ReadFile(strings.TrimSuffix(t.Path, filepath.Ext(t.Path)) + ".lrc")
-		if err == nil {
-			text = string(b)
-		}
-	}
-	return strings.TrimSpace(text)
+	return cachedLyrics(t)
 }
 
 // plainLyrics 返回剥离 LRC 时间戳与元信息行后的纯文本歌词，供 Emby/JF item 对象内嵌 Lyrics 字段（Emby 客户端不另发 /Lyrics，直接读该字段）。

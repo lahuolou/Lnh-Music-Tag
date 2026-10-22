@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -1168,16 +1167,7 @@ func (n *navidromeAPI) lyrics(w http.ResponseWriter, r *http.Request, songID str
 		n.json(w, http.StatusNotFound, map[string]any{"error": "song not found", "ok": false})
 		return
 	}
-	text := ""
-	if v := tag(t, "LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS"); v != "" {
-		text = v
-	}
-	if text == "" {
-		b, err := os.ReadFile(strings.TrimSuffix(t.Path, filepath.Ext(t.Path)) + ".lrc")
-		if err == nil {
-			text = string(b)
-		}
-	}
+	text := cachedLyrics(t) // 复用全局短 TTL 歌词缓存（内嵌 LYRICS 优先，其次同名 .lrc）
 	synced := false
 	for _, ln := range strings.Split(text, "\n") {
 		if lrcLineRe.MatchString(ln) {
