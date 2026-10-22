@@ -246,6 +246,7 @@ func trashClearHandler(cfg *cstore.Config) http.HandlerFunc {
 					time.Sleep(500 * time.Millisecond)
 				}
 				if err := os.Remove(full); err == nil {
+					rmErr = nil // 重试成功后清空上次失败值，避免误报
 					removed++
 					break
 				} else {

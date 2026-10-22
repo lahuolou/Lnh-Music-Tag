@@ -62,12 +62,15 @@ onMounted(loadCfg);
       <div class="panel">
         <h2>{{ t('changePass') }}</h2>
         <p class="muted" style="margin:0 0 10px">{{ t('changePassHint') }}</p>
-        <div class="field"><label>{{ t('oldPass') }}</label><input type="password" v-model="oldPass" autocomplete="current-password" /></div>
-        <div class="field"><label>{{ t('newPass') }}</label><input type="password" v-model="newPass" autocomplete="new-password" /></div>
-        <div class="field"><label>{{ t('confirmPass') }}</label><input type="password" v-model="confirm" autocomplete="new-password" @keydown.enter="doChange" /></div>
-        <div class="row">
-          <button @click="doChange">{{ t('confirmBtn') }}</button>
-        </div>
+        <form @submit.prevent="doChange">
+          <input type="text" autocomplete="username" style="display:none" tabindex="-1" aria-hidden="true" />
+          <div class="field"><label>{{ t('oldPass') }}</label><input type="password" v-model="oldPass" autocomplete="current-password" /></div>
+          <div class="field"><label>{{ t('newPass') }}</label><input type="password" v-model="newPass" autocomplete="new-password" /></div>
+          <div class="field"><label>{{ t('confirmPass') }}</label><input type="password" v-model="confirm" autocomplete="new-password" /></div>
+          <div class="row">
+            <button type="submit">{{ t('confirmBtn') }}</button>
+          </div>
+        </form>
         <div class="loading login-msg">{{ msg }}</div>
       </div>
 
