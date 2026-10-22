@@ -1200,25 +1200,26 @@ func (g *mediaGateway) mediaStreams(t *model.Track) []any {
 	}}
 	// Emby：把内嵌歌词作为文本字幕流挂出。参考音流实现：客户端直接从
 	// MediaStreams 字幕流的 Extradata 读取完整 LRC（Codec=text），无需再请求 Stream.js。
-	if g.kind == "emby" && g.trackLyricsText(t) != "" {
-		lrc := g.trackLyricsText(t)
-		ms = append(ms, map[string]any{
-			"Index":                  1,
-			"Type":                   "Subtitle",
-			"Codec":                  "text",
-			"Title":                  "Lyrics",
-			"DisplayTitle":           "Und (TEXT)",
-			"Extradata":              lrc,
-			"Language":               "",
-			"IsDefault":              true,
-			"IsForced":               false,
-			"IsExternal":             false,
-			"IsTextSubtitleStream":   true,
-			"SupportsExternalStream": true,
-			"Protocol":               "File",
-			"SubtitleLocationType":   "InternalStream",
-			"Size":                   int64(len(lrc)),
-		})
+	if g.kind == "emby" {
+		if lrc := g.trackLyricsText(t); lrc != "" {
+			ms = append(ms, map[string]any{
+				"Index":                  1,
+				"Type":                   "Subtitle",
+				"Codec":                  "text",
+				"Title":                  "Lyrics",
+				"DisplayTitle":           "Und (TEXT)",
+				"Extradata":              lrc,
+				"Language":               "",
+				"IsDefault":              true,
+				"IsForced":               false,
+				"IsExternal":             false,
+				"IsTextSubtitleStream":   true,
+				"SupportsExternalStream": true,
+				"Protocol":               "File",
+				"SubtitleLocationType":   "InternalStream",
+				"Size":                   int64(len(lrc)),
+			})
+		}
 	}
 	return ms
 }
@@ -1235,8 +1236,13 @@ func (g *mediaGateway) item(t *model.Track) map[string]any {
 	if gv := tag(t, "GENRE"); gv != "" {
 		genres = []string{gv}
 	}
-	m := map[string]any{"Name": songTitle(t), "ServerId": "lnh-music-tag", "Id": t.ID, "Type": "Audio", "MediaType": "Audio", "IsFolder": false, "Album": songAlbum(t), "AlbumId": albumID(t), "AlbumArtist": songArtist(t), "Artists": []string{songArtist(t)}, "ArtistItems": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "AlbumArtists": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "RunTimeTicks": int64(t.Duration * 10000000), "ProductionYear": year, "IndexNumber": intValue(tag(t, "TRACKNUMBER", "TRACK")), "ParentIndexNumber": intValue(tag(t, "DISCNUMBER", "DISC")), "Container": strings.TrimPrefix(strings.ToLower(t.Ext), "."), "Path": t.Path, "Size": t.Size, "Bitrate": t.Bitrate * 1000, "HasPrimaryImage": t.HasCover, "CanDownload": true, "ImageTags": imageTags, "Lyrics": g.plainLyrics(t), "Overview": g.plainLyrics(t), "Comment": g.plainLyrics(t), "Genres": genres, "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": g.isStarred(t.ID), "Rating": ratingFor(g.cfg, t.ID), "Played": false}, "MediaSources": g.mediaSources(t)}
-	if g.kind == "emby" && g.trackLyricsText(t) != "" {
+	// 歌词纯文本只解析一次供 Lyrics 字段使用；Overview/Comment 不再重复塞歌词
+	//（原实现把歌词全文写进 3 个字段，列表响应体积为歌词的 3 倍，且 Overview/Comment
+	// 语义错误——Jellyfin/Emby 中它们是"简介/注释"。歌词仍经 Lyrics 字段与
+	// Emby 字幕流（Extradata）两条标准路径输出，客户端兼容性不受影响）。
+	plain := g.plainLyrics(t)
+	m := map[string]any{"Name": songTitle(t), "ServerId": "lnh-music-tag", "Id": t.ID, "Type": "Audio", "MediaType": "Audio", "IsFolder": false, "Album": songAlbum(t), "AlbumId": albumID(t), "AlbumArtist": songArtist(t), "Artists": []string{songArtist(t)}, "ArtistItems": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "AlbumArtists": []any{map[string]any{"Name": songArtist(t), "Id": artistID(t)}}, "RunTimeTicks": int64(t.Duration * 10000000), "ProductionYear": year, "IndexNumber": intValue(tag(t, "TRACKNUMBER", "TRACK")), "ParentIndexNumber": intValue(tag(t, "DISCNUMBER", "DISC")), "Container": strings.TrimPrefix(strings.ToLower(t.Ext), "."), "Path": t.Path, "Size": t.Size, "Bitrate": t.Bitrate * 1000, "HasPrimaryImage": t.HasCover, "CanDownload": true, "ImageTags": imageTags, "Lyrics": plain, "Overview": "", "Comment": "", "Genres": genres, "UserData": map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": g.isStarred(t.ID), "Rating": ratingFor(g.cfg, t.ID), "Played": false}, "MediaSources": g.mediaSources(t)}
+	if g.kind == "emby" && plain != "" {
 		m["SubtitleStreamIndex"] = 1
 	}
 	return m

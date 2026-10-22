@@ -362,7 +362,7 @@ func (n *navidromeAPI) songJSON(t *model.Track) map[string]any {
 		"date": ndDate(year), "fullText": ar + " " + al + " " + songTitle(t),
 		"orderTitle": songTitle(t), "orderAlbumName": al,
 		"orderArtistName": ar, "orderAlbumArtistName": ar,
-		"compilation": false, "lyrics": tag(t, "LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS"),
+		"compilation": false,
 		"createdAt": now, "updatedAt": now,
 		"playDate": yest, "play_date": yest,
 	}
