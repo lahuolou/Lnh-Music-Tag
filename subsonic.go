@@ -2019,7 +2019,21 @@ func (a *subsonicAPI) cover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	img, err := taglibx.ReadCover(t.Path)
+	// 兜底：当前曲目无内嵌封面时，取同专辑任一曲目的封面（专辑级封面），
+	// 避免播放器（如 Archer/音流 的 CarPlay 界面）请求歌曲封面时 404 导致无图。
 	if err != nil || len(img) == 0 {
+		aid := albumID(t)
+		for _, x := range a.all() {
+			if x == nil || albumID(x) != aid {
+				continue
+			}
+			if img2, err2 := taglibx.ReadCover(x.Path); err2 == nil && len(img2) > 0 {
+				img = img2
+				break
+			}
+		}
+	}
+	if len(img) == 0 {
 		http.NotFound(w, r)
 		return
 	}
