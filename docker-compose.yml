@@ -17,9 +17,9 @@ services:
       - LNH_ADMIN_PASS=          # 留空则首次生成随机初始密码打印到日志，登录后在“设置”页修改（存数据库）
       # 可选：AcoustID 录音识别 Key（在「插件 → AcoustID」页填写，存数据库）
       # - ACOUSTID_API_KEY=        # 已弃用：改为插件页配置，环境变量不再读取
-      # FFmpeg（格式转换）安装开关：true/1 时容器启动自动 apk 安装 ffmpeg（需 root 运行）；
-      # false/留空不自动装，可改用：插件页“一键安装”，或挂载宿主机 /usr/bin 并在插件页填路径。
-      - LNH_INSTALL_FFMPEG=false
+      # FFmpeg（格式转换）安装开关：默认开启，容器启动时自动 apk 安装 ffmpeg（需 root 运行）；
+      # 设 false/留空 则不自动装，可改用：插件页“一键安装”，或挂载宿主机 /usr/bin 并在插件页填路径。
+      - LNH_INSTALL_FFMPEG=true
     restart: unless-stopped
 
 volumes:

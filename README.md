@@ -61,7 +61,26 @@ Lnh-Music-Tag 是一款面向个人音乐库的**自托管标签管理与流媒�
 
 ## 快速开始
 
-### 方式一：Docker（推荐）
+### 方式一：Docker Compose（推荐）
+
+仓库自带 [docker-compose.yml](./docker-compose.yml)，修改两处后一键启动：
+
+1. 编辑 `docker-compose.yml`：
+   - `volumes` 下把宿主机路径改为你的音乐目录（应用会把标签/封面**写回文件**，必须可读写，勿用 `:ro`）
+   - `LNH_ADMIN_PASS` 设置首次启动的管理员密码（留空则随机生成并打印到日志）
+2. 启动：
+
+```bash
+docker compose up -d
+```
+
+启动后浏览器访问 `http://服务器IP:10248`。配置 / 数据库 / 回收站 / 插件数据持久化在命名卷 `lnh_config`，升级只需：
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+### 方式二：Docker run（等效，备选）
 
 ```bash
 docker run -d \
@@ -71,18 +90,11 @@ docker run -d \
   -v lnh_config:/config \
   -e LNH_ADMIN_USER=admin \
   -e LNH_ADMIN_PASS=你的密码 \
+  -e LNH_INSTALL_FFMPEG=true \
   ghcr.io/lahuolou/lnh-music-tag:latest
 ```
 
-或使用仓库自带的 `docker-compose.yml`：
-
-```bash
-docker compose up -d
-```
-
-启动后浏览器访问 `http://服务器IP:10248`。
-
-### 方式二：本地构建运行
+### 方式三：本地构建运行
 
 要求：Go 1.27+、Node.js 18+（构建前端）
 
@@ -113,7 +125,7 @@ LNH_CONFIG_DIR=./config LNH_PORT=:10248 ./lnh-music-tag
 | `LNH_ADMIN_USER` | `admin` | 首次启动的管理员账号 |
 | `LNH_ADMIN_PASS` | 随机生成 | 首次启动的管理员密码（留空则打印到日志） |
 | `LNH_STREAM_PASS` | 空 | 流媒体密码（兼容旧配置；优先使用插件页配置的 `stream_pass`） |
-| `LNH_INSTALL_FFMPEG` | `false` | `true/1` 时容器启动自动安装 FFmpeg（需 root） |
+| `LNH_INSTALL_FFMPEG` | `true` | 容器启动时自动安装 FFmpeg（需 root）；设为 `false/0` 关闭，可改用插件页一键安装或挂载宿主机路径 |
 
 > 账号 / 密码 / API Key 均保存在配置数据库（`config/lnh.db`），环境变量仅在**首次启动**时作为初始化种子。
 

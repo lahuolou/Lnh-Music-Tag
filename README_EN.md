@@ -61,7 +61,26 @@ Lnh-Music-Tag is a **self-hosted tag manager and streaming gateway** for your pe
 
 ## Quick Start
 
-### Option 1: Docker (Recommended)
+### Option 1: Docker Compose (Recommended)
+
+The repository ships with a [docker-compose.yml](./docker-compose.yml). Adjust two things, then start:
+
+1. Edit `docker-compose.yml`:
+   - In `volumes`, replace the host path with your music directory (tags/covers are **written back** to the files, so the mount must be writable — do not use `:ro`)
+   - Set `LNH_ADMIN_PASS` as the initial admin password (leave empty to have a random one printed to the log)
+2. Start:
+
+```bash
+docker compose up -d
+```
+
+Open `http://server-ip:10248` in your browser. Config / database / trash / plugin data persist in the named volume `lnh_config`; upgrading is:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+### Option 2: Docker run (equivalent, alternative)
 
 ```bash
 docker run -d \
@@ -71,18 +90,11 @@ docker run -d \
   -v lnh_config:/config \
   -e LNH_ADMIN_USER=admin \
   -e LNH_ADMIN_PASS=your_password \
+  -e LNH_INSTALL_FFMPEG=true \
   ghcr.io/lahuolou/lnh-music-tag:latest
 ```
 
-Or use the bundled `docker-compose.yml`:
-
-```bash
-docker compose up -d
-```
-
-Open `http://server-ip:10248` in your browser.
-
-### Option 2: Build & Run Locally
+### Option 3: Build & Run Locally
 
 Requirements: Go 1.27+, Node.js 18+ (for the frontend)
 
@@ -113,7 +125,7 @@ LNH_CONFIG_DIR=./config LNH_PORT=:10248 ./lnh-music-tag
 | `LNH_ADMIN_USER` | `admin` | Initial admin username |
 | `LNH_ADMIN_PASS` | random | Initial admin password (printed to log if empty) |
 | `LNH_STREAM_PASS` | empty | Streaming password (legacy compat; prefer `stream_pass` in the plugin page) |
-| `LNH_INSTALL_FFMPEG` | `false` | `true/1` installs FFmpeg automatically at container startup (needs root) |
+| `LNH_INSTALL_FFMPEG` | `true` | Installs FFmpeg automatically at container startup (needs root); set `false/0` to disable and use the plugin page one-click install or a host-mounted path instead |
 
 > Credentials and API keys are stored in the config DB (`config/lnh.db`). Env vars are only used as **first-boot** seeds.
 
