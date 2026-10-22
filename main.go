@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -21,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"lnh-music-tag/internal/dedup"
@@ -991,9 +994,25 @@ func main() {
 	if generated {
 		log.Printf("[首次启动] 已生成随机初始密码并保存到数据库：%s（登录后请在“设置”页修改密码）", adminPass)
 	}
-	if err := http.ListenAndServe(addr, accessLog(securityHeaders(mux))); err != nil {
-		log.Fatal(err)
+	// 优雅退出：收到 SIGINT/SIGTERM 时停止接收新连接、等待在途请求完成
+	// （上限 5s），随后 main 返回，defer cfg.Close() 关闭配置库。
+	// 避免容器停止（docker stop 发 SIGTERM）时在途写库/流被硬中断。
+	srv := &http.Server{Addr: addr, Handler: accessLog(securityHeaders(mux))}
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+	<-done
+	log.Println("shutdown signal received, waiting for in-flight requests...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("shutdown: %v", err)
 	}
+	log.Println("Lnh-Music-Tag stopped")
 }
 
 // scanDirLive walks dir, adding audio files to the store progressively and

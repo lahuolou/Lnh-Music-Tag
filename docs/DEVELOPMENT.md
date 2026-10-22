@@ -128,6 +128,10 @@ Lnh-Music-Tag-main/
 
 > 注意：实体缓存是「序列化结果」缓存（非查库缓存）。曲库改动、收藏、评分必须经过对应失效挂点（`store.addMany/remove/removeByPath`、`refreshTrack`、`saveStarred`、`saveRatings` 等），新增写路径时需同步挂失效，否则客户端会看到陈旧状态。
 
+### 3.7 优雅退出
+
+`main()` 注册 `SIGINT/SIGTERM`：收到信号后停止接收新连接、等待在途请求完成（上限 5s），随后返回并 `defer cfg.Close()` 关闭配置库。容器 `docker stop`（发 SIGTERM）不会硬中断在途写库/流。
+
 ---
 
 ## 4. 构建与测试
@@ -149,7 +153,7 @@ go test ./...
 go vet ./...
 ```
 
-已有测试覆盖：乱码修复（`fixencoding_test.go`）、FFmpeg（`ffmpeg_test.go`）、网关功能（`gateway_features_test.go`）、流媒体回退（`streaming_fallback_test.go`）、任务框架（`scrapejob_test.go`）、辅助函数（`helpers_test.go`）、改名（`rename_test.go`）、主流程（`main_test.go`）等。
+已有测试覆盖：乱码修复（`fixencoding_test.go`）、FFmpeg（`ffmpeg_test.go`）、网关功能（`gateway_features_test.go`）、流媒体回退（`streaming_fallback_test.go`）、流媒体 Range 与缓存失效（`streaming_range_test.go`）、任务框架（`scrapejob_test.go`）、辅助函数（`helpers_test.go`）、改名（`rename_test.go`）、主流程（`main_test.go`）等。
 
 > 本机无 C 编译器时 `go test -race` 可能无法运行（依赖 cgo），可用普通 `go test` 替代。
 

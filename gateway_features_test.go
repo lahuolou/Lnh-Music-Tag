@@ -408,3 +408,30 @@ func TestPlaylistCountSkipsStaleIDs(t *testing.T) {
 		t.Fatalf("ChildCount=%v, want 2", dto["ChildCount"])
 	}
 }
+
+// 未实现端点必须明确报错（Subsonic 协议 status="failed"），
+// 不得返回 HTTP 200 + 伪成功/空响应掩盖未实现能力。
+func TestUnimplementedEndpointReportsFailure(t *testing.T) {
+	cfg, err := cstore.OpenConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cfg.Close()
+	if err := cfg.Set("stream_pass", "test"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(subsonicHandler(newStore(nil), cfg))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/rest/getAvatar?u=admin&p=test&v=1.16.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body := make([]byte, 4096)
+	n, _ := resp.Body.Read(body)
+	out := string(body[:n])
+	if !strings.Contains(out, `status="failed"`) || !strings.Contains(out, "not supported") {
+		t.Fatalf("getAvatar should report explicit failure, got: %s", out)
+	}
+}
