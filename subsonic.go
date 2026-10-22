@@ -4,12 +4,12 @@ package main
 // This first implementation intentionally focuses on common library and playback endpoints.
 
 import (
+	"bytes"
 	"crypto/md5"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
-	"io"
 	"lnh-music-tag/internal/taglibx"
 	"log"
 	"math/rand"
@@ -339,17 +339,44 @@ func (a *subsonicAPI) respond(w http.ResponseWriter, r *http.Request, n sxNode) 
 			n.Attr["type"] = "navidrome"
 		}
 	}
-	if strings.EqualFold(r.URL.Query().Get("f"), "json") {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = json.NewEncoder(w).Encode(map[string]any{"subsonic-response": sxJSON(n)})
-		return
+	// getSong 单曲详情缓存：同一首歌在播放队列/详情页被重复请求时复用序列化
+	// 字节（30s TTL，实体缓存模块统一）。单用户服务器（admin），starred/
+	// userRating 变更时 entityCacheClear 已全清，无陈旧风险。
+	asJSON := strings.EqualFold(r.URL.Query().Get("f"), "json")
+	cacheKey := ""
+	if op := r.URL.Query().Get("op"); op == "getSong" {
+		cacheKey = "subsonic:song:" + r.URL.Query().Get("id")
+		if asJSON {
+			cacheKey += ":json"
+		}
 	}
-	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, xml.Header)
-	enc := xml.NewEncoder(w)
-	_ = enc.Encode(n)
-	_ = enc.Flush()
+	// 命中缓存直接返回（序列化前查询，省掉组装+序列化）
+	if cacheKey != "" {
+		if b, ok := entityCacheGet(cacheKey); ok {
+			if asJSON {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			} else {
+				w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+			}
+			w.Write(b)
+			return
+		}
+	}
+	var buf bytes.Buffer
+	if asJSON {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(&buf).Encode(map[string]any{"subsonic-response": sxJSON(n)})
+	} else {
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		buf.WriteString(xml.Header)
+		enc := xml.NewEncoder(&buf)
+		_ = enc.Encode(n)
+		_ = enc.Flush()
+	}
+	if cacheKey != "" {
+		entityCachePut(cacheKey, buf.Bytes())
+	}
+	_, _ = w.Write(buf.Bytes())
 }
 
 var sxJSONNumeric = map[string]bool{
@@ -1448,6 +1475,7 @@ func (a *subsonicAPI) saveStarred(ids []string) {
 	if err == nil {
 		_ = a.cfg.Set("streaming_starred", string(b))
 	}
+	entityCacheClear() // 收藏变更：实体响应（含 starred 字段）缓存失效
 }
 func (a *subsonicAPI) loadRatings() map[string]int {
 	out := map[string]int{}
@@ -1458,6 +1486,7 @@ func (a *subsonicAPI) saveRatings(m map[string]int) {
 	if b, err := json.Marshal(m); err == nil {
 		_ = a.cfg.Set("streaming_ratings", string(b))
 	}
+	entityCacheClear() // 评分变更：实体响应（含 userRating 字段）缓存失效
 }
 
 // ratingFor 读取与四协议共享的星级评分（streaming_ratings: {歌曲ID: 0-5}），

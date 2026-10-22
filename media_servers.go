@@ -387,6 +387,7 @@ func (g *mediaGateway) favorite(w http.ResponseWriter, r *http.Request, id strin
 		g.json(w, http.StatusInternalServerError, map[string]any{"Message": "Could not save favorite state"})
 		return
 	}
+	entityCacheClear() // 收藏变更：实体响应（UserData.IsFavorite）缓存失效
 	g.json(w, http.StatusOK, map[string]any{"ItemId": id, "IsFavorite": r.Method == http.MethodPost})
 }
 
@@ -412,6 +413,7 @@ func (g *mediaGateway) rateItem(w http.ResponseWriter, r *http.Request, id strin
 	if b, err := json.Marshal(m); err == nil {
 		_ = g.cfg.Set("streaming_ratings", string(b))
 	}
+	entityCacheClear() // 评分变更：实体响应（UserData.Rating）缓存失效
 	g.json(w, http.StatusOK, map[string]any{"ItemId": id, "Rating": rating})
 }
 
@@ -577,7 +579,7 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 			return
 		}
 		if t := g.library.get(last); t != nil {
-			g.json(w, 200, g.item(t))
+			g.writeItem(w, t)
 			return
 		}
 		if strings.HasPrefix(last, "ar-") {
@@ -639,7 +641,7 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 				http.NotFound(w, r)
 				return
 			}
-			g.json(w, 200, g.item(t))
+			g.writeItem(w, t)
 			return
 		}
 	}
@@ -674,7 +676,7 @@ func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p s
 	if strings.HasPrefix(p, "items/") {
 		id := strings.TrimPrefix(p, "items/")
 		if t := g.library.get(id); t != nil {
-			g.json(w, 200, g.item(t))
+			g.writeItem(w, t)
 			return
 		}
 	}
@@ -976,7 +978,7 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 			return
 		}
 		if t := g.library.get(last); t != nil {
-			g.json(w, 200, g.item(t))
+			g.writeItem(w, t)
 			return
 		}
 		if strings.HasPrefix(last, "ar-") {
@@ -1070,7 +1072,7 @@ func (g *mediaGateway) serveEmby(w http.ResponseWriter, r *http.Request, p strin
 		}
 		id := parts[0]
 		if t := g.library.get(id); t != nil {
-			g.json(w, 200, g.item(t))
+			g.writeItem(w, t)
 			return
 		}
 		if pl, idx := g.playlistByID(id); idx >= 0 {
@@ -1246,6 +1248,26 @@ func (g *mediaGateway) item(t *model.Track) map[string]any {
 		m["SubtitleStreamIndex"] = 1
 	}
 	return m
+}
+
+// writeItem 输出单曲 item JSON（带实体缓存）：同一客户端会话中重复请求
+// /Items/{id} 等单曲详情时复用序列化字节，跳过重复组装+序列化。
+// 曲库/收藏/评分变更时由 entityCacheClear 统一失效，无陈旧风险。
+func (g *mediaGateway) writeItem(w http.ResponseWriter, t *model.Track) {
+	if t == nil {
+		g.json(w, http.StatusNotFound, map[string]any{"Message": "Item not found"})
+		return
+	}
+	key := "media:" + g.kind + ":item:" + t.ID
+	if b, ok := entityCacheGet(key); ok {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write(b)
+		return
+	}
+	b, _ := json.Marshal(g.item(t))
+	entityCachePut(key, b)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(b)
 }
 func intValue(s string) int { n, _ := strconv.Atoi(firstNumber(s)); return n }
 

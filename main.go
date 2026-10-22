@@ -100,6 +100,7 @@ func (s *store) addMany(ts []*model.Track) {
 		return
 	}
 	upsertTracksDB(db, s, added)
+	entityCacheClear() // 曲目结构变化：网关单曲详情缓存失效
 }
 
 func (s *store) all() []*model.Track {
@@ -236,6 +237,7 @@ func (s *store) remove(id string) {
 		s.rev++
 		s.mu.Unlock()
 		deleteTrackDB(s.db, s, id, t.Path)
+		entityCacheClear() // 曲目删除：网关单曲详情缓存失效
 		return
 	}
 	s.mu.Unlock()
@@ -249,6 +251,7 @@ func (s *store) removeByPath(p string) {
 		s.rev++
 		s.mu.Unlock()
 		deleteTrackDB(s.db, s, id, p)
+		entityCacheClear()
 		return
 	}
 	s.mu.Unlock()
@@ -1188,6 +1191,7 @@ func refreshTrack(s *store, path string) {
 	db := s.db
 	s.mu.Unlock()
 	upsertTrackDB(db, s, t)
+	entityCacheClear() // 标签/属性刷新（刮削、转换、编辑）：网关单曲详情缓存失效
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

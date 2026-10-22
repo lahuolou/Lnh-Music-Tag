@@ -647,7 +647,17 @@ func (n *navidromeAPI) songOne(w http.ResponseWriter, r *http.Request, id string
 		n.json(w, http.StatusNotFound, map[string]any{"error": "song not found", "ok": false})
 		return
 	}
-	n.json(w, http.StatusOK, n.songJSON(t))
+	// 单曲详情缓存（30s）：同一首歌在播放队列/详情页被重复请求时复用序列化字节。
+	key := "navidrome:song:" + id
+	if b, ok := entityCacheGet(key); ok {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write(b)
+		return
+	}
+	b, _ := json.Marshal(n.songJSON(t))
+	entityCachePut(key, b)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write(b)
 }
 
 // ---- album ----------------------------------------------------------------
@@ -1083,6 +1093,7 @@ func (n *navidromeAPI) saveStarred(ids []string) {
 	if b, err := json.Marshal(ids); err == nil {
 		_ = n.cfg.Set("streaming_starred", string(b))
 	}
+	entityCacheClear() // 收藏变更：实体响应（含 starred 字段）缓存失效
 }
 
 // starWrite 处理 Navidrome 原生收藏：PUT /api/starred/{id} 加星，DELETE 取消，与 Subsonic 共用 streaming_starred。
