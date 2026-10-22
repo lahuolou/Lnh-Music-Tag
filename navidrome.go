@@ -537,6 +537,9 @@ func (n *navidromeAPI) api(w http.ResponseWriter, r *http.Request, p string) {
 		n.nowPlaying(w, r)
 	case len(parts) == 2 && parts[0] == "lyrics":
 		n.lyrics(w, r, parts[1])
+	case len(parts) == 1 && parts[0] == "keepalive", len(parts) == 2 && parts[0] == "keepalive" && parts[1] == "keepalive":
+		// 音流等客户端登录后通过 keepalive 保活会话；真实 Navidrome 返回 200 {"status":"ok"}。
+		n.json(w, http.StatusOK, map[string]any{"status": "ok"})
 	default:
 		// 记录未识别的 ND 请求，便于按真实客户端调用补齐缺失路由（临时诊断日志）。
 		log.Printf("[ND] unmatched %s %s", r.Method, r.URL.Path)

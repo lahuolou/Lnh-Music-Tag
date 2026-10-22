@@ -245,8 +245,23 @@ func (a *subsonicAPI) handler() http.Handler {
 		default:
 			result = apiError(0, "Unsupported operation: "+op)
 		}
+		// x-total-count：对齐 Navidrome Subsonic API 行为。音流（SoundFlow/Musiver）等客户端
+		// 依赖该响应头获取音乐库统计（专辑/歌手/歌单总数），缺失时概览页显示"未知"。
+		if tot := listTotal(result); tot != "" {
+			w.Header().Set("x-total-count", tot)
+		}
 		a.respond(w, r, result)
 	})
+}
+// listTotal 从列表响应（albumList/albumList2/artists/playlists 等）的 total 属性提取总数，
+// 用于 x-total-count 响应头；无 total 属性的响应（如 randomSongs）返回空串、不设头。
+func listTotal(n sxNode) string {
+	for _, c := range n.Children {
+		if v, ok := c.Attr["total"]; ok {
+			return v
+		}
+	}
+	return ""
 }
 func attr(k, v string) sxNode         { return sxNode{Name: "@" + k, Text: v} }
 func child(k string, v sxNode) sxNode { v.Name = k; return v }
@@ -1082,6 +1097,7 @@ func (a *subsonicAPI) songCollection(r *http.Request, mode string) sxNode {
 	if mode == "random" && size > 100 {
 		size = 100
 	}
+	totalCount := len(tracks)
 	if len(tracks) > size {
 		tracks = tracks[:size]
 	}
@@ -1102,6 +1118,8 @@ func (a *subsonicAPI) songCollection(r *http.Request, mode string) sxNode {
 	if mode == "top" {
 		key = "topSongs"
 	}
+	// total 为截断前的全量歌曲数，供客户端统计（与 Navidrome 的 x-total-count 响应头口径一致）。
+	songs = append([]sxNode{attr("total", strconv.Itoa(totalCount))}, songs...)
 	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child(key, node(key, songs...)))
 }
 func (a *subsonicAPI) lyrics(r *http.Request, byID bool) sxNode {

@@ -401,6 +401,7 @@ func main() {
 		"/api/library/scanstatus", "/api/library/statistics", "/api/statistics", "/api/nowplaying", "/api/lyrics/{songId}",
 		"/api/stream/{id}", "/api/coverart/{id}",
 		"/api/coverArt", "/api/coverArt/{id}",
+		"/api/keepalive", "/api/keepalive/keepalive",
 	} {
 		mux.HandleFunc(path, navidromeHandler(store, cfg).ServeHTTP)
 	}
