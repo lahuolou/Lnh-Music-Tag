@@ -1,114 +1,177 @@
 # 开发文档
 
-面向在本仓库本地构建、调试、扩展 Lnh-Music-Tag 的开发者。
+面向在本地构建、调试、扩展 Lnh-Music-Tag 的开发者。本文基于当前代码库（v1.0.7）的实际实现编写。
 
-## 1. 技术栈
+---
 
-- **后端**：Go 1.27，`CGO_ENABLED=0` 纯静态编译。SQLite 使用 `modernc.org/sqlite`（纯 Go 驱动）；音频标签读写走 `go.senan.xyz/taglib`（WASM 封装，无 CGo）；简繁转换用 `github.com/liuzl/gocc`；HTTP 用标准库 `net/http`（Go 1.22+ 方法+路由模式）。
-- **前端**：Vue 3 + Vite（仅依赖 `vue`），构建产物 `web/dist` 通过 `go:embed` 内嵌进单二进制，服务端无独立静态目录。
-- **运行镜像**：多阶段 Dockerfile（node:20-alpine 建前端 → golang:1.27-alpine 构建 → alpine:3.20 运行，预装 `ca-certificates`、`chromaprint/fpcalc`，FFmpeg 改为可选）。
+## 1. 技术栈与依赖
+
+| 层 | 技术 | 说明 |
+|---|---|---|
+| 后端 | Go 1.27 | 纯 Go 单二进制，无 CGO 依赖 |
+| 数据库 | modernc.org/sqlite | 嵌入式 SQLite（曲目表 / 配置库 / 任务历史 / 操作日志） |
+| 标签读写 | go.senan.xyz/taglib（WASM 封装） | 读取/写入 ID3v2、FLAC、MP4 等标签 |
+| 简繁转换 | github.com/liuzl/gocc | 简体 ↔ 繁体批量转换 |
+| 前端 | Vue 3 + Vite 5 | 单页应用，构建产物经 `go:embed` 内嵌进二进制 |
+
+> 项目模块名 `lnh-music-tag`，Go 版本见 `go.mod`。前端构建见 `web/package.json`。
+
+---
 
 ## 2. 目录结构
 
 ```
-.
-├── main.go               # 装配、HTTP 路由表、四协议挂载、会话/CSRF/限流中间件
-├── auth.go               # Web 会话登录、改密、/api/me
-├── tracks_db.go         # SQLite 曲目库：扫描入库、查询、收藏、歌单持久化
-├── streaming.go         # 直传 / 按需转码（FFmpeg）、Range、封面、歌词
-├── subsonic.go          # Subsonic / OpenSubsonic 适配（/rest）
-├── navidrome.go         # Navidrome 风格 REST（/auth、/api）
-├── media_servers.go      # Jellyfin 与 Emby JSON 适配（根路径 /jellyfin /emby）
-├── plugin.go            # 插件注册表、快照、门控（available/enabled 分离）
-├── plugins_api.go       # 内置插件注册、GET/POST/import/delete/run/panel API
-├── plugin_runner.go     # 第三方 ZIP 插件解压、安全校验、exec 运行器
-├── convert.go           # 格式转换（FFmpeg 批量任务）
-├── identify.go          # AcoustID 指纹识别任务
-├── fixencoding.go       # 乱码（GBK/拉丁误码）修复
-├── zhscript.go           # 简繁转换
-├── renameclean.go       # 文件名清理
-├── scrapejob.go          # 批量 / 一键刮削任务、进度，及 fuseMetadata 多源按字段融合
-├── pipeline.go / activity.go / security.go / helpers.go / static.go / version.go
+Lnh-Music-Tag-main/
+├── main.go              # 入口：配置、路由注册、中间件、启动
+├── auth.go              # 会话（cookie session）、CSRF 校验
+├── security.go          # 登录、改密、防暴力枚举
+├── tracks_db.go         # 曲目持久化：批量事务、原子 seq、启动加载
+├── scan*.go / helpers.go# 目录扫描、曲目模型操作
+├── scrapejob.go         # 后台任务框架：jobStore / 信号量 / panic 恢复 / 进度轮询
+├── pipeline.go          # 一键刮削流水线（乱码→繁简→补艺术家→刮削）
+├── plugin.go            # 插件注册表与状态
+├── plugins_api.go       # 插件管理 API（列表/更新/导入/删除/运行）
+├── plugin_runner.go     # 第三方插件运行器
+├── convert.go           # 批量格式转换任务
+├── ffmpeg.go            # FFmpeg 探测/安装/版本缓存（TTL + 超时）
+├── identify.go          # 音频内容识别（指纹库 + AcoustID）
+├── fixencoding.go       # 乱码标签修复
+├── renameclean.go       # 文件名后缀清理
+├── zhscript.go          # 简繁转换任务
+├── streaming.go         # 流媒体直传 / 转码回退
+├── subsonic.go          # Subsonic / OpenSubsonic 协议实现
+├── navidrome.go         # Navidrome 兼容 REST 子集
+├── media_servers.go     # Jellyfin / Emby 协议适配
+├── trash.go             # 回收站 API 与 manifest
+├── activity.go          # 操作日志
+├── version.go           # 版本 / 更新检查
+├── static.go            # 前端静态资源（go:embed）
 ├── internal/
-│   ├── model/           # 曲目/专辑/艺人/歌单等领域模型
-│   ├── store/           # SQLite 配置与持久化
-│   ├── scrape/          # 各刮削源实现 + MultiSource 聚合 + 歌词
-│   ├── dedup/          # 重复检测
-│   ├── finger/         # 音频指纹（AcoustID）
-│   ├── audiofmt/       # 格式探测与转码参数
-│   └── taglibx/        # 标签读写封装
-├── web/
-│   ├── src/App.vue、views/（Home/Login/Plugin/Settings）、components/
-│   └── src/i18n.js、api.js、store.js、fields.js
-├── scripts/gateway-smoke.py   # 只读协议冒烟脚本
-├── docs/                 # 本文档、协议矩阵、插件指南
-└── Dockerfile / entrypoint.sh / docker-compose.yml
+│   ├── model/           # 曲目模型
+│   ├── store/           # 配置库（Config 封装）
+│   ├── scrape/          # 多源刮削聚合器（17 个源）
+│   ├── finger/          # 音频指纹（ffmpeg 转码 + 特征提取）
+│   ├── taglibx/         # taglib 封装（含 SHA-256 哈希）
+│   ├── audiofmt/        # 音频格式探测
+│   └── dedup/           # 智能去重
+└── web/                 # Vue 3 前端源码（src/ 见下）
+    └── src/
+        ├── App.vue          # 布局 / 顶栏（回收站入口等）
+        ├── views/           # Home / Login / Settings / Plugin
+        ├── components/      # MusicTree / EditPanel / BatchPanel / DedupPanel /
+        │                    # TrashModal / FormatDialog / ActivityLog / UpdateModal / AboutModal
+        └── store.js         # 全局状态：曲目、选择集、任务轮询
 ```
 
-## 3. 本地构建
+---
 
-前置：Go 1.27.x、Node.js 20+、npm。
+## 3. 核心架构
+
+### 3.1 单进程单端口
+
+后端与前端共用同一 HTTP 端口（默认 `:10248`）：
+
+- `/api/*` —— 浏览器 UI 的后端 API（会话认证 + CSRF）
+- `/rest/*`、`/jellyfin/*`、`/emby/*`、`/auth/*`、部分 `/api/*` —— 流媒体网关（协议认证）
+- `/` —— 内嵌前端静态资源
+
+### 3.2 数据持久化
+
+- **曲目表**：`tracks`（SQLite），扫描结果持久化，重启恢复列表
+- **配置库**：`LNH_CONFIG_DIR` 下的 SQLite 配置库，保存管理员账号、插件状态与配置、Key
+- **任务历史**：后台任务完成后写库，重启可查
+- **操作日志**：`activity` 表，扫描/刮削/转换全程留痕
+- **回收站**：`trash/` 目录 + `_manifest.jsonl` 清单（记录原路径，支持恢复）
+
+### 3.3 后台任务框架（scrapejob.go）
+
+批量刮削、一键刮削、格式转换、音频识别、乱码修复、简繁转换共用同一套任务框架：
+
+1. `jobStore.create(total, kind)` —— 创建任务（running、进度 0）
+2. `jobStore.runBounded(job, fn)` —— 在容量为 2 的信号量 `jobSem` 下启动 goroutine
+3. 任务内逐项推进 `Done / Current / Results`，支持取消（`Cancel` 置位）
+4. 收尾统一由 `finish` 兜底：`running → done / cancelled`，并落库
+5. `recoverJob` 捕获 panic：任务置 `failed` 终态，崩溃详情写入 `Message` 与 `Results`，前端轮询可感知
+
+前端通过 `GET /api/jobs/{id}`（工具任务）与 `GET /api/scrape/jobs/{id}`（批量）轮询进度；页面刷新或换设备登录后 `GET /api/jobs` 可恢复进行中的任务。
+
+### 3.4 数据库批量事务（tracks_db.go）
+
+- 扫描、批量补全等大写入走 `upsertTracksDB / upsertTrackBatch`，每批 300 条单事务提交，避免逐条提交的性能开销
+- 曲目序号 `seq` 为原子计数器（`atomic.Int64`），并发分配不重号
+- 启动时 `loadTracksFromDB` 在锁外构建列表、一次性加锁，缩短持锁时间
+
+### 3.5 外部进程调用（P1-1 超时保护）
+
+所有外部命令调用都有超时与缓存保护：
+
+| 调用 | 超时 | 缓存 |
+|---|---|---|
+| FFmpeg 版本探测 | 3s | 10 分钟 TTL |
+| 音频指纹转码（finger） | 60s | — |
+| AcoustID 识别转码 | 2min | — |
+| 流媒体转码探测 | 3s | 10 分钟 TTL（失败不缓存） |
+| 批量转换 | 30min | — |
+| FFmpeg 安装/卸载 | 5min | — |
+
+---
+
+## 4. 构建与测试
+
+### 4.1 构建
 
 ```bash
-# 1. 构建前端（产出 web/dist，go:embed 需要）
-cd web
-npm ci
-npm run build
-cd ..
+# 前端（可选：仓库 dist 已内嵌；改了前端必须重建）
+cd web && npm install && npm run build && cd ..
 
-# 2. 后端检查与构建
-go test -count=1 ./...
-go vet ./...
-gofmt -l .        # 期望无输出
+# 后端（单二进制，含前端资源）
 go build -o lnh-music-tag .
 ```
 
-Windows 本地二进制直接 `go build -o lnh-music-tag.exe .`。
-
-开发模式前端可单独 `npm run dev`（Vite），但后端 `/` 提供的是内嵌 `web/dist`；改前端后需重新 `npm run build` 再编译后端，或用 Vite 代理到运行中的后端调试。
-
-## 4. 测试与自检
+### 4.2 测试
 
 ```bash
-go test -count=1 ./...      # 单元测试（乱码样本、去重、指纹、FFmpeg 探测等）
+go test ./...
 go vet ./...
 ```
 
-服务启动并扫描曲目后，跑只读协议冒烟（不写标签、不改收藏）：
+已有测试覆盖：乱码修复（`fixencoding_test.go`）、FFmpeg（`ffmpeg_test.go`）、网关功能（`gateway_features_test.go`）、流媒体回退（`streaming_fallback_test.go`）、任务框架（`scrapejob_test.go`）、辅助函数（`helpers_test.go`）、改名（`rename_test.go`）、主流程（`main_test.go`）等。
 
-```bash
-LNH_TEST_USER=admin LNH_TEST_PASS='密码' \
-  python3 scripts/gateway-smoke.py --base http://127.0.0.1:10248
-```
+> 本机无 C 编译器时 `go test -race` 可能无法运行（依赖 cgo），可用普通 `go test` 替代。
 
-冒烟只验证认证、列表、封面与 Range 流可达，**不能替代真实播放器实机测试**；协议能力边界以 [STREAMING_GATEWAY.md](STREAMING_GATEWAY.md) 为准。
+---
 
-## 5. 配置与环境变量
+## 5. 代码规范
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `LNH_PORT` | `:10248` | 监听端口 |
-| `LNH_CONFIG_DIR` | `/config` | SQLite 目录（`lnh.db`，含账号/配置/插件/歌单） |
-| `LNH_ADMIN_USER` / `LNH_ADMIN_PASS` | `admin` / 随机 | 仅首次启动种子，之后以数据库为准 |
-| `LNH_STREAM_PASS` | 空 | 四协议播放器唯一密码（Subsonic 明文/token、ND 登录、JF/Emby 登录均只认它） |
-| `LNH_INSTALL_FFMPEG` | 关 | 容器启动自动装 FFmpeg |
+### 5.1 并发安全
+- 共享状态必须持锁：`store.mu`（曲目）、`job.mu`（任务）、`a.mu / a.recMu`（Subsonic 播放状态与最近访问独立锁）
+- 大锁只保护必要范围：列表构建在锁外完成、批量更新一次加锁
+- 后台任务并发有界（信号量），禁止无上限 `go func()` 批量启动
 
-运行期配置（扫描目录、自动修标题/重命名、编辑字段、FFmpeg 路径、插件开关与 Key）都落 SQLite，重启保留。
+### 5.2 外部调用
+- 所有 `exec.Command` 必须带超时（`CommandContext` + `Timeout`）
+- 探测类调用结果必须带 TTL 缓存，避免高频重复探测
 
-## 6. 扩展点
+### 5.3 数据库
+- 批量写入使用事务批提交（`upsertTrackBatch`），禁止循环内逐条事务
+- 配置 Key（API Key、密码）写入前必须脱敏，禁止明文写日志
 
-- **新增刮削源**：在 `internal/scrape/` 实现 `Source` 接口并在 `NewMultiSource` 注册；需 Key 的源在 `plugins_api.go` 的 `keyedSources` / `keyedSourceFields` 登记。
-- **第三方工具插件**：按 [PLUGINS.md](PLUGINS.md) 打 ZIP（`plugin.json` + `entries` + 可选 `panel`），插件页导入。
-- **新增协议端点**：在对应适配层（`subsonic.go` / `navidrome.go` / `media_servers.go`）按现有模式实现，并同步更新协议矩阵文档。
+### 5.4 错误处理
+- 任务处理函数任何 panic 都会由 `recoverJob` 兜底为 `failed` 终态，不得让 goroutine 裸崩溃
+- 前端轮询需处理 `done / cancelled / failed` 三种终态
 
-## 7. 版本与发布约定
+### 5.5 前端
+- 状态集中在 `store.js`（曲目列表、选择集、任务轮询），组件通过 `state` 读写
+- 文案走 `i18n.js` 中英双语，key 与后端返回的 `Unavailable` 等字符串必须一致
+- API 请求统一走 `api.js`（自动带 CSRF 头 `X-Requested-With`）
 
-- 唯一版本源是根目录 `VERSION`（三段语义化 `主.次.修订`，如 `1.0.0`），编译期 `embed` 为 `AppVersion()`；版本比较按数值逐段、缺段补零。
-- CI（`.github/workflows/docker.yml`）：push `main` 打 `latest`；push tag `v<VERSION>` 时先校验 **tag 去掉 v 后必须与 VERSION 逐字符相等**，再构建推送 GHCR。
-- **本地修改阶段不要打 tag、不要 push**；发布由维护者确认后执行。
+---
 
-## 8. 安全注意
+## 6. 新增一个刮削源
 
-- 单用户自托管模型，四协议流媒体接口只校验 `stream_pass`（不校验 Web 管理员密码，也不宽松放行）；暴露公网仍应上 HTTPS。Web 后台管理员登录是独立的另一套会话认证。
-- 后台 `/api/` 一律走会话 + CSRF；请求体有上限；扫描目录做 `filepath.Clean` 防路径遍历；ZIP 插件防 zip-slip、压缩炸弹与符号链接逃逸。
-- 日志不记录完整 query、认证头或登录正文；API Key 下发前端时脱敏。
+1. 在 `internal/scrape` 实现 `Source` 接口（搜索 + 详情）
+2. 在插件注册表（`plugin.go` / `main.go` 的 `registerBuiltinPlugins`）注册为 `scrape.<name>` 插件
+3. 在前端 `i18n.js` 与源列表 UI 中添加名称
+4. 为可选的 API Key 字段实现 `pluginKeyFields` 返回
+
+详见 [docs/PLUGINS.md](./PLUGINS.md)。

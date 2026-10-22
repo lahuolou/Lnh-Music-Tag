@@ -1,106 +1,117 @@
-# 插件机制开发指南
+# 插件系统开发指南
 
-Lnh-Music-Tag 的刮削源、FFmpeg、AcoustID、音乐网关都以「插件」形式注册在统一注册表中；用户可在 Web「插件」页启停、配置、导入第三方 ZIP 插件包。
+Lnh-Music-Tag 的刮削源、FFmpeg、AcoustID、音乐统一网关都以「插件」形式注册在统一注册表中；用户可在 Web「插件」页启停、配置、导入第三方插件包。
+
+---
 
 ## 1. 插件模型
 
-每个插件由 `Plugin` 描述（`plugin.go`）：
+每个插件在注册表中是一个 `Plugin` 结构：
 
-| 字段 | 含义 |
+| 字段 | 说明 |
 |---|---|
-| `name` | 唯一标识，内置形如 `scrape.qq`、`tool.ffmpeg`；第三方自定义 |
-| `label` | 界面展示名 |
-| `kind` | `scrape`（刮削源）或 `tool`（工具） |
-| `enabled` | 用户开关意愿（持久化到数据库） |
-| `builtin` | 内置插件，不可删除、不可被第三方覆盖 |
-| `needsKey` / `keyField` | 是否依赖外部 API Key、对应设置库键名 |
-| `available` | **依赖是否就绪**（由 API 层按当前环境实时计算，不持久化） |
-| `fields` | 配置输入项：`text` / `password` / `bool` |
-| `config` | 已填配置（Key 类字段下发前端时脱敏为 `********`） |
+| `name` | 唯一标识，如 `scrape.qq`、`tool.ffmpeg` |
+| `label` | 展示名称 |
+| `kind` | 类型：`scrape`（刮削源）/ `tool`（工具） |
+| `enabled` | 是否启用 |
+| `config` | 插件配置（键值对，Key 类字段脱敏展示） |
+| `needsKey` | 是否需要 API Key 才能工作 |
+| `available` | 当前是否可用（如 FFmpeg 未探测到二进制 = 不可用） |
+| `unavailable` | 不可用原因（前端展示为红色警告） |
 
-### 开关与就绪分离（门控）
+内置插件一览：
 
-`enabled`（用户想不想开）与 `available`（依赖是否真的就绪）是两个状态：
+| name | label | 说明 |
+|---|---|---|
+| `scrape.auto` | 自动 | 内置兜底源，按源顺序自动降级（不可停用） |
+| `scrape.qq` / `scrape.netease` / `scrape.kugou` / `scrape.kuwo` / `scrape.migu` / `scrape.bilibili` / `scrape.qishui` / `scrape.bodian` / `scrape.5sing` / `scrape.musicbrainz` / `scrape.itunes` / `scrape.listenbrainz` / `scrape.deezer` / `scrape.lastfm` / `scrape.spotify` / `scrape.discogs` / `scrape.jamendo` | 各源名 | 17 个元数据源 |
+| `tool.ffmpeg` | FFmpeg | 格式转换 / 流媒体转码 / 音频指纹 |
+| `tool.acoustid` | AcoustID | 音频识别 API Key |
+| `tool.streaming_gateway` | 音乐统一网关 | Subsonic / Jellyfin / Emby / Navidrome 四协议 |
 
-- `tool.ffmpeg`：探测不到二进制时，`available=false`，GET 快照强制回显关闭、前端禁用开关，POST 强行开启被拒绝（400）。
-- `tool.acoustid`：未配置 API Key 时 `available=false`，开关禁用。
-- 需 Key 的刮削源（lastfm / spotify / discogs / jamendo）默认关闭，配好 Key 才参与自动刮削。
+---
 
-这样避免「开关开着却用不了」的死状态；未就绪时功能自动回退，不报错中断主流程。
+## 2. 启停与配置门控
 
-## 2. 内置插件
+插件更新接口 `POST /api/plugins`（Body 见 [docs/API.md](./API.md#8-插件)）带以下门控：
 
-注册见 `plugins_api.go` 的 `registerBuiltinPlugins`：
+- `scrape.auto`：内置兜底源，强制保持启用
+- `tool.ffmpeg`：开启时未探测到 FFmpeg 二进制 → 拒绝开启（提示安装或填写路径）
+- `tool.acoustid`：开启时未配置 API Key → 自动停用
+- `tool.streaming_gateway`：**开启时未配置流媒体密码（`stream_pass`）→ 拒绝开启**（返回 400：请先设置流媒体密码）
 
-- **刮削源 `scrape.*`**（来自 `internal/scrape`，`auto` 为始终启用的聚合伪源）：netease、qq、kugou、kuwo、migu、bilibili、qishui、bodian、fivesing、musicbrainz、itunes、listenbrainz、deezer、lastfm、spotify、discogs、jamendo。其中 lastfm/spotify/discogs/jamendo 需 Key。
-- **`tool.ffmpeg`**：格式转换与网关按需转码；支持配置路径、容器内一键安装、配置卷持久化。
-- **`tool.acoustid`**：音频指纹识别，需 API Key。
-- **`tool.streaming_gateway`**：四协议（Subsonic / Navidrome / Jellyfin / Emby）音乐网关；`stream_pass` 是播放器连接的唯一凭证，四协议均只校验该密码，不校验 Web 管理员密码。
+配置 Key 类字段（API Key、流媒体密码）同步写入配置库（SQLite），日志中脱敏为 `***`，前端用脱敏占位符回显，未改动时不回写。
 
-## 3. 第三方 ZIP 插件包
+---
 
-在「插件」页上传 ZIP，导入即解压到 `<config>/plugins/<name>/`，注册后重启不丢失。
+## 3. 第三方插件包（ZIP）
+
+第三方插件以 ZIP 包导入（`POST /api/plugins/import`，Body 为原始 ZIP 字节，可选 `X-File-Name` 头），解压到配置目录 `plugins/<name>/`。
 
 ### 3.1 包结构
 
 ```
 my-plugin.zip
-├── plugin.json          # 声明（必需）
-├── bin/linux/mytool     # 可执行入口（按平台）
-├── bin/windows/mytool.exe
-└── ui/index.html        # 可选 Web 面板
+├── plugin.json        # 必需
+├── bin/
+│   └── <平台入口>      # 可执行入口（见 entries）
+└── ui/
+    └── index.html     # 可选：Web 配置面板
 ```
 
-### 3.2 plugin.json
+### 3.2 plugin.json 声明
 
 ```json
 {
-  "name": "tool.mytool",
-  "label": "我的工具",
-  "kind": "tool",
+  "name": "my.scraper",
+  "label": "我的刮削源",
+  "kind": "scrape",
   "version": "1.0.0",
-  "hint": "一句话说明",
-  "keyField": "my_api_key",
+  "hint": "插件说明文案",
   "fields": [
-    { "key": "my_api_key", "label": "API Key", "type": "password", "placeholder": "..." }
+    { "key": "api_key", "label": "API Key", "type": "password" }
   ],
+  "keyField": "api_key",
   "entries": {
-    "linux": "bin/linux/mytool",
-    "windows": "bin/windows/mytool.exe",
-    "darwin": "bin/darwin/mytool"
+    "windows-amd64": "bin/plugin.exe",
+    "linux-amd64": "bin/plugin",
+    "linux-arm64": "bin/plugin-arm"
   },
   "panel": "ui/index.html"
 }
 ```
 
-- `name` / `label` / `kind`（`scrape`|`tool`）/ `entries` 为必需；`entries` 键为 GoOS（`linux`/`windows`/`darwin`），值为包内相对入口路径。
-- `panel` 可选；声明了就必须存在该文件，主界面会出现对应插件 tab，由 `/api/plugins/{name}/panel` 与其静态资源提供。
-- 覆盖导入同名第三方插件时保留用户已填配置；内置插件不可覆盖。
-
-### 3.3 执行协议
-
-宿主通过固定 JSON 协议调用入口（`plugin_runner.go`）：
-
-```
-<entry> run --input in.json --output out.json
-```
-
-- `in.json` 为 `{op, args...}` 透传；`out.json` 为插件返回的任意 JSON 对象。
-- 超时 120 秒；仅当前平台 `entries[GOOS]` 存在时可调用。
-
-### 3.4 安全约束
-
-- 包上限 256 MiB，解压总量上限 512 MiB（防压缩炸弹）。
-- 解压限定在 `<config>/plugins/<name>/` 内，拒绝 `..` 穿越（zip-slip）、符号链接、设备/管道等非普通文件。
-- 入口必须是包内相对路径，禁止绝对路径。
-
-## 4. 相关 HTTP 接口（均需后台登录会话）
-
-| 方法 | 路径 | 作用 |
+| 字段 | 必填 | 说明 |
 |---|---|---|
-| GET | `/api/plugins` | 列出全部插件快照（含就绪/Key 状态） |
-| POST | `/api/plugins` | 启停 / 保存配置 |
-| POST | `/api/plugins/import` | 导入 JSON 声明或 ZIP 包 |
-| DELETE | `/api/plugins/{name}` | 删除第三方插件（内置拒绝） |
-| POST | `/api/plugins/{name}/run` | 调用 ZIP 插件入口 |
-| GET | `/api/plugins/{name}/panel`、`/panel/{path...}` | Web 面板与静态资源 |
+| `name` | 是 | 唯一标识（`scrape.` / `tool.` 前缀建议保留） |
+| `label` | 是 | 展示名称 |
+| `kind` | 否 | `scrape` / `tool` |
+| `entries` | 是 | 平台 → 入口文件的映射（当前平台缺失则拒绝导入） |
+| `panel` | 否 | Web 面板入口（zip 内相对路径） |
+| `fields` / `keyField` | 否 | 配置表单字段定义 |
+
+### 3.3 安全约束
+
+- 解压目标限定在 `plugins/<name>/` 内（防 zip-slip 路径穿越）
+- `entry` / `panel` 必须是包内相对路径，禁止绝对路径与 `..`
+- 包大小上限 256 MiB
+
+---
+
+## 4. 插件运行协议
+
+宿主以固定 JSON 协议调用插件入口。`POST /api/plugins/{name}/run` 触发运行，入口程序按宿主约定读取输入并返回结构化结果（实现细节以 `plugin_runner.go` 为准）。
+
+第三方插件面板通过 `GET /api/plugins/{name}/panel` 与 `/panel/{path...}` 提供静态页面；面板内可使用 `POST /api/fs/scan-dir`（Body：`{"dir":"..."}`）探测目录结构。
+
+---
+
+## 5. 开发内置插件（以刮削源为例）
+
+1. 在 `internal/scrape` 实现 `Source` 接口：
+   - 搜索候选（标题/艺术家）
+   - 拉取详情（标签、封面、歌词）
+2. 在 `registerBuiltinPlugins`（`main.go`）注册为 `scrape.<name>` 插件，配置 `NeedsKey` / `Config` 字段
+3. 若需 API Key：在 `pluginKeyFields`（`plugins_api.go`）登记 key 字段，启用门控见第 2 节
+4. 前端：`i18n.js` 添加源名，`BatchPanel.vue` 源下拉框自动读取插件列表（`enabled` 为 false 的源不显示）
+5. 测试：`go test ./...`，参考现有 `gateway_features_test.go` / `fixencoding_test.go` 写法
