@@ -158,7 +158,9 @@ const convertTimeout = 30 * time.Minute
 // keeping metadata tags via -map_metadata 0. bin is the resolved ffmpeg path.
 func ffmpegConvert(bin, src, dst, codecArgs, bitrate, sampleRate string, lossless bool) error {
 	parts := strings.Fields(codecArgs)
-	args := []string{"-y", "-i", src, "-map_metadata", "0", "-codec:a"}
+	// -threads 2：限制单次转码占用核心数，避免并发转码抢满 CPU 拖垮网关响应
+	// （可观察性：多转码场景下 Go 调度与流媒体直传仍能及时响应）。
+	args := []string{"-y", "-threads", "2", "-i", src, "-map_metadata", "0", "-codec:a"}
 	args = append(args, parts...)
 	if bitrate != "" && !lossless {
 		args = append(args, "-b:a", bitrate)

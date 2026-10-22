@@ -183,6 +183,7 @@ func serveTranscode(w http.ResponseWriter, r *http.Request, cfg *cstore.Config, 
 	br := strconv.Itoa(tg.bitrate)
 	args := []string{
 		"-hide_banner", "-loglevel", "error",
+		"-threads", "2",
 		"-i", t.Path,
 		"-codec:a", codec,
 		"-b:a", br + "k",

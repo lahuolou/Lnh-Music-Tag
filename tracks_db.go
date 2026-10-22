@@ -24,6 +24,11 @@ func ensureTracksTable(db *sql.DB) error {
 		data TEXT NOT NULL,  -- Track JSON
 		seq  INTEGER NOT NULL
 	)`)
+	if err != nil {
+		return err
+	}
+	// path 索引：deleteTrackDB（WHERE id=? OR path=?）与按路径回查避免全表扫描。
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tracks_path ON tracks(path)`)
 	return err
 }
 

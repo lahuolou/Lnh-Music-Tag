@@ -458,6 +458,20 @@ func main() {
 	pm.HandleFunc("POST /api/trash/restore", trashRestoreHandler(cfg))
 	pm.HandleFunc("POST /api/trash/delete", trashDeleteHandler(cfg))
 	pm.HandleFunc("POST /api/trash/clear", trashClearHandler(cfg))
+	// /api/metrics：轻量文本指标（Prometheus 风格，需登录），供自托管用户快速
+	// 定位"后台任务是否卡住 / 曲库规模 / 封面缓存 / FFmpeg 可用性"。
+	pm.HandleFunc("GET /api/metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		fmt.Fprintf(w, "lnh_tracks_total %d\n", len(store.tracks))
+		fmt.Fprintf(w, "lnh_background_jobs_active %d\n", len(jobSem))
+		fmt.Fprintf(w, "lnh_background_jobs_capacity %d\n", cap(jobSem))
+		fmt.Fprintf(w, "lnh_cover_cache_entries %d\n", len(store.coverCache))
+		if ffmpegActive(cfg) {
+			fmt.Fprintln(w, "lnh_ffmpeg_available 1")
+		} else {
+			fmt.Fprintln(w, "lnh_ffmpeg_available 0")
+		}
+	})
 	pm.HandleFunc("GET /api/plugins/{name}/panel", pluginPanelHandler())
 	pm.HandleFunc("GET /api/plugins/{name}/panel/{path...}", panelAssetHandler(cfg, configDir))
 	pm.HandleFunc("POST /api/fs/scan-dir", fsScanDirHandler()) // 第三方插件面板通用目录扫描

@@ -2018,6 +2018,22 @@ func (a *subsonicAPI) cover(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	st, err := os.Stat(t.Path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	// 共享 store 封面缓存（与 /api/cover 同一缓存，mtime 变化自动失效）：
+	// 避免每次 getCoverArt 都走 WASM 读文件+解码，封面是网关中体积最大、
+	// 重复率最高的响应，缓存收益明确。
+	a.library.coverMu.RLock()
+	if e, ok := a.library.coverCache[t.ID]; ok && e.mod.Equal(st.ModTime()) {
+		img := e.img
+		a.library.coverMu.RUnlock()
+		writeCover(w, img)
+		return
+	}
+	a.library.coverMu.RUnlock()
 	img, err := taglibx.ReadCover(t.Path)
 	// 兜底：当前曲目无内嵌封面时，取同专辑任一曲目的封面（专辑级封面），
 	// 避免播放器（如 Archer/音流 的 CarPlay 界面）请求歌曲封面时 404 导致无图。
@@ -2037,6 +2053,14 @@ func (a *subsonicAPI) cover(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	a.library.coverMu.Lock()
+	a.library.coverCache[t.ID] = coverEntry{mod: st.ModTime(), img: img}
+	a.library.coverMu.Unlock()
+	writeCover(w, img)
+}
+
+// writeCover 统一写封面响应头与字节（Subsonic getCoverArt 专用出口）。
+func writeCover(w http.ResponseWriter, img []byte) {
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.Header().Set("Content-Type", http.DetectContentType(img))
 	w.Header().Set("Content-Length", strconv.Itoa(len(img)))
