@@ -127,7 +127,7 @@ LNH_CONFIG_DIR=./config LNH_PORT=:10248 ./lnh-music-tag
 |---|---|---|
 | Subsonic / OpenSubsonic | `http://IP:10248/rest` | 管理员账号 + 流媒体密码 |
 | Navidrome 兼容 | `http://IP:10248`（`/auth/login`、`/api/*`） | 同上 |
-| Jellyfin | `http://IP:10248/jellyfin`（或根路径） | 同上 |
+| Jellyfin | `http://IP:10248/jellyfin` | 同上 |
 | Emby | `http://IP:10248/emby` | 同上 |
 
 常见客户端（音流、Archer、Jellyfin 官方 App、Emby 官方 App、Navidrome 官方 App 等）添加服务器时选择对应协议即可。详细端点清单见 [docs/STREAMING_GATEWAY.md](./docs/STREAMING_GATEWAY.md)。

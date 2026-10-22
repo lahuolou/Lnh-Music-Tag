@@ -127,7 +127,7 @@ LNH_CONFIG_DIR=./config LNH_PORT=:10248 ./lnh-music-tag
 |---|---|---|
 | Subsonic / OpenSubsonic | `http://IP:10248/rest` | admin user + streaming password |
 | Navidrome-compatible | `http://IP:10248` (`/auth/login`, `/api/*`) | same |
-| Jellyfin | `http://IP:10248/jellyfin` (or root) | same |
+| Jellyfin | `http://IP:10248/jellyfin` | same |
 | Emby | `http://IP:10248/emby` | same |
 
 Pick the matching protocol when adding the server in your client. Full endpoint reference: [docs/STREAMING_GATEWAY.md](./docs/STREAMING_GATEWAY.md).
