@@ -140,13 +140,21 @@
 | GET | `/api/settings` | 设置项（管理员信息、音乐目录、开关） |
 | POST | `/api/settings` | 更新设置 |
 | GET | `/api/scheduler` | 任务计划（自动刮削）配置与状态：`enabled/cron/mode/scanFirst/running/lastRun/lastMsg/nextRun/watchEnabled/watchInterval/watchLastRun/watchLastMsg` |
-| POST | `/api/scheduler` | 保存任务计划。Body：`{"enabled":true,"cron":"0 3 * * *","mode":"onekey\|batch","scanFirst":true,"watchEnabled":true,"watchInterval":5}`（cron 无效时 400） |
+| POST | `/api/scheduler` | 保存任务计划。Body：`{"enabled":true,"cron":"0 3 * * *","mode":"onekey\|dedup","scanFirst":true,"watchEnabled":true,"watchInterval":5}`（cron 无效时 400；mode 仅接受 `onekey`（一键刮削）或 `dedup`（先去重再一键刮削）） |
 | POST | `/api/scheduler/run` | 立即触发一次任务计划。Body：`{}` |
 | GET | `/api/version/check` | GitHub Release 更新检查 |
 | GET | `/api/metrics` | 轻量文本指标（需登录）：曲目总数、后台任务活跃/容量、封面缓存条目、FFmpeg 可用性 |
 | GET | `/api/logs` | 操作日志列表 |
 | POST | `/api/logs/delete` | 删除指定日志。Body：`{"ids":[...]}` |
 | POST | `/api/logs/clear` | 清空日志。Body：`{}` |
+
+### 9.1 任务计划与后台监控
+
+任务计划（`/api/scheduler`）与后台监控均为**默认关闭**（`enabled` / `watchEnabled` 默认 `false`），需要用户在设置页手动开启。
+
+- **任务计划**：按 cron（5 段：分 时 日 月 周）定时执行「可选先扫描 + 刮削」。设置页以下拉方式配置：执行频率（每天 / 每周 / 自定义）+ 星期 + 24 小时制时间，自动生成 cron 字符串；已有自定义 cron 会自动识别回填，无法匹配时切到「自定义」保留原输入。
+- **刮削模式**（`mode`）：`onekey` = 一键刮削（乱码修复 + 简繁转换 + 补艺术家 + 刮削元素完整流水线）；`dedup` = 先去重（按哈希/同名/艺术家+标题三种口径合并，每组保留音质最好的一首）再一键刮削。
+- **后台监控**（`watchEnabled` + `watchInterval`，间隔 1–1440 分钟）：定期检查音乐目录，发现新增音频文件后自动入库并静默刮削（封面/歌词/全部元数据）；首次启动只建立基线不刮削（避免重启后对全库重复刮削），每次处理写入操作日志。
 
 ---
 

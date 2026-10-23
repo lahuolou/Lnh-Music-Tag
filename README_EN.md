@@ -38,7 +38,7 @@ Lnh-Music-Tag is a **self-hosted tag manager and streaming gateway** for your pe
 - **Encoding fix**: detect and restore GBK/UTF-8 misread Chinese tags
 - **Script conversion**: bulk simplified ↔ traditional conversion
 - **Filename cleanup**: `song.mp3.flac → song.flac` — probe the real encoding and rename correctly
-- **Scheduled auto-scrape**: cron-driven background "scan + scrape" (e.g. daily 03:00, every 30 min, weekdays 02:00); one-key pipeline or batch mode; no re-entry while running, each run logged, next/last run shown in Settings
+- **Scheduled auto-scrape**: background "scan + scrape" on a schedule, configured in Settings with dropdowns (frequency daily/weekly/custom + time) that generate the cron; scrape modes: one-key pipeline or dedup+one-key (dedup first, then one-key scrape); no re-entry while running, each run logged, next/last run shown in Settings
 - **Watch for new songs**: periodically checks the music directory, auto-imports newly added audio files and silently scrapes them (cover/lyrics/all metadata) without a manual one-key scrape; configurable interval (default 5 min), each run logged
 
 ### Format Conversion

@@ -1,6 +1,6 @@
 # 开发文档
 
-面向在本地构建、调试、扩展 Lnh-Music-Tag 的开发者。本文基于当前代码库（v1.0.9）的实际实现编写。
+面向在本地构建、调试、扩展 Lnh-Music-Tag 的开发者。本文基于当前代码库（v1.0.11）的实际实现编写。
 
 ---
 
@@ -38,6 +38,7 @@ Lnh-Music-Tag-main/
 ├── fixencoding.go       # 乱码标签修复
 ├── renameclean.go       # 文件名后缀清理
 ├── zhscript.go          # 简繁转换任务
+├── scheduler.go         # 任务计划：cron 解析 / 后台监控静默刮削（watcher）
 ├── streaming.go         # 流媒体直传 / 转码回退
 ├── lyrics_cache.go      # 歌词短 TTL 缓存（30s，四协议共享）
 ├── entity_cache.go      # 网关实体响应缓存（30s TTL / 1024 上限，写时失效）
@@ -97,13 +98,29 @@ Lnh-Music-Tag-main/
 
 前端通过 `GET /api/jobs/{id}`（工具任务）与 `GET /api/scrape/jobs/{id}`（批量）轮询进度；页面刷新或换设备登录后 `GET /api/jobs` 可恢复进行中的任务。
 
-### 3.4 数据库批量事务（tracks_db.go）
+### 3.4 任务计划与后台监控（scheduler.go）
+
+**任务计划**：5 段 cron（分 时 日 月 周），30 秒轮询到点触发：
+
+- `parseCron` 支持 `*`、`*/n`、`a-b`、`a,b`（含组合与步进），周段 `0-6`（`7` 等价周日）
+- `nextAfter` 计算下次运行时间，设置页实时显示；`check` 到点后 `fire` 执行（防重入：`running` 置位）
+- 刮削模式 `mode`：`onekey` = 一键完整流水线（`runOneKeyPipeline`，乱码→简繁→补艺术家→刮削）；`dedup` = 先自动去重（`stageDedup`：按哈希/同名/艺术家+标题合并，每组保留音质最好的一首）再跑一键流水线
+- 设置页用下拉生成 cron（频率 每天/每周/自定义 + 星期 + 24 小时制时间），`buildSchedCron` 生成字符串、`parseSchedCron` 加载回填；无法匹配的旧 cron 落到「自定义」保留原输入
+- 任务计划与后台监控默认关闭（`enabled` / `watchEnabled` 配置键缺省 `0`）
+
+**后台监控（watcher）**：`watchCheck` 每 30 秒轮询，按 `watchInterval`（分钟，1–1440）检查目录：
+
+- `watchScan` 每次 `WalkDir` 收集音频清单（复用 `skipScanDirs` 与 `model.AudioExts`），与内存基线对比
+- 首次运行只建立基线不刮削（防止进程重启后对全库重复刮削）；发现新增文件 → `taglibx.ReadTrackLight` 读标签入库 → `runBatch(...,"auto",...)` 静默刮削 → 更新 `lastWatchRun/lastWatchMsg` 并写 `act_watch` 日志 → 并入基线
+- `watchRunning` 锁防重入；配置键 `watcher_enabled` / `watcher_interval`
+
+### 3.5 数据库批量事务（tracks_db.go）
 
 - 扫描、批量补全等大写入走 `upsertTracksDB / upsertTrackBatch`，每批 300 条单事务提交，避免逐条提交的性能开销
 - 曲目序号 `seq` 为原子计数器（`atomic.Int64`），并发分配不重号
 - 启动时 `loadTracksFromDB` 在锁外构建列表、一次性加锁，缩短持锁时间
 
-### 3.5 外部进程调用（P1-1 超时保护）
+### 3.6 外部进程调用（P1-1 超时保护）
 
 所有外部命令调用都有超时与缓存保护：
 
@@ -116,7 +133,7 @@ Lnh-Music-Tag-main/
 | 批量转换 | 30min | — |
 | FFmpeg 安装/卸载 | 5min | — |
 
-### 3.6 网关响应缓存（性能）
+### 3.7 网关响应缓存（性能）
 
 四协议网关对高重复、高体积的响应做进程内缓存，降低大库下列表/单曲/歌词/封面的重复组装与序列化开销：
 
@@ -128,7 +145,7 @@ Lnh-Music-Tag-main/
 
 > 注意：实体缓存是「序列化结果」缓存（非查库缓存）。曲库改动、收藏、评分必须经过对应失效挂点（`store.addMany/remove/removeByPath`、`refreshTrack`、`saveStarred`、`saveRatings` 等），新增写路径时需同步挂失效，否则客户端会看到陈旧状态。
 
-### 3.7 优雅退出
+### 3.8 优雅退出
 
 `main()` 注册 `SIGINT/SIGTERM`：收到信号后停止接收新连接、等待在途请求完成（上限 5s），随后返回并 `defer cfg.Close()` 关闭配置库。容器 `docker stop`（发 SIGTERM）不会硬中断在途写库/流。
 

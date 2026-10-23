@@ -4,6 +4,34 @@
 
 ---
 
+## 1.0.11
+
+新增任务计划自动刮削与后台监控静默刮削，任务计划配置改为下拉式，刮削模式精简为一键 / 去重+一键。
+
+### 任务计划（自动刮削）
+- 新增 `/api/scheduler` 配置与 `/api/scheduler/run` 手动触发：5 段 cron（分 时 日 月 周）定时执行「可选先扫描 + 刮削」，30 秒轮询到点触发，防重入，写操作日志 `act_sched`，设置页实时显示下次/上次运行时间
+- cron 配置改为**下拉式**：执行频率（每天 / 每周 / 自定义）+ 星期 + 24 小时制时间自动生成 cron；已有自定义 cron 自动识别回填，无法匹配时切到「自定义」保留原输入
+- 刮削模式只保留两种：`onekey`（一键完整流水线）与 `dedup`（先去重再一键刮削，按哈希/同名/艺术家+标题合并，每组保留音质最好的一首）
+- 任务计划默认关闭，需在设置页手动开启
+
+### 后台监控（watcher）
+- 新增「监控新增歌曲」：定期检查音乐目录，发现新增音频文件后自动入库并**静默刮削**（封面/歌词/全部元数据），无需手动点击一键刮削
+- 首次运行只建立基线不刮削（防止重启后对全库重复刮削），`watcher_enabled` / `watcher_interval`（分钟，1–1440）可配置，写操作日志 `act_watch`，默认关闭
+
+## 1.0.10
+
+四协议流媒体网关多客户端真实环境实测与兼容性修复。
+
+### 客户端实测
+- 音流 / Ultrasonic / DSub / StreamMusic / Subtracks / Jellyfin 官方 / Findroid / com.subsonic20.player 等客户端逐项实测，更新 `docs/STREAMING_GATEWAY.md` 兼容矩阵
+- 修复 StreamMusic / Subtracks 的 **apiKey 认证**：Subsonic 兼容 `/rest/*` 与根路径接入，apiKey 口令下 `salt/token` 校验统一，`X-Requested-With` CSRF 豁免
+
+### 网关
+- Navidrome 兼容 REST 子集补齐 `/rest` 路由，注册 keepalive 心跳路径，兼容部分客户端的自动探测
+- 封面兜底：`getCoverArt` 在当前曲目无内嵌封面时回退同专辑任一曲目封面，解决 CarPlay 等无图问题
+
+---
+
 ## 1.0.9
 
 修复音流（SoundFlow）概览统计「未知」与 CarPlay 无封面问题，并修正网关接入路径文档。
