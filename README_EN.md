@@ -1,14 +1,16 @@
 # Lnh-Music-Tag
 
-> Self-hosted · Open Source · Local-first music library tag manager + streaming gateway
+> Self-hosted · Open Source · Music library smart scraper + streaming gateway
 
-Lnh-Music-Tag combines "organize your music library" and "play it anywhere" in one self-hosted tool:
+Lnh-Music-Tag is a self-hosted music library tool whose **core highlights are scraping and automatic scraping**:
 
-- **Tag management**: scan local audio files and batch-edit 30+ tag fields (title, artist, album, cover art, lyrics, genre, year…) in a web UI, with multi-source auto-scraping, encoding repair, simplified/traditional conversion and content-based dedup;
-- **Unified gateway**: serve the curated library to external players over **Subsonic / Jellyfin / Emby / Navidrome** protocols — Yingliu, Archer, Jellyfin and dozens of other players connect and play directly;
+- **Multi-source auto-scrape**: 17 built-in metadata sources (Netease, QQ Music, KuGou, KuWo, Migu, Bilibili, Qishui, Bodian, 5sing, MusicBrainz, iTunes, ListenBrainz, Deezer, Last.fm, Spotify, Discogs, Jamendo) with automatic fallback and dedup — one click fills title, artist, album, cover art and lyrics for the whole library;
+- **Scheduled auto-scrape**: pick a frequency and time, the backend runs "scan + scrape" on schedule with zero manual work — no re-entry, every run logged;
+- **Watch & silent scrape**: newly added songs are auto-imported and silently scraped (cover/lyrics/all metadata) — no manual action needed;
+- **Library management & playback**: batch-edit 30+ tag fields in a web UI, cover/lyrics management, encoding repair, simplified/traditional conversion, content-based dedup; the curated library is also served by a built-in **unified streaming gateway** over **Subsonic / Jellyfin / Emby / Navidrome** protocols — Yingliu, Archer, Jellyfin and dozens of other players connect and play directly;
 - **Local-first**: your data lives in a local SQLite database, tags are written back to the files, no cloud dependency, one-command Docker deployment.
 
-**Version**: 1.0.11 ｜ Language: English / [中文](./README.md)
+**Version**: 1.0.12 ｜ Language: English / [中文](./README.md)
 
 ---
 
@@ -26,6 +28,14 @@ Lnh-Music-Tag combines "organize your music library" and "play it anywhere" in o
 
 ## Core Features
 
+### Intelligent Scraping (Core Highlight)
+- **Multi-source auto-scrape**: 17 built-in metadata sources (Netease, QQ Music, KuGou, KuWo, Migu, Bilibili, Qishui, Bodian, 5sing, MusicBrainz, iTunes, ListenBrainz, Deezer, Last.fm, Spotify, Discogs, Jamendo) with automatic fallback, dedup and candidate merging
+- **One-key pipeline**: encoding fix → traditional-to-simplified → artist-from-filename → full scrape, one click for the whole library
+- **Scheduled auto-scrape**: pick a schedule with dropdowns (daily / weekly / custom + time) in Settings — the cron is generated for you; modes: one-key scrape or dedup-then-one-key; no re-entry while running, every run logged, next/last run shown in Settings
+- **Watch & silent scrape**: periodically checks the music directory, auto-imports newly added audio files and silently scrapes them (cover/lyrics/all metadata) — no manual action needed
+- **Batch completion**: scrape only the fields you check; already-filled tags are skipped
+- **Audio identification**: untagged files like `track01.mp3` are matched against known tracks by audio fingerprint
+
 ### Library Management
 - **Directory scan**: scan local music directories and read audio tags; the track list persists across restarts (SQLite)
 - **Tag editing**: edit 30+ fields in the web UI — title, artist, album, album artist, genre, year, track number, lyrics and more
@@ -33,15 +43,9 @@ Lnh-Music-Tag combines "organize your music library" and "play it anywhere" in o
 - **Lyrics**: embedded lyrics and sidecar `.lrc` files both supported; one-click online lyric fetch
 - **Smart filters**: garbled / traditional-Chinese / no-lyrics / no-cover / unidentified — quickly find tracks that need attention
 
-### Intelligent Organizing
-- **Multi-source scraping**: 17 built-in metadata sources (Netease, QQ Music, KuGou, KuWo, Migu, Bilibili, Qishui, Bodian, 5sing, MusicBrainz, iTunes, ListenBrainz, Deezer, Last.fm, Spotify, Discogs, Jamendo) with automatic fallback and dedup
-- **One-key pipeline**: encoding fix → traditional-to-simplified → artist-from-filename → full scrape, one click for the whole library
-- **Batch completion**: scrape only the fields you check; already-filled tags are skipped
+### Assisted Organizing
 - **Smart dedup**: identify duplicate files by audio content (SHA-256), keep the best-quality copy per group
-- **Audio identification**: untagged files like `track01.mp3` are matched against known tracks by audio fingerprint
 - **Encoding repair / script conversion / filename cleanup**: restore GBK/UTF-8 misread tags, bulk simplified ↔ traditional conversion, `song.mp3.flac → song.flac`
-- **Scheduled auto-scrape**: pick a schedule with dropdowns (daily / weekly / custom + time) in Settings — the cron is generated for you; modes: one-key scrape or dedup-then-one-key; no re-entry while running, every run logged, next/last run shown in Settings
-- **Watch for new songs**: periodically checks the music directory, auto-imports newly added audio files and silently scrapes them — no manual action needed
 
 ### Format Conversion
 - FFmpeg-based batch transcoding: target format (MP3/FLAC/AAC/OGG/WAV…), bitrate, sample rate
