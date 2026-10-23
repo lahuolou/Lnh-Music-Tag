@@ -313,6 +313,13 @@ func (a *subsonicAPI) authorized(r *http.Request) bool {
 	if pass != "" {
 		return subtle.ConstantTimeCompare([]byte(pass), []byte(streamPass)) == 1
 	}
+	// Navidrome 风格 apiKey 认证（箭头音乐/Stream Music 等客户端使用）：
+	// apiKey 必须等于 Subsonic token（MD5(stream_pass + "lnh-navidrome")）。
+	if apiKey := q.Get("apiKey"); apiKey != "" {
+		sum := md5.Sum([]byte(streamPass + "lnh-navidrome"))
+		want := hex.EncodeToString(sum[:])
+		return subtle.ConstantTimeCompare([]byte(strings.ToLower(apiKey)), []byte(want)) == 1
+	}
 	// Subsonic token 认证：MD5(stream_pass + salt)。
 	token := q.Get("t")
 	salt := q.Get("s")
