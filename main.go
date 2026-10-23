@@ -395,6 +395,12 @@ func main() {
 	mux.HandleFunc("POST /auth/login", navidromeHandler(store, cfg).ServeHTTP)
 	mux.HandleFunc("POST /auth/token", navidromeHandler(store, cfg).ServeHTTP)
 	mux.HandleFunc("GET /ping", navidromeHandler(store, cfg).ServeHTTP)
+	// Navidrome 客户端（如音流/Musiver）习惯把 Base URL 带 /rest 后缀，login 落在 /rest/auth/login。
+	// 该端点响应同时含 Navidrome 顶层字段与 subsonic-response，Subsonic 客户端同样兼容；
+	// Go 1.22 ServeMux 优先匹配此更具体模式（先于 "/rest/" 前缀）。
+	mux.HandleFunc("POST /rest/auth/login", navidromeHandler(store, cfg).ServeHTTP)
+	mux.HandleFunc("POST /rest/auth/token", navidromeHandler(store, cfg).ServeHTTP)
+	mux.HandleFunc("GET /rest/ping", navidromeHandler(store, cfg).ServeHTTP)
 	for _, path := range []string{
 		"/api/song", "/api/song/{id}", "/api/song/{id}/stream",
 		"/api/album", "/api/album/{id}", "/api/album/{id}/songs", "/api/album/{id}/coverart",
@@ -408,6 +414,25 @@ func main() {
 		"/api/stream/{id}", "/api/coverart/{id}",
 		"/api/coverArt", "/api/coverArt/{id}",
 		"/api/keepalive", "/api/keepalive/keepalive",
+	} {
+		mux.HandleFunc(path, navidromeHandler(store, cfg).ServeHTTP)
+	}
+	// Navidrome clients (e.g. Stream Music / Musiver) that configure their base URL with a
+	// "/rest" suffix (as Subsonic does) will request /rest/api/* for the Navidrome-style REST
+	// subset. Go 1.22+ ServeMux gives the more specific pattern priority over "/rest/",
+	// so registering both prefixes keeps such clients working.
+	for _, path := range []string{
+		"/rest/api/song", "/rest/api/song/{id}", "/rest/api/song/{id}/stream",
+		"/rest/api/album", "/rest/api/album/{id}", "/rest/api/album/{id}/songs", "/rest/api/album/{id}/coverart",
+		"/rest/api/album/{id}/tracks",
+		"/rest/api/artist", "/rest/api/artist/{id}", "/rest/api/artist/{id}/albums", "/rest/api/artist/{id}/coverart",
+		"/rest/api/artist/{id}/tracks", "/rest/api/artist/{id}/image",
+		"/rest/api/playlist", "/rest/api/playlist/{id}", "/rest/api/playlist/{id}/songs", "/rest/api/playlist/{id}/tracks",
+		"/rest/api/search", "/rest/api/search/songs", "/rest/api/search/albums", "/rest/api/search/artists",
+		"/rest/api/starred", "/rest/api/starred/{id}", "/rest/api/genres", "/rest/api/albumlist/{type}", "/rest/api/songlist/{type}",
+		"/rest/api/library/scanstatus", "/rest/api/library/statistics", "/rest/api/statistics", "/rest/api/nowplaying", "/rest/api/lyrics/{songId}",
+		"/rest/api/stream/{id}", "/rest/api/coverart/{id}",
+		"/rest/api/coverArt", "/rest/api/coverArt/{id}",
 	} {
 		mux.HandleFunc(path, navidromeHandler(store, cfg).ServeHTTP)
 	}

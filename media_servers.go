@@ -419,7 +419,7 @@ func (g *mediaGateway) rateItem(w http.ResponseWriter, r *http.Request, id strin
 
 func (g *mediaGateway) serveJellyfin(w http.ResponseWriter, r *http.Request, p string) {
 	if p == "system/info/public" || p == "system/info" {
-		g.json(w, 200, map[string]any{"ServerName": "Lnh-Music-Tag", "Version": "10.8.13", "ProductName": "Lnh-Music-Tag", "Id": "lnh-music-tag", "OperatingSystem": "Linux", "CanSelfRestart": false, "CanLaunchWebBrowser": false, "StartupWizardCompleted": true, "SystemArchitecture": "x64", "LocalNetworkAddresses": []string{}})
+		g.json(w, 200, map[string]any{"LocalAddress": "http://192.168.100.29:10248", "ServerName": "Lnh-Music-Tag", "Version": "10.9.11", "ProductName": "Jellyfin Server", "OperatingSystem": "Linux", "Id": "d4b3f6e2-8a1c-4f5e-9d2b-3c7a1e9f6b21", "StartupWizardCompleted": true})
 		return
 	}
 	if p == "branding/configuration" {

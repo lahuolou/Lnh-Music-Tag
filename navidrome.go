@@ -11,14 +11,17 @@ package main
 // complete Navidrome server compatibility is not claimed.
 
 import (
+	"bytes"
 	"crypto/md5"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -83,6 +86,13 @@ func navidromeHandler(s *store, cfg *cstore.Config) http.Handler {
 
 func (n *navidromeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	// Stream Music / Musiver configure their Navidrome base URL with a "/rest" suffix
+	// (Subsonic convention) and therefore request /rest/auth/login and /rest/api/*.
+	// Normalize those paths so the internal routing below stays prefix-agnostic.
+	if strings.HasPrefix(path, "/rest/") {
+		path = strings.TrimPrefix(path, "/rest")
+		r.URL.Path = path
+	}
 	switch {
 	case r.Method == http.MethodPost && (path == "/auth/login" || path == "/auth/token"):
 		n.login(w, r)
@@ -152,15 +162,42 @@ func (n *navidromeAPI) login(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&x)
+	// 兼容多种提交方式：JSON body（Navidrome 客户端）、x-www-form-urlencoded
+	// （Subsonic 风格客户端）、以及 URL 查询参数。不依赖 Content-Type，因为
+	// 部分客户端不设置该头。
+	body, _ := io.ReadAll(r.Body)
+	if len(bytes.TrimSpace(body)) > 0 {
+		_ = json.Unmarshal(body, &x)
+	}
+	// form（Subsonic 风格 u/p）兜底：JSON 未解出密码时再尝试。
+	if x.Password == "" && r.Method == http.MethodPost && len(bytes.TrimSpace(body)) > 0 {
+		if form, err := url.ParseQuery(string(body)); err == nil {
+			if v := form.Get("u"); v != "" {
+				x.Username = v
+			}
+			if v := form.Get("username"); v != "" {
+				x.Username = v
+			}
+			if v := form.Get("p"); v != "" {
+				x.Password = v
+			}
+			if v := form.Get("password"); v != "" {
+				x.Password = v
+			}
+		}
 	}
 	q := r.URL.Query()
 	if x.Username == "" {
 		x.Username = q.Get("username")
 	}
+	if x.Username == "" {
+		x.Username = q.Get("u")
+	}
 	if x.Password == "" {
 		x.Password = q.Get("password")
+	}
+	if x.Password == "" {
+		x.Password = q.Get("p")
 	}
 	wantUser := n.wantUser()
 	// 仅以流媒体密码 stream_pass 为唯一凭证（单用户）：不校验管理员密码，不接受任意残留密码。
@@ -176,6 +213,9 @@ func (n *navidromeAPI) login(w http.ResponseWriter, r *http.Request) {
 	token := n.tokenFor(wantUser)
 	subTok, subSalt := n.subsonicToken()
 	now := time.Now().UTC().Format(time.RFC3339)
+	// 同时返回 Navidrome 顶层字段（Stream Music / Musiver 需要 token/subsonicToken）与
+	// subsonic-response 嵌套（兼容按 Subsonic 语义调用 /rest/auth/login 的客户端），
+	// 让同一端点同时服务两类客户端。
 	n.json(w, http.StatusOK, map[string]any{
 		"token":         token,
 		"id":            wantUser,
@@ -190,6 +230,13 @@ func (n *navidromeAPI) login(w http.ResponseWriter, r *http.Request) {
 		"subsonicSalt":  subSalt,
 		"createdAt":     now,
 		"updatedAt":     now,
+		"subsonic-response": map[string]any{
+			"status":        "ok",
+			"version":       "1.16.1",
+			"type":          "Lnh-Music-Tag",
+			"serverVersion": AppVersion(),
+			"openSubsonic":  true,
+		},
 	})
 }
 func (n *navidromeAPI) authorized(r *http.Request) bool {
@@ -203,11 +250,23 @@ func (n *navidromeAPI) authorized(r *http.Request) bool {
 	if token == "" {
 		token = r.URL.Query().Get("token")
 	}
-	if token == "" {
-		return false
+	if token != "" {
+		want := n.tokenFor(n.wantUser())
+		return subtle.ConstantTimeCompare([]byte(strings.ToLower(token)), []byte(want)) == 1
 	}
-	want := n.tokenFor(n.wantUser())
-	return subtle.ConstantTimeCompare([]byte(strings.ToLower(token)), []byte(want)) == 1
+	// Navidrome clients (e.g. Stream Music / Musiver) authenticate their /api/* requests with
+	// Subsonic-style query parameters (u/s/t) after a successful auth/login. Accept those too:
+	// t must equal md5(stream_pass + salt), s must equal the published salt.
+	if q := r.URL.Query(); q.Get("u") != "" {
+		subTok, subSalt := n.subsonicToken()
+		if subTok == "" {
+			return false
+		}
+		if q.Get("s") == subSalt && strings.EqualFold(q.Get("t"), subTok) {
+			return true
+		}
+	}
+	return false
 }
 
 func paginationND(r *http.Request) (start, end int) {
