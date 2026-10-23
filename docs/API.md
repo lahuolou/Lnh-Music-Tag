@@ -1,166 +1,204 @@
 # 后端 API 参考
 
-本文档列出浏览器端使用的 HTTP API（前缀 `/api`）。流媒体网关协议端点（Subsonic/Jellyfin/Emby/Navidrome）见 [docs/STREAMING_GATEWAY.md](./STREAMING_GATEWAY.md)。
+本文档列出 Lnh-Music-Tag 的 HTTP API。分两部分：**浏览器管理 API**（会话认证 + CSRF）与**流媒体网关 API**（协议认证，供播放器调用）。
 
 ---
 
 ## 1. 认证与会话
 
-所有 `/api` 请求（除登录）需要有效会话：
+### 1.1 登录
 
-- 登录成功后服务端下发 Cookie 会话
-- 所有 `POST` 请求必须携带 CSRF 头：`X-Requested-With: Lnh-Music-Tag`，缺失返回 `403 missing CSRF header`
-- 响应均为 JSON；失败形如 `{"error": "..."}`
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/login` | 登录。Body：`{"user":"admin","pass":"..."}` |
-| POST | `/api/logout` | 登出 |
-| POST | `/api/change-password` | 修改密码。Body：`{"old":"...","new":"..."}` |
-
----
-
-## 2. 曲目
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/tracks` | 曲目列表（含标签、封面/歌词状态） |
-| GET | `/api/tracks/refresh` | 重新扫描库内已注册文件并刷新列表 |
-| GET | `/api/track/{id}` | 单曲详情 |
-| GET | `/api/tracks/{id}/cover` | 封面图片 |
-| GET | `/api/tracks/{id}/lrcfile` | 同目录 `.lrc` 歌词文件 |
-| POST | `/api/tracks/{id}/tags` | 写回标签。Body：`{"tags": {"TITLE":"...","ARTIST":"...", ...}}` |
-| POST | `/api/tracks/{id}/cover` | 替换封面。Body：`{"cover": "<base64>"}` |
-| POST | `/api/tracks/delete` | 删除（先进回收站）。Body：`{"ids":["..."]}`，返回 `{"removed":n,"failed":[...]}` |
-| GET | `/api/duplicates` | 重复曲目分组（按音频哈希） |
-| POST | `/api/duplicates/remove` | 删除重复组中保留之外的文件（先进回收站）。Body：`{"del":[...]}` |
-
----
-
-## 3. 扫描
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/scan` | 启动扫描。Body：`{"dir":"/music"}` |
-| GET | `/api/scan/status` | 扫描状态（运行中/进度/暂停/错误） |
-| POST | `/api/scan/pause` | 暂停/继续。Body：`{"paused":true\|false}` |
-
----
-
-## 4. 后台任务
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/scrape/batch` | 批量刮削。Body：`{"ids":[...],"source":"auto","fields":[...],"skipFilled":true}`，返回 `{"jobId":"...","total":n}` |
-| POST | `/api/scrape/onekey` | 一键刮削流水线。Body：`{"ids":[...],"dedup":false}` |
-| GET | `/api/scrape/jobs/{id}` | 批量任务进度（含增量 `updated` 曲目） |
-| GET | `/api/jobs/{id}` | 工具任务进度（转换/识别/乱码/简繁） |
-| GET | `/api/jobs` | 进行中的任务列表（刷新/换设备后恢复进度） |
-| POST | `/api/jobs/{id}/cancel` | 取消任务。Body：`{}` |
-
-任务状态：`running / done / cancelled / failed / interrupted`。`failed` 时 `message` 字段携带后端 panic 详情。
-
-任务响应结构（示例）：
-
-```json
-{
-  "id": "9f8d...", "total": 12, "done": 12, "current": "",
-  "status": "done", "stage": "scrape", "stageLabel": "刮削",
-  "results": [{"id":"...","fileName":"...","ok":true,"skip":false,"message":""}],
-  "summary": {"ok": 10, "fail": 1, "skip": 1},
-  "createdAt": "..."
-}
+```
+POST /api/login
+Body: {"user":"admin","pass":"***"}
 ```
 
----
+成功返回 `{"ok":true}` 并写入会话 Cookie。失败返回 401。登录成功后：
 
-## 5. 刮削辅助
+- 浏览器 API 凭 Cookie 会话访问；
+- 所有非 GET 请求必须带请求头 `X-Requested-With: Lnh-Music-Tag`（CSRF 防护），否则拒绝；
+- `POST /api/logout` 退出登录；`GET /api/me` 返回当前身份；`POST /api/change-password` 修改密码（至少 6 位）。
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/scrape/sources` | 可用刮削源列表（含启停状态） |
-| GET | `/api/scrape/search` | 按关键词搜索（`q` 参数），返回候选 |
-| GET | `/api/lyrics` | 获取歌词（`song`/`artist` 参数） |
-| POST | `/api/tracks/{id}/scrape` | 单曲刮削。Body：`{"source":"auto","fields":[...]}` |
+### 1.2 网关认证（播放器）
 
----
+网关不校验浏览器会话，使用**流媒体密码**协议认证：
 
-## 6. 格式转换与工具
+| 协议 | 认证方式 |
+|---|---|
+| Subsonic / OpenSubsonic | `u` + `p`（明文或十六进制 salt+token）、`t`+`s`（token）、`apiKey` 头（StreamMusic 兼容） |
+| Navidrome 兼容 | `POST /auth/login` body `{"username","password"}` 或 Basic 认证 |
+| Jellyfin / Emby | `X-Emby-Token` 头（流媒体密码作为令牌）、`api_key` 参数 |
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/api/convert` | 批量转码。Body：`{"ids":[...],"target":"mp3","inputFormats":["flac"],"bitrate":320,"sampleRate":44100,"removeSource":false}` |
-| GET | `/api/ffmpeg/status` | FFmpeg 探测状态 |
-| POST | `/api/ffmpeg/install` | 一键安装 FFmpeg |
-| POST | `/api/ffmpeg/uninstall` | 卸载 FFmpeg |
-| POST | `/api/fix-encoding` | 乱码标签修复。Body：`{"ids":[...]}` |
-| POST | `/api/convert-script` | 简繁转换。Body：`{"ids":[...],"to":"simp"\|"trad"}` |
-| POST | `/api/rename-clean` | 修正文件后缀。Body：`{"ids":[...]}`（空=全部） |
-| POST | `/api/identify` | 音频内容识别。Body：`{"ids":[...]}` |
+> 用户名字段不校验（兼容音流/箭头音乐等客户端的任意用户名习惯），**流媒体密码必填**：未配置 `stream_pass` 时网关拒绝启用/请求。
 
 ---
 
-## 7. 回收站
+## 2. 浏览器管理 API
+
+统一响应格式：成功 `{"ok":true,...}`；失败 `{"ok":false,"error":"..."}`。
+
+### 2.1 曲目与扫描
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/trash` | 回收站条目（`name`/`originalPath`/`size`/`modTime`） |
-| POST | `/api/trash/restore` | 恢复。Body：`{"name":"file.wav"}`，返回恢复后的绝对路径 |
-| POST | `/api/trash/delete` | 永久删除。Body：`{"name":"file.wav"}` |
-| POST | `/api/trash/clear` | 清空回收站。Body：`{}` |
+| POST | `/api/scan` | 扫描音乐目录（Body 含 `dir`）；进度由 `scan/status` 轮询 |
+| GET | `/api/scan/status` | 扫描进度（`scanning`/`paused`、`current`、`total`） |
+| POST | `/api/scan/pause` | 暂停/恢复扫描 |
+| GET | `/api/tracks` | 曲目列表（支持 `q` 搜索、`filter` 筛选：乱码/繁体/无歌词/无海报/待识别、`sort` 排序） |
+| GET | `/api/tracks/refresh` | 重新读取标签刷新内存 |
+| GET | `/api/track/{id}` | 单曲详情 |
+| POST | `/api/tracks/delete` | 删除曲目（先移入回收站） |
+| GET | `/api/tracks/{id}/cover` | 封面二进制（`?w=` 指定宽度） |
+| POST | `/api/tracks/{id}/cover` | 替换封面（multipart 文件字段 `file`） |
+| GET | `/api/tracks/{id}/lrcfile` | 读取外挂 .lrc 文件内容 |
+| POST | `/api/tracks/{id}/tags` | 批量写标签（Body 为字段键值） |
+| POST | `/api/tracks/{id}/scrape` | 对单曲刮削（Body 含 `sources`） |
+| GET | `/api/duplicates` | 重复组列表（`by`：hash/name/artist_title） |
+| POST | `/api/duplicates/remove` | 移除重复曲目（保留组内最佳） |
 
-> 回收站条目的 `name` 校验防路径穿越；恢复时原目录不存在会明确报错。
-
----
-
-## 8. 插件
+### 2.2 刮削与任务
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/plugins` | 插件列表（类型/启停/配置/可用性 `available` + `unavailable` 原因） |
-| POST | `/api/plugins` | 批量更新。Body：`{"scrape.qq":{"enabled":true},"tool.ffmpeg":{"config":{"path":"..."}}}` |
-| POST | `/api/plugins/import` | 导入第三方插件 ZIP |
-| DELETE | `/api/plugins/{name}` | 删除第三方插件（内置插件禁止删除） |
-| POST | `/api/plugins/{name}/run` | 运行插件入口 |
+| POST | `/api/scrape/batch` | 批量刮削：`{"ids":[...],"sources":[...],"fields":{...}}` |
+| POST | `/api/scrape/onekey` | 一键刮削流水线：`{"ids":[...],"sources":[...],"fields":{...}}`（含乱码修复/简繁/补艺术家） |
+| GET | `/api/scrape/search` | 搜索候选：`?title=&artist=&album=&source=` |
+| GET | `/api/lyrics` | 获取歌词：`?title=&artist=` |
+| GET | `/api/scrape/sources` | 可用刮削源列表 |
+| GET | `/api/scrape/jobs/{id}` | 批量任务进度（`running/done/cancelled/failed`、`done/current`、`results`） |
+| GET | `/api/jobs` | 进行中任务列表（刷新后可恢复进度） |
+| GET | `/api/jobs/{id}` | 通用任务进度（转换/识别/乱码/简繁） |
+| POST | `/api/jobs/{id}/cancel` | 取消任务 |
+
+### 2.3 工具操作
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/convert` | 批量转码：`{"ids":[...],"format":"mp3","bitrate":320,...}` |
+| GET | `/api/ffmpeg/status` | FFmpeg 状态与版本（TTL 缓存） |
+| POST | `/api/ffmpeg/install` | 在线安装 FFmpeg |
+| POST | `/api/ffmpeg/uninstall` | 卸载 FFmpeg（移除 wrapper 配置） |
+| POST | `/api/fix-encoding` | 乱码标签修复：`{"ids":[...]}` |
+| POST | `/api/convert-script` | 简体↔繁体转换：`{"ids":[...],"mode":"t2s"|"s2t"}` |
+| POST | `/api/rename-clean` | 后缀清理（`song.mp3.flac → song.flac`） |
+| POST | `/api/identify` | 音频识别（AcoustID/指纹）：`{"ids":[...]}` |
+
+### 2.4 插件
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/plugins` | 插件列表（含状态与配置） |
+| POST | `/api/plugins` | 批量更新：`{"scrape.qq":{"enabled":true},"tool.ffmpeg":{"config":{"path":"..."}}}` |
+| POST | `/api/plugins/import` | 导入第三方插件 ZIP（multipart 文件字段 `file`） |
+| DELETE | `/api/plugins/{name}` | 删除第三方插件 |
+| POST | `/api/plugins/{name}/run` | 运行插件（挂到后台任务） |
 | GET | `/api/plugins/{name}/panel` | 插件配置面板 HTML |
 | GET | `/api/plugins/{name}/panel/{path...}` | 面板静态资源 |
+| POST | `/api/fs/scan-dir` | 面板通用目录扫描（只读列举） |
 
-插件更新门控示例：
-
-- `tool.ffmpeg`：未探测到二进制 → 拒绝开启
-- `tool.acoustid`：未配置 Key → 拒绝开启
-- `tool.streaming_gateway`：未配置流媒体密码 → 拒绝开启（返回 400 并提示先设置密码）
-
----
-
-## 9. 设置与系统
+### 2.5 任务计划与监控
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/settings` | 设置项（管理员信息、音乐目录、开关） |
-| POST | `/api/settings` | 更新设置 |
-| GET | `/api/scheduler` | 任务计划（自动刮削）配置与状态：`enabled/cron/mode/scanFirst/running/lastRun/lastMsg/nextRun/watchEnabled/watchInterval/watchLastRun/watchLastMsg` |
-| POST | `/api/scheduler` | 保存任务计划。Body：`{"enabled":true,"cron":"0 3 * * *","mode":"onekey\|dedup","scanFirst":true,"watchEnabled":true,"watchInterval":5}`（cron 无效时 400；mode 仅接受 `onekey`（一键刮削）或 `dedup`（先去重再一键刮削）） |
-| POST | `/api/scheduler/run` | 立即触发一次任务计划。Body：`{}` |
-| GET | `/api/version/check` | GitHub Release 更新检查 |
-| GET | `/api/metrics` | 轻量文本指标（需登录）：曲目总数、后台任务活跃/容量、封面缓存条目、FFmpeg 可用性 |
-| GET | `/api/logs` | 操作日志列表 |
-| POST | `/api/logs/delete` | 删除指定日志。Body：`{"ids":[...]}` |
-| POST | `/api/logs/clear` | 清空日志。Body：`{}` |
+| GET | `/api/scheduler` | 当前配置：`{enabled,cron,mode,scan_first,watchEnabled,watchInterval,nextRun,lastRun,lastMsg}` |
+| POST | `/api/scheduler` | 保存配置（`scheduler_enabled/cron/mode/scan_first` + `watcher_enabled/interval`） |
+| POST | `/api/scheduler/run` | 立即运行一次任务计划（防重入） |
 
-### 9.1 任务计划与后台监控
+### 2.6 设置 / 日志 / 其他
 
-任务计划（`/api/scheduler`）与后台监控均为**默认关闭**（`enabled` / `watchEnabled` 默认 `false`），需要用户在设置页手动开启。
-
-- **任务计划**：按 cron（5 段：分 时 日 月 周）定时执行「可选先扫描 + 刮削」。设置页以下拉方式配置：执行频率（每天 / 每周 / 自定义）+ 星期 + 24 小时制时间，自动生成 cron 字符串；已有自定义 cron 会自动识别回填，无法匹配时切到「自定义」保留原输入。
-- **刮削模式**（`mode`）：`onekey` = 一键刮削（乱码修复 + 简繁转换 + 补艺术家 + 刮削元素完整流水线）；`dedup` = 先去重（按哈希/同名/艺术家+标题三种口径合并，每组保留音质最好的一首）再一键刮削。
-- **后台监控**（`watchEnabled` + `watchInterval`，间隔 1–1440 分钟）：定期检查音乐目录，发现新增音频文件后自动入库并静默刮削（封面/歌词/全部元数据）；首次启动只建立基线不刮削（避免重启后对全库重复刮削），每次处理写入操作日志。
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/settings` | 读取设置（账号/目录/选项/编辑字段） |
+| POST | `/api/settings` | 保存设置 |
+| GET | `/api/logs` | 操作日志分页（`?limit=&offset=`） |
+| POST | `/api/logs/delete` | 删除日志（`{"id":n}` 或 `{"ids":[...]}`） |
+| POST | `/api/logs/clear` | 清空日志 |
+| GET | `/api/version` | 当前版本 |
+| GET | `/api/version/check` | 检查 GitHub Release 更新（TTL 缓存） |
+| GET | `/api/metrics` | 运行指标（内存等） |
+| GET | `/api/trash` | 回收站列表 |
+| POST | `/api/trash/restore` | 恢复：`{"items":[{"origPath":"...","trashPath":"..."}]}` |
+| POST | `/api/trash/delete` | 永久删除：`{"items":[...]}` |
+| POST | `/api/trash/clear` | 清空回收站 |
 
 ---
 
-## 10. 通用约定
+## 3. 流媒体网关 API
 
-- 所有时间字段为本地时间字符串（`2006-01-02 15:04:05`）
-- 封面/歌词相关的二进制资源直接以图片/文本返回
-- 错误响应：HTTP 状态码 + `{"error":"..."}`；CSRF 缺失返回 `403 missing CSRF header`
-- 批量操作接口均返回任务 `jobId`，进度通过任务轮询获取，避免同步等待大任务
+### 3.1 Subsonic / OpenSubsonic（`/rest` 前缀）
+
+标准 Subsonic 端点（XML 响应，`u`/`p` 或 `t`+`s` 认证）：
+
+| 端点 | 说明 |
+|---|---|
+| `/rest/ping` | 连通性检查 |
+| `/rest/getMusicFolders` | 媒体库根目录 |
+| `/rest/getIndexes` | 艺术家索引（A-Z） |
+| `/rest/getArtists` | 艺术家列表 |
+| `/rest/getArtist` | 艺术家详情 + 专辑 |
+| `/rest/getAlbum` | 专辑详情 + 曲目 |
+| `/rest/getAlbumList2` | 专辑列表（type 过滤） |
+| `/rest/getSong` | 单曲 |
+| `/rest/getSongs` | 曲目列表（byGenre/byYear） |
+| `/rest/search2` / `/rest/search3` | 搜索 |
+| `/rest/getPlaylists` / `/rest/getPlaylist` | 播放列表 |
+| `/rest/star` / `/rest/unstar` | 收藏 |
+| `/rest/getStarred` / `/rest/getStarred2` | 收藏列表 |
+| `/rest/scrobble` | 播放统计上报 |
+| `/rest/getNowPlaying` | 正在播放 |
+| `/rest/getLyrics` | 歌词 |
+| `/rest/getCoverArt` | 封面 |
+| `/rest/stream` | 流媒体（支持 Range、转码回退） |
+
+### 3.2 Navidrome 兼容（根路径 `/auth`、`/api` 与 `/rest/api`）
+
+| 端点 | 说明 |
+|---|---|
+| `POST /auth/login` / `POST /auth/token` | 登录（body `username/password`），返回 `token/subsonic-token` |
+| `GET /ping` | 连通性 |
+| `/api/song`、`/api/song/{id}` | 曲目列表/详情（`_start/_end/order` 分页，`x-total-count` + `Content-Range`） |
+| `/api/song/{id}/stream` | 流媒体 |
+| `/api/album`、`/api/album/{id}`、`/api/album/{id}/songs` | 专辑 |
+| `/api/artist`、`/api/artist/{id}`、`/api/artist/{id}/albums` | 艺术家 |
+| `/api/playlist`、`/api/playlist/{id}/songs` | 播放列表 |
+| `/api/search`、`/api/search/songs` | 搜索 |
+| `/api/starred`、`/api/starred/{id}` | 收藏 |
+| `/api/genres`、`/api/albumlist/{type}`、`/api/songlist/{type}` | 类型列表 |
+| `/api/library/scanstatus`、`/api/library/statistics`、`/api/statistics` | 库统计 |
+| `/api/nowplaying`、`/api/lyrics/{songId}` | 正在播放/歌词 |
+| `/api/stream/{id}`、`/api/coverart/{id}` | 流/封面 |
+
+> 以上同时注册 `/rest/api/*` 前缀，兼容把 Base URL 带 `/rest` 的客户端（音流/Musiver 等）。
+
+### 3.3 Jellyfin / Emby（`/jellyfin`、`/emby` 前缀 + 根路径 System/Users/Items…）
+
+| 端点 | 说明 |
+|---|---|
+| `GET /System/Info/Public` | 服务器信息 |
+| `POST /Users/AuthenticateByName` | 登录（body `Username/Password`），返回 `AccessToken` |
+| `GET /Users`、`GET /Users/{id}` | 用户 |
+| `GET /Items` | 媒体库浏览（`ParentId`、`searchTerm`、`SortBy`、`Limit/StartIndex` 分页） |
+| `GET /Items/{id}` | 条目详情 |
+| `GET /Artists`、`GET /Albums`、`GET /Playlists`、`GET /Genres` | 各类型列表 |
+| `GET /Audio/{id}/stream` | 音频流（`static` 直传 / 转码） |
+| `GET /Items/{id}/Images/Primary` | 封面 |
+| `GET /Sessions` | 会话 |
+| `POST /Sessions/Playing` | 播放状态上报 |
+
+---
+
+## 4. 分页与错误
+
+- **Navidrome 风格分页**：`_start`/`_end`（或 `offset`/`limit`）参数；响应头 `x-total-count` 与 `Content-Range: items start-end/total`；
+- **负数/非法分页参数**：解析层归零（`parseNonNegParam`），`sliceRange` 二次兜底（`total<=0` 早退、end 上界钳制），不会产生负切片索引；
+- **空列表**：返回合法分页头（`items */0`）与 `[]`（非 `null`）；
+- **Jellyfin/Emby 分页**：`StartIndex`/`Limit`，响应含 `TotalRecordCount`；
+- **错误**：管理 API 统一 `{"ok":false,"error":"..."}`；Subsonic 返回 `<error code="..." message="..."/>`；Jellyfin 返回对应 HTTP 状态 + JSON 错误。
+
+---
+
+## 5. 认证与安全备注
+
+- 管理 API 会话过期需重新登录；CSRF 头缺失的非 GET 请求直接拒绝；
+- 网关流媒体密码保存在配置库（`config/lnh.db` 插件配置 `stream_pass`），环境变量 `LNH_STREAM_PASS` 仅作首次启动种子；
+- 所有密码/Key 不写入日志。

@@ -1,117 +1,140 @@
-# 插件系统开发指南
+# 插件系统
 
-Lnh-Music-Tag 的刮削源、FFmpeg、AcoustID、音乐统一网关都以「插件」形式注册在统一注册表中；用户可在 Web「插件」页启停、配置、导入第三方插件包。
+Lnh-Music-Tag 的能力由插件组成：刮削源、FFmpeg、AcoustID、流媒体网关都是插件，可在「设置 → 插件管理」启停与配置；也支持导入**第三方插件**（ZIP 包 + 配置面板）。
 
 ---
 
 ## 1. 插件模型
 
-每个插件在注册表中是一个 `Plugin` 结构：
+每个插件是一个注册单元，包含：
 
 | 字段 | 说明 |
 |---|---|
-| `name` | 唯一标识，如 `scrape.qq`、`tool.ffmpeg` |
-| `label` | 展示名称 |
-| `kind` | 类型：`scrape`（刮削源）/ `tool`（工具） |
-| `enabled` | 是否启用 |
-| `config` | 插件配置（键值对，Key 类字段脱敏展示） |
-| `needsKey` | 是否需要 API Key 才能工作 |
-| `available` | 当前是否可用（如 FFmpeg 未探测到二进制 = 不可用） |
-| `unavailable` | 不可用原因（前端展示为红色警告） |
+| `name` | 唯一 ID，内置插件形如 `scrape.qq` / `tool.ffmpeg`；第三方插件自定义 |
+| `label` | 显示名称 |
+| `kind` | 类型：`scrape`（刮削源）或 `tool`（工具） |
+| `enabled` | 启停状态（持久化于数据库） |
+| `needsKey / keyField` | 是否需要 API Key（需 Key 的插件默认关闭，配置后启用） |
+| `fields` | 配置字段（文本/密码等） |
+| `version / hint` | 版本号 / 提示文案 |
 
-内置插件一览：
-
-| name | label | 说明 |
-|---|---|---|
-| `scrape.auto` | 自动 | 内置兜底源，按源顺序自动降级（不可停用） |
-| `scrape.qq` / `scrape.netease` / `scrape.kugou` / `scrape.kuwo` / `scrape.migu` / `scrape.bilibili` / `scrape.qishui` / `scrape.bodian` / `scrape.5sing` / `scrape.musicbrainz` / `scrape.itunes` / `scrape.listenbrainz` / `scrape.deezer` / `scrape.lastfm` / `scrape.spotify` / `scrape.discogs` / `scrape.jamendo` | 各源名 | 17 个元数据源 |
-| `tool.ffmpeg` | FFmpeg | 格式转换 / 流媒体转码 / 音频指纹 |
-| `tool.acoustid` | AcoustID | 音频识别 API Key |
-| `tool.streaming_gateway` | 音乐统一网关 | Subsonic / Jellyfin / Emby / Navidrome 四协议 |
+- **内置插件**：只有开关与配置，不可删除；
+- **第三方插件**：ZIP 导入，可删除；覆盖升级保留已填配置。
 
 ---
 
-## 2. 启停与配置门控
+## 2. 内置插件
 
-插件更新接口 `POST /api/plugins`（Body 见 [docs/API.md](./API.md#8-插件)）带以下门控：
+### 2.1 刮削源（`scrape.*`，17 个 + 自动）
 
-- `scrape.auto`：内置兜底源，强制保持启用
-- `tool.ffmpeg`：开启时未探测到 FFmpeg 二进制 → 拒绝开启（提示安装或填写路径）
-- `tool.acoustid`：开启时未配置 API Key → 自动停用
-- `tool.streaming_gateway`：**开启时未配置流媒体密码（`stream_pass`）→ 拒绝开启**（返回 400：请先设置流媒体密码）
+网易云、QQ 音乐、酷狗、酷我、咪咕、B 站、汽水、波点、5sing、MusicBrainz、iTunes、ListenBrainz、Deezer、Last.fm、Spotify、Discogs、Jamendo。
 
-配置 Key 类字段（API Key、流媒体密码）同步写入配置库（SQLite），日志中脱敏为 `***`，前端用脱敏占位符回显，未改动时不回写。
+- `scrape.auto`（自动源）**始终可用**，按源优先级自动降级，只调用已开启的源；
+- **需 API Key 的源默认关闭**（如 Spotify、Discogs、Jamendo 等），在插件页填 Key 后自动启用；
+- 开启的源会出现在批量页的「源选择」里。
+
+### 2.2 工具插件（`tool.*`）
+
+| 插件 | 说明 |
+|---|---|
+| `tool.ffmpeg` | 格式转换/转码。默认按环境探测结果决定开关；可填 `path` 指向本机 FFmpeg，或一键安装/卸载 |
+| `tool.acoustid` | 音频识别。需先配置 AcoustID API Key；存疑曲目（Unknown/乱码/缺艺术家）自动走音频识别补全 |
+| `tool.streaming_gateway` | 音乐统一网关（Subsonic / Jellyfin / Emby / Navidrome）。**必须配置流媒体密码**才能启用；四协议统一用该密码认证（用户名任意） |
 
 ---
 
-## 3. 第三方插件包（ZIP）
+## 3. 第三方插件打包
 
-第三方插件以 ZIP 包导入（`POST /api/plugins/import`，Body 为原始 ZIP 字节，可选 `X-File-Name` 头），解压到配置目录 `plugins/<name>/`。
-
-### 3.1 包结构
+### 3.1 目录结构
 
 ```
 my-plugin.zip
-├── plugin.json        # 必需
-├── bin/
-│   └── <平台入口>      # 可执行入口（见 entries）
-└── ui/
-    └── index.html     # 可选：Web 配置面板
+├── plugin.json          # 插件声明（必须）
+├── bin/                 # 平台入口（可选）
+│   ├── linux   / main   # Linux 可执行入口
+│   ├── windows / main.exe
+│   └── darwin  / main
+└── ui/                  # Web 配置面板（可选）
+    └── index.html
 ```
 
-### 3.2 plugin.json 声明
+### 3.2 plugin.json 格式
 
 ```json
 {
-  "name": "my.scraper",
-  "label": "我的刮削源",
-  "kind": "scrape",
+  "name": "my-plugin",
+  "label": "我的插件",
+  "kind": "tool",
   "version": "1.0.0",
-  "hint": "插件说明文案",
+  "hint": "可选提示文字",
   "fields": [
-    { "key": "api_key", "label": "API Key", "type": "password" }
+    { "key": "token", "label": "API Token", "type": "password" }
   ],
-  "keyField": "api_key",
   "entries": {
-    "windows-amd64": "bin/plugin.exe",
-    "linux-amd64": "bin/plugin",
-    "linux-arm64": "bin/plugin-arm"
+    "linux": "bin/linux/main",
+    "windows": "bin/windows/main.exe",
+    "darwin": "bin/darwin/main"
   },
   "panel": "ui/index.html"
 }
 ```
 
+字段说明：
+
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `name` | 是 | 唯一标识（`scrape.` / `tool.` 前缀建议保留） |
-| `label` | 是 | 展示名称 |
-| `kind` | 否 | `scrape` / `tool` |
-| `entries` | 是 | 平台 → 入口文件的映射（当前平台缺失则拒绝导入） |
-| `panel` | 否 | Web 面板入口（zip 内相对路径） |
-| `fields` / `keyField` | 否 | 配置表单字段定义 |
+| `name` | 是 | 唯一 ID。只允许字母、数字、`.`、`_`、`-`（白名单校验，防路径穿越）；不得与内置插件冲突 |
+| `label` | 是 | 显示名 |
+| `kind` | 是 | `scrape` 或 `tool` |
+| `entries` | 是 | 平台 → 相对入口（相对于 ZIP 根，`bin/xxx`）；运行时按当前平台选择 |
+| `panel` | 否 | 配置面板相对路径（如 `ui/index.html`），导入后插件页可打开 |
+| `fields` | 否 | 配置字段（`key/label/type=text|password`） |
+| `keyField` | 否 | 声明某字段为 API Key（需 Key 逻辑） |
+| `version / hint` | 否 | 版本号 / 提示 |
 
-### 3.3 安全约束
+### 3.3 入口协议
 
-- 解压目标限定在 `plugins/<name>/` 内（防 zip-slip 路径穿越）
-- `entry` / `panel` 必须是包内相对路径，禁止绝对路径与 `..`
-- 包大小上限 256 MiB
-
----
-
-## 4. 插件运行协议
-
-宿主以固定 JSON 协议调用插件入口。`POST /api/plugins/{name}/run` 触发运行，入口程序按宿主约定读取输入并返回结构化结果（实现细节以 `plugin_runner.go` 为准）。
-
-第三方插件面板通过 `GET /api/plugins/{name}/panel` 与 `/panel/{path...}` 提供静态页面；面板内可使用 `POST /api/fs/scan-dir`（Body：`{"dir":"..."}`）探测目录结构。
+- `entries` 指向的可执行文件接收 JSON 配置（`fields` 的值 + 已填 Key）作为 stdin 输入，执行后在 stdout 输出结果（`{"ok":true,...}` 或 `{"ok":false,"error":"..."}`）；
+- 入口文件在导入时会被设置为可执行（`chmod +x` 等价处理）。
 
 ---
 
-## 5. 开发内置插件（以刮削源为例）
+## 4. 导入与管理
 
-1. 在 `internal/scrape` 实现 `Source` 接口：
-   - 搜索候选（标题/艺术家）
-   - 拉取详情（标签、封面、歌词）
-2. 在 `registerBuiltinPlugins`（`main.go`）注册为 `scrape.<name>` 插件，配置 `NeedsKey` / `Config` 字段
-3. 若需 API Key：在 `pluginKeyFields`（`plugins_api.go`）登记 key 字段，启用门控见第 2 节
-4. 前端：`i18n.js` 添加源名，`BatchPanel.vue` 源下拉框自动读取插件列表（`enabled` 为 false 的源不显示）
-5. 测试：`go test ./...`，参考现有 `gateway_features_test.go` / `fixencoding_test.go` 写法
+1. **导入**：插件管理页「导入插件」选择 `my-plugin.zip`；
+2. **校验**：导入时立即执行安全检查（见下），不通过则拒绝并提示原因；
+3. **启停**：导入后出现在插件列表，可开关、填配置、查看面板；
+4. **运行**：`tool` 插件可点「运行」（挂到后台任务，进度可查）；`scrape` 插件参与批量刮削的源选择；
+5. **删除**：第三方插件可删除（`DELETE /api/plugins/{name}`），删除会移除解压目录。
+
+---
+
+## 5. 安全约束（导入校验）
+
+| 约束 | 限制 |
+|---|---|
+| 包大小 | 整个 ZIP ≤ 256 MiB |
+| 文件数 | ≤ 10000 |
+| 单文件解压大小 | ≤ 256 MiB |
+| 插件名 | 白名单字符（字母/数字/`.`/`_`/`-`），禁止路径分隔符 |
+| 路径安全 | `entries` / `panel` 必须是 ZIP 内相对路径；解压全程防 zip-slip（目标必须仍在插件目录内） |
+| 类型 | `kind` 仅允许 `scrape` / `tool` |
+
+任何一项不满足都会**拒绝导入**，不写入磁盘。
+
+---
+
+## 6. 开发指引（快速开始）
+
+1. 编写入口程序（任意语言，读 stdin JSON、写 stdout JSON），编译出三个平台的可执行文件；
+2. 编写 `plugin.json`（见 3.2）与可选 `ui/index.html` 面板；
+3. 打包：`zip -r my-plugin.zip plugin.json bin ui`；
+4. 在插件管理页导入测试；
+5. 面板可通过 `GET /api/plugins/{name}/panel` 访问，静态资源走 `GET /api/plugins/{name}/panel/{path...}`；面板内如需读配置用浏览器会话调用 `/api/plugins` 即可。
+
+---
+
+## 7. 相关文档
+
+- [DEVELOPMENT.md](./DEVELOPMENT.md)：扩展指引（新增刮削源）
+- [API.md](./API.md)：插件 API
