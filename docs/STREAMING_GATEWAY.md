@@ -19,7 +19,7 @@
 
 四种协议统一使用 **管理员账号 + 流媒体密码** 认证：
 
-- Subsonic：`?u=<admin>&p=<stream_pass>`（支持 `p` 明文与 `t/s` token 两种）
+- Subsonic：`?u=<admin>&p=<stream_pass>`（支持 `p` 明文、`t/s` token 与 `apiKey` 三种）
 - Navidrome 兼容：`/auth/login` 提交 `{username, password}` 获取 token，后续请求带 `x-nd-authorization`
 - Jellyfin / Emby：`/auth/login` 或 `?api_key=` 等标准方式
 
@@ -88,6 +88,16 @@
 - 服务器类型选 **Subsonic**，地址填 `http://IP:10248/rest`
 - 账号：管理员账号；密码：流媒体密码
 
+### StreamMusic / 箭头音乐
+- 协议选 **Subsonic**，地址填 `http://IP:10248/rest`，账号：管理员账号
+- 认证方式二选一：
+  - **API 密钥认证**（推荐）：API 密钥填网关的 Subsonic token（登录 Web 后设置页可见，或等于 `md5(stream_pass + "lnh-navidrome")`）
+  - **用户名/密码认证**：密码填流媒体密码
+
+### Subtracks
+- 地址填 `http://IP:10248/rest`，账号：管理员账号，密码：流媒体密码
+- 保持 **Token authentication** 开启（默认推荐）
+
 ### Jellyfin 官方 App
 - 服务器地址填 `http://IP:10248/jellyfin`（或根地址 `http://IP:10248`）
 - 账号/密码同上
@@ -122,3 +132,27 @@
 | 播放器搜不到服务器 | 确认端口已放行、地址带对协议前缀（`/rest`、`/jellyfin`、`/emby` 或根路径） |
 | 转码失败 | 确认 FFmpeg 已安装（插件页探测状态）；无 FFmpeg 时流媒体回退直传 |
 | 部分端点 404 | 网关是协议子集，未适配的端点会返回 404/错误；可在 GitHub Issues 提出需求 |
+
+---
+
+## 7. 客户端兼容性实测记录
+
+> 测试环境：雷电模拟器（Android）+ 局域网网关 `192.168.100.29:10248`，网关版本 v1.0.10。
+> 认证凭据：`admin` / 流媒体密码（明文 `p`、`t/s` token、`apiKey` 三种均已验证）。
+
+| 客户端 | 协议 | 认证方式 | 结果 | 备注 |
+|---|---|---|---|---|
+| 音流（cn.aqzscn.stream_music） | Navidrome | Bearer token | ✅ 全通 | 艺术家/专辑/歌词/播放/搜索均正常 |
+| Ultrasonic（org.moire.ultrasonic） | Subsonic | 明文 `p` | ✅ 全通 | 拼音分组艺术家列表、FLAC 码率显示、播放正常 |
+| DSub（github.paroj.dsub2000） | Subsonic | `t/s` token | ⚠️ API 全通 | 网关侧 getAlbumList/getUser 全 200；客户端本地明文口令弹窗需手动确认 |
+| StreamMusic（com.sumsg.musichub，箭头音乐） | Subsonic | `apiKey` | ✅ 全通 | 艺术家网格、歌手详情、歌词、播放正常；**依赖网关 apiKey 认证支持** |
+| Subtracks（com.subtracks v3.0.0） | Subsonic | `t/s` token | ✅ 全通 | 连接测试 OK、同步、封面、专辑详情、播放正常 |
+| Jellyfin 官方（org.jellyfin.mobile） | Jellyfin | — | ❌ 客户端限制 | 客户端握手校验不满足（/System/Info/Public 四种伪装修复均无效），非网关 bug |
+| Findroid（dev.jdtech.jellyfin） | Jellyfin | — | ❌ 客户端崩溃 | 启动即崩溃，客户端自身问题 |
+| com.subsonic20.player | Subsonic | — | ❌ 客户端崩溃 | 缺 Google Play Services 动态模块，客户端自身问题 |
+
+### 网关侧已修复的兼容性缺口
+
+- **apiKey 参数认证**（v1.0.10）：Navidrome 风格客户端（StreamMusic/箭头音乐）以 `?apiKey=<subsonicToken>` 认证；网关新增校验 `apiKey == md5(stream_pass + "lnh-navidrome")`（即 subsonicToken）
+- **Navidrome /rest 前缀路由**（v1.0.10）：客户端把 Base URL 配成带 `/rest` 后缀时，`/rest/auth/*`、`/rest/api/*`、`/rest/ping` 路由可正常命中
+- **Subsonic 列表响应补 `x-total-count` 头**：音流客户端统计信息不再显示"未知"
