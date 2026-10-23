@@ -206,6 +206,11 @@ func (s *scheduler) loop() {
 func (s *scheduler) watchEnabled() bool { return s.cfg.GetDefault(watchEnableKey, "0") == "1" }
 
 func (s *scheduler) watchInterval() time.Duration {
+	return time.Duration(s.watchIntervalMinutes()) * time.Minute
+}
+
+// watchIntervalMinutes 返回监控检查间隔（分钟，1-1440）。
+func (s *scheduler) watchIntervalMinutes() int {
 	n, err := strconv.Atoi(s.cfg.GetDefault(watchIntKey, "5"))
 	if err != nil || n < 1 {
 		n = 5
@@ -213,7 +218,7 @@ func (s *scheduler) watchInterval() time.Duration {
 	if n > 1440 {
 		n = 1440
 	}
-	return time.Duration(n) * time.Minute
+	return n
 }
 
 // watchCheck 按间隔检查目录清单：发现新增音频文件后静默入库并自动刮削。
@@ -229,7 +234,6 @@ func (s *scheduler) watchCheck(now time.Time) {
 	}
 	s.watchLast = now
 	s.watchMu.Unlock()
-	log.Printf("[watch] 检查触发（dir=%q，上次=%s）", s.cfg.GetDefault("scan_dir", "/music"), fmtSchedTime(now))
 	s.watchScan(now)
 }
 
@@ -281,7 +285,6 @@ func (s *scheduler) watchScan(now time.Time) {
 		current[filepath.Clean(path)] = info.ModTime()
 		return nil
 	})
-	log.Printf("[watch] 目录清单 %d 个音频文件", len(current))
 
 	s.watchMu.Lock()
 	first := s.watchBase == nil
@@ -430,7 +433,7 @@ func (s *scheduler) getHandler(w http.ResponseWriter, r *http.Request) {
 		"lastMsg":      s.lastMsg,
 		"nextRun":      fmtSchedTime(s.nextRun),
 		"watchEnabled": s.watchEnabled(),
-		"watchInterval": s.cfg.GetDefault(watchIntKey, "5"),
+		"watchInterval": s.watchIntervalMinutes(),
 		"watchLastRun":  fmtSchedTime(s.lastWatchRun),
 		"watchLastMsg":  s.lastWatchMsg,
 	})
