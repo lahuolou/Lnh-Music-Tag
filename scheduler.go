@@ -8,15 +8,19 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"lnh-music-tag/internal/model"
 	"lnh-music-tag/internal/scrape"
 	cstore "lnh-music-tag/internal/store"
+	"lnh-music-tag/internal/taglibx"
 )
 
 // ---------- cron 表达式（5 段：分 时 日 月 周）----------
@@ -141,6 +145,8 @@ const (
 	schedCronKey   = "scheduler_cron"
 	schedModeKey   = "scheduler_mode"
 	schedScanKey   = "scheduler_scan_first"
+	watchEnableKey = "watcher_enabled"
+	watchIntKey    = "watcher_interval"
 )
 
 type scheduler struct {
@@ -156,6 +162,14 @@ type scheduler struct {
 	lastMsg string
 	nextRun time.Time
 	stopCh  chan struct{}
+
+	// 后台监控（静默刮削新增歌曲）
+	watchMu       sync.Mutex
+	watchBase     map[string]time.Time // path -> mtime 基线；首次建立后只处理其后新增
+	watchRunning  bool
+	watchLast     time.Time // 上次目录清单检查时间
+	lastWatchRun  time.Time
+	lastWatchMsg  string
 }
 
 func newScheduler(cfg *cstore.Config, js *jobStore, st *store, ms *scrape.MultiSource, scans *scanManager) *scheduler {
@@ -184,8 +198,143 @@ func (s *scheduler) loop() {
 			return
 		case <-ticker.C:
 			s.check()
+			s.watchCheck(time.Now())
 		}
 	}
+}
+
+func (s *scheduler) watchEnabled() bool { return s.cfg.GetDefault(watchEnableKey, "0") == "1" }
+
+func (s *scheduler) watchInterval() time.Duration {
+	n, err := strconv.Atoi(s.cfg.GetDefault(watchIntKey, "5"))
+	if err != nil || n < 1 {
+		n = 5
+	}
+	if n > 1440 {
+		n = 1440
+	}
+	return time.Duration(n) * time.Minute
+}
+
+// watchCheck 按间隔检查目录清单：发现新增音频文件后静默入库并自动刮削。
+func (s *scheduler) watchCheck(now time.Time) {
+	if !s.watchEnabled() {
+		return
+	}
+	interval := s.watchInterval()
+	s.watchMu.Lock()
+	if !s.watchLast.IsZero() && now.Sub(s.watchLast) < interval {
+		s.watchMu.Unlock()
+		return
+	}
+	s.watchLast = now
+	s.watchMu.Unlock()
+	log.Printf("[watch] 检查触发（dir=%q，上次=%s）", s.cfg.GetDefault("scan_dir", "/music"), fmtSchedTime(now))
+	s.watchScan(now)
+}
+
+// watchScan 收集目录音频清单并与基线对比，对新增曲目静默入库 + 自动刮削。
+// 首次运行只建立基线（不刮削），避免进程重启后对全库重复刮削。
+func (s *scheduler) watchScan(now time.Time) {
+	s.watchMu.Lock()
+	if s.watchRunning {
+		s.watchMu.Unlock()
+		return
+	}
+	s.watchRunning = true
+	s.watchMu.Unlock()
+	defer func() {
+		s.watchMu.Lock()
+		s.watchRunning = false
+		s.watchMu.Unlock()
+	}()
+
+	dir := strings.TrimSpace(s.cfg.GetDefault("scan_dir", "/music"))
+	st, err := os.Stat(dir)
+	if err != nil || !st.IsDir() {
+		log.Printf("[watch] 目录不可访问，跳过本次检查: %q (err=%v)", dir, err)
+		return
+	}
+
+	// 收集当前目录全部音频文件（path -> mtime）。
+	current := map[string]time.Time{}
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") || skipScanDirs[strings.ToLower(d.Name())] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		if !model.AudioExts[strings.ToLower(filepath.Ext(path))] {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		current[filepath.Clean(path)] = info.ModTime()
+		return nil
+	})
+	log.Printf("[watch] 目录清单 %d 个音频文件", len(current))
+
+	s.watchMu.Lock()
+	first := s.watchBase == nil
+	if first {
+		s.watchBase = current
+		s.watchMu.Unlock()
+		return
+	}
+	var added []string
+	for p := range current {
+		if _, ok := s.watchBase[p]; !ok {
+			added = append(added, p)
+		}
+	}
+	s.watchMu.Unlock()
+	if len(added) == 0 {
+		return
+	}
+
+	// 静默处理：读标签入库，再对新增曲目批量刮削（封面+歌词+全部元数据）。
+	var ids []string
+	for _, p := range added {
+		if s.st.exists(p) {
+			continue
+		}
+		t, terr := taglibx.ReadTrackLight(p)
+		if terr != nil {
+			continue
+		}
+		s.st.add(t)
+		ids = append(ids, t.ID)
+	}
+	if len(ids) == 0 {
+		s.watchMu.Lock()
+		s.watchBase = current
+		s.watchMu.Unlock()
+		return
+	}
+	job := s.js.create(len(ids), "scrape")
+	s.js.runBounded(job, func() {
+		runBatch(job, s.st, s.ms, s.cfg, "auto", ids, fieldsFromList(nil, true, true), false)
+	})
+	msg := fmt.Sprintf("监控新增 %d 首，已静默刮削（任务 %s）", len(ids), job.ID)
+	s.mu.Lock()
+	s.lastWatchRun = now
+	s.lastWatchMsg = msg
+	s.mu.Unlock()
+	addLog("act_watch", true, 1, 0, 0, "任务计划："+msg)
+
+	// 处理完成后把新增并入基线，避免下次重复。
+	s.watchMu.Lock()
+	s.watchBase = current
+	s.watchMu.Unlock()
 }
 
 func (s *scheduler) check() {
@@ -278,24 +427,30 @@ func (s *scheduler) getHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":   s.enabled(),
-		"cron":      s.cfg.GetDefault(schedCronKey, "0 3 * * *"),
-		"mode":      s.cfg.GetDefault(schedModeKey, "onekey"),
-		"scanFirst": s.cfg.GetDefault(schedScanKey, "1") == "1",
-		"running":   s.running,
-		"lastRun":   fmtSchedTime(s.lastRun),
-		"lastMsg":   s.lastMsg,
-		"nextRun":   fmtSchedTime(s.nextRun),
+		"enabled":      s.enabled(),
+		"cron":         s.cfg.GetDefault(schedCronKey, "0 3 * * *"),
+		"mode":         s.cfg.GetDefault(schedModeKey, "onekey"),
+		"scanFirst":    s.cfg.GetDefault(schedScanKey, "1") == "1",
+		"running":      s.running,
+		"lastRun":      fmtSchedTime(s.lastRun),
+		"lastMsg":      s.lastMsg,
+		"nextRun":      fmtSchedTime(s.nextRun),
+		"watchEnabled": s.watchEnabled(),
+		"watchInterval": s.cfg.GetDefault(watchIntKey, "5"),
+		"watchLastRun":  fmtSchedTime(s.lastWatchRun),
+		"watchLastMsg":  s.lastWatchMsg,
 	})
 }
 
 // saveHandler POST /api/scheduler：保存配置并立即重算下次运行时间。
 func (s *scheduler) saveHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Enabled   *bool   `json:"enabled"`
-		Cron      *string `json:"cron"`
-		Mode      *string `json:"mode"`
-		ScanFirst *bool   `json:"scanFirst"`
+		Enabled        *bool   `json:"enabled"`
+		Cron           *string `json:"cron"`
+		Mode           *string `json:"mode"`
+		ScanFirst      *bool   `json:"scanFirst"`
+		WatchEnabled   *bool   `json:"watchEnabled"`
+		WatchInterval  *int    `json:"watchInterval"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -325,6 +480,16 @@ func (s *scheduler) saveHandler(w http.ResponseWriter, r *http.Request) {
 			v = "1"
 		}
 		s.cfg.Set(schedScanKey, v)
+	}
+	if req.WatchEnabled != nil {
+		v := "0"
+		if *req.WatchEnabled {
+			v = "1"
+		}
+		s.cfg.Set(watchEnableKey, v)
+	}
+	if req.WatchInterval != nil && *req.WatchInterval >= 1 && *req.WatchInterval <= 1440 {
+		s.cfg.Set(watchIntKey, strconv.Itoa(*req.WatchInterval))
 	}
 	// 保存后立即重算下次运行时间。
 	if e, err := parseCron(s.cfg.GetDefault(schedCronKey, "0 3 * * *")); err == nil {

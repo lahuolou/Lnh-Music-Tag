@@ -14,7 +14,7 @@ const cfg = ref({ adminUser: '', autoFixTitle: true, autoRenameFile: true, scanD
 const cfgMsg = ref('')
 
 // 任务计划（自动刮削）
-const sched = ref({ enabled: false, cron: '0 3 * * *', mode: 'onekey', scanFirst: true, running: false, lastRun: '', lastMsg: '', nextRun: '' })
+const sched = ref({ enabled: false, cron: '0 3 * * *', mode: 'onekey', scanFirst: true, running: false, lastRun: '', lastMsg: '', nextRun: '', watchEnabled: false, watchInterval: 5, watchLastRun: '', watchLastMsg: '' })
 const schedMsg = ref('')
 
 async function loadSched() {
@@ -32,7 +32,9 @@ async function saveSched() {
         enabled: sched.value.enabled,
         cron: sched.value.cron,
         mode: sched.value.mode,
-        scanFirst: sched.value.scanFirst
+        scanFirst: sched.value.scanFirst,
+        watchEnabled: sched.value.watchEnabled,
+        watchInterval: Number(sched.value.watchInterval) || 5
       })
     });
     toast(t('schedSaved'), 'ok');
@@ -169,6 +171,18 @@ onMounted(() => { loadCfg(); loadSched(); });
         <div class="chk" style="margin:6px 0 12px">
           <input type="checkbox" id="schedScan" class="tchk" v-model="sched.scanFirst" />
           <label for="schedScan">{{ t('schedScanFirst') }}</label>
+        </div>
+        <div style="margin:0 0 10px;padding-top:8px;border-top:1px solid #e5e5e5">
+          <div class="chk" style="margin:0 0 8px">
+            <input type="checkbox" id="watchOn" class="tchk" v-model="sched.watchEnabled" />
+            <label for="watchOn">{{ t('watchEnable') }}</label>
+          </div>
+          <p class="muted" style="margin:0 0 8px">{{ t('watchHint') }}</p>
+          <div class="field">
+            <label>{{ t('watchInterval') }}</label>
+            <input type="number" min="1" max="1440" v-model="sched.watchInterval" style="width:120px" />
+          </div>
+          <p class="muted" style="margin:6px 0 0" v-if="sched.watchLastRun">{{ t('watchLast') }}: {{ sched.watchLastRun }}（{{ sched.watchLastMsg }}）</p>
         </div>
         <div class="row" style="margin:0 0 8px">
           <button @click="saveSched">{{ t('saveCfg') }}</button>

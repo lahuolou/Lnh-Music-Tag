@@ -367,6 +367,10 @@ const dict = {
     schedSaveFail: '保存失败: {m}',
     schedLoadFail: '读取任务计划失败: {m}',
     schedRunOk: '已触发，稍后可在操作日志查看',
+    watchEnable: '监控新增歌曲（自动静默刮削）',
+    watchHint: '定期检查音乐目录，发现新增音频文件后自动入库并静默刮削，无需手动点击一键刮削。',
+    watchInterval: '检查间隔（分钟）',
+    watchLast: '上次监控',
     // 刮削源插件
     srcPlugins: '🔌 刮削源插件',
     srcPluginsHint: '开启的源会出现在批量页的源选择里；「自动」始终可用，只调用已开启的源。',
@@ -827,6 +831,10 @@ my-plugin.zip
     schedSaveFail: 'Save failed: {m}',
     schedLoadFail: 'Failed to load scheduler: {m}',
     schedRunOk: 'Triggered; check the activity log shortly',
+    watchEnable: 'Watch for new songs (silent auto-scrape)',
+    watchHint: 'Periodically checks the music directory; newly added audio files are auto-imported and silently scraped — no manual one-key scrape needed.',
+    watchInterval: 'Check interval (minutes)',
+    watchLast: 'Last watch',
     // Scrape source plugins
     srcPlugins: '🔌 Scrape Source Plugins',
     srcPluginsHint: 'Enabled sources appear in the batch source picker; "Auto" always works and only uses enabled sources.',
