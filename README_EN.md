@@ -58,6 +58,7 @@ Lnh-Music-Tag is a **self-hosted tag manager and streaming gateway** for your pe
 - **Activity log**: scan/scrape/convert operations are fully traced; reviewable and clearable
 - **Update checker**: built-in GitHub Release check with one-click upgrade hint
 - **Robustness**: bounded-concurrency background jobs (semaphore), panic recovery to a `failed` terminal state, timeouts on all external process calls, batched DB transactions, single-instance startup lock
+- **Plugin import hardening**: third-party plugin ZIPs are validated before extraction — plugin name and relative-path checks (no traversal), zip-slip protection, file-count (10,000) and per-file size (256 MiB) limits
 
 ---
 
@@ -144,7 +145,7 @@ LNH_CONFIG_DIR=./config LNH_PORT=:10248 ./lnh-music-tag
 | Jellyfin | `http://IP:10248/jellyfin` | same |
 | Emby | `http://IP:10248/emby` | same |
 
-Pick the matching protocol when adding the server in your client. Full endpoint reference: [docs/STREAMING_GATEWAY.md](./docs/STREAMING_GATEWAY.md).
+Pick the matching protocol when adding the server in your client — common clients (Yingliu, Archer, Jellyfin official App, Emby official App, Navidrome official App, etc.) all work this way. Full endpoint reference: [docs/STREAMING_GATEWAY.md](./docs/STREAMING_GATEWAY.md).
 
 ---
 
