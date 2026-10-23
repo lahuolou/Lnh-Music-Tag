@@ -395,19 +395,13 @@ func (s *scheduler) fire(now time.Time) {
 		s.mu.Unlock()
 		return
 	}
-	// 刮削模式：onekey = 完整流水线；batch = 按源批量刮削（封面+歌词+全部元数据）。
-	var job *scrapeJob
-	if s.cfg.GetDefault(schedModeKey, "onekey") == "batch" {
-		ids := make([]string, len(list))
-		for i, t := range list {
-			ids[i] = t.ID
-		}
-		job = s.js.create(len(list), "scrape")
+	// 刮削模式：onekey = 完整一键流水线；dedup = 先去重再一键刮削。
+	job := s.js.create(len(list), "onekey")
+	if s.cfg.GetDefault(schedModeKey, "onekey") == "dedup" {
 		s.js.runBounded(job, func() {
-			runBatch(job, s.st, s.ms, s.cfg, "auto", ids, fieldsFromList(nil, true, true), false)
+			runOneKeyPipeline(job, s.st, s.ms, list, true, s.cfg)
 		})
 	} else {
-		job = s.js.create(len(list), "onekey")
 		s.js.runBounded(job, func() {
 			runOneKeyPipeline(job, s.st, s.ms, list, false, s.cfg)
 		})
@@ -471,7 +465,7 @@ func (s *scheduler) saveHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		s.cfg.Set(schedCronKey, expr)
 	}
-	if req.Mode != nil && (*req.Mode == "onekey" || *req.Mode == "batch") {
+	if req.Mode != nil && (*req.Mode == "onekey" || *req.Mode == "dedup") {
 		s.cfg.Set(schedModeKey, *req.Mode)
 	}
 	if req.ScanFirst != nil {

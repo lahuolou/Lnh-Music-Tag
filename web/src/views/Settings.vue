@@ -16,10 +16,32 @@ const cfgMsg = ref('')
 // 任务计划（自动刮削）
 const sched = ref({ enabled: false, cron: '0 3 * * *', mode: 'onekey', scanFirst: true, running: false, lastRun: '', lastMsg: '', nextRun: '', watchEnabled: false, watchInterval: 5, watchLastRun: '', watchLastMsg: '' })
 const schedMsg = ref('')
+// 下拉式 cron：频率 daily|weekly|custom + 小时(0-23) + 星期(cron 值 0=周日)
+const schedFreq = ref('daily')
+const schedHour = ref(3)
+const schedWeekday = ref(1)
+const schedWeekdays = [0, 1, 2, 3, 4, 5, 6]
+const weekKeys = ['weekSun', 'weekMon', 'weekTue', 'weekWed', 'weekThu', 'weekFri', 'weekSat']
+
+function parseSchedCron(cron) {
+  const s = String(cron || '').trim()
+  let m = s.match(/^0 (\d{1,2}) \* \* \*$/)
+  if (m) { schedFreq.value = 'daily'; schedHour.value = Number(m[1]); return }
+  m = s.match(/^0 (\d{1,2}) \* \* ([0-7])$/)
+  if (m) { schedFreq.value = 'weekly'; schedHour.value = Number(m[1]); schedWeekday.value = Number(m[2]) === 7 ? 0 : Number(m[2]); return }
+  schedFreq.value = 'custom'
+}
+
+function buildSchedCron() {
+  if (schedFreq.value === 'daily') return `0 ${schedHour.value} * * *`
+  if (schedFreq.value === 'weekly') return `0 ${schedHour.value} * * ${schedWeekday.value}`
+  return sched.value.cron
+}
 
 async function loadSched() {
   try {
     sched.value = await api('/api/scheduler');
+    parseSchedCron(sched.value.cron);
   } catch (e) { schedMsg.value = t('schedLoadFail', { m: e.message }); }
 }
 
@@ -30,7 +52,7 @@ async function saveSched() {
       method: 'POST',
       body: JSON.stringify({
         enabled: sched.value.enabled,
-        cron: sched.value.cron,
+        cron: buildSchedCron(),
         mode: sched.value.mode,
         scanFirst: sched.value.scanFirst,
         watchEnabled: sched.value.watchEnabled,
@@ -156,7 +178,27 @@ onMounted(() => { loadCfg(); loadSched(); });
           <input type="checkbox" id="schedOn" class="tchk" v-model="sched.enabled" />
           <label for="schedOn">{{ t('schedEnable') }}</label>
         </div>
-        <div class="field">
+        <div class="field" style="flex-direction:row;flex-wrap:wrap;gap:10px;align-items:center">
+          <label style="margin:0">{{ t('schedFreq') }}</label>
+          <select v-model="schedFreq" style="width:auto">
+            <option value="daily">{{ t('schedFreqDaily') }}</option>
+            <option value="weekly">{{ t('schedFreqWeekly') }}</option>
+            <option value="custom">{{ t('schedFreqCustom') }}</option>
+          </select>
+          <template v-if="schedFreq === 'weekly'">
+            <label style="margin:0">{{ t('schedWeekday') }}</label>
+            <select v-model="schedWeekday" style="width:auto">
+              <option v-for="(w, i) in schedWeekdays" :key="w" :value="w">{{ t(weekKeys[i]) }}</option>
+            </select>
+          </template>
+          <template v-if="schedFreq !== 'custom'">
+            <label style="margin:0">{{ t('schedHour') }}</label>
+            <select v-model="schedHour" style="width:auto">
+              <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}:00</option>
+            </select>
+          </template>
+        </div>
+        <div class="field" v-if="schedFreq === 'custom'">
           <label>{{ t('schedCron') }}</label>
           <input type="text" v-model="sched.cron" placeholder="0 3 * * *" />
         </div>
@@ -165,7 +207,7 @@ onMounted(() => { loadCfg(); loadSched(); });
           <label>{{ t('schedMode') }}</label>
           <select v-model="sched.mode">
             <option value="onekey">{{ t('schedModeOnekey') }}</option>
-            <option value="batch">{{ t('schedModeBatch') }}</option>
+            <option value="dedup">{{ t('schedModeDedup') }}</option>
           </select>
         </div>
         <div class="chk" style="margin:6px 0 12px">
