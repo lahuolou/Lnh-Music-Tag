@@ -139,6 +139,9 @@
 |---|---|---|
 | GET | `/api/settings` | 设置项（管理员信息、音乐目录、开关） |
 | POST | `/api/settings` | 更新设置 |
+| GET | `/api/scheduler` | 任务计划（自动刮削）配置与状态：`enabled/cron/mode/scanFirst/running/lastRun/lastMsg/nextRun` |
+| POST | `/api/scheduler` | 保存任务计划。Body：`{"enabled":true,"cron":"0 3 * * *","mode":"onekey\|batch","scanFirst":true}`（cron 无效时 400） |
+| POST | `/api/scheduler/run` | 立即触发一次任务计划。Body：`{}` |
 | GET | `/api/version/check` | GitHub Release 更新检查 |
 | GET | `/api/metrics` | 轻量文本指标（需登录）：曲目总数、后台任务活跃/容量、封面缓存条目、FFmpeg 可用性 |
 | GET | `/api/logs` | 操作日志列表 |

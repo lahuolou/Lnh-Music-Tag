@@ -2,7 +2,7 @@
 
 > Self-hosted · Open Source · Full-featured music library tag management
 >
-> Version: 1.0.7 ｜ Language: English / [中文](./README.md)
+> Version: 1.0.11 ｜ Language: English / [中文](./README.md)
 
 Lnh-Music-Tag is a **self-hosted tag manager and streaming gateway** for your personal music library. It helps you batch-organize metadata (title, artist, album, cover art, lyrics, etc.) of local audio files, and serves the curated library to external players through a built-in **unified streaming gateway** speaking **Subsonic / Jellyfin / Emby / Navidrome** protocols — compatible with dozens of players such as Yingliu (SoundFlow), Archer, Jellyfin, Emby, Navidrome and others.
 
@@ -38,6 +38,7 @@ Lnh-Music-Tag is a **self-hosted tag manager and streaming gateway** for your pe
 - **Encoding fix**: detect and restore GBK/UTF-8 misread Chinese tags
 - **Script conversion**: bulk simplified ↔ traditional conversion
 - **Filename cleanup**: `song.mp3.flac → song.flac` — probe the real encoding and rename correctly
+- **Scheduled auto-scrape**: cron-driven background "scan + scrape" (e.g. daily 03:00, every 30 min, weekdays 02:00); one-key pipeline or batch mode; no re-entry while running, each run logged, next/last run shown in Settings
 
 ### Format Conversion
 - FFmpeg-based batch transcoding: target format (MP3/FLAC/AAC/OGG/WAV…), bitrate, sample rate

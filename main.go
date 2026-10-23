@@ -382,6 +382,9 @@ func main() {
 	sessions := newSessionStore(cfg)
 	jobs := newJobStore(cfg.DB())
 	scans := newScanManager()
+	// 任务计划：后台定时自动刮削（cron 驱动，设置页可配）。
+	sched := newScheduler(cfg, jobs, store, ms, scans)
+	sched.start()
 	updates := newUpdateChecker("lahuolou/Lnh-Music-Tag")
 	updates.Start()
 
@@ -662,6 +665,11 @@ func main() {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "已保存"})
 	})
+
+	// 任务计划：查询 / 保存 / 立即运行（自动刮削）。
+	pm.HandleFunc("GET /api/scheduler", sched.getHandler)
+	pm.HandleFunc("POST /api/scheduler", sched.saveHandler)
+	pm.HandleFunc("POST /api/scheduler/run", sched.runHandler)
 
 	// List tracks. 每次返回时动态重算 garbled/needsIdentify 标记（覆盖扫描
 	// 时快照），升级后无需重新扫描，"乱码/待识别"筛选立即按最新算法生效。
