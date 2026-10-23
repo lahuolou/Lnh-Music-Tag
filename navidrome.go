@@ -123,9 +123,17 @@ func (n *navidromeAPI) listJSON(w http.ResponseWriter, r *http.Request, data []a
 	// Navidrome 列表接口返回裸 JSON 数组，总数通过 x-total-count 与 Content-Range 响应头传递
 	start, end := paginationND(r)
 	start, end = sliceRange(total, start, end)
+	if data == nil {
+		data = []any{} // 空列表返回 [] 而非 null，避免客户端 JSON 解析失败
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("x-total-count", strconv.Itoa(total))
-	w.Header().Set("Content-Range", fmt.Sprintf("items %d-%d/%d", start, end-1, total))
+	if total == 0 || end <= start {
+		// 空列表 / 空范围时返回合法的空区间，避免 items 0--1/0 这类非法头
+		w.Header().Set("Content-Range", fmt.Sprintf("items */%d", total))
+	} else {
+		w.Header().Set("Content-Range", fmt.Sprintf("items %d-%d/%d", start, end-1, total))
+	}
 	_ = json.NewEncoder(w).Encode(data)
 }
 func (n *navidromeAPI) all() []*model.Track          { return n.library.all() }
@@ -270,18 +278,14 @@ func (n *navidromeAPI) authorized(r *http.Request) bool {
 }
 
 func paginationND(r *http.Request) (start, end int) {
-	start, _ = strconv.Atoi(r.URL.Query().Get("_start"))
+	start = parseNonNegParam(r, "_start")
 	if start == 0 {
-		if s := r.URL.Query().Get("start"); s != "" {
-			start, _ = strconv.Atoi(s)
-		}
+		start = parseNonNegParam(r, "start")
 	}
 	if start == 0 {
-		if s := r.URL.Query().Get("offset"); s != "" {
-			start, _ = strconv.Atoi(s)
-		}
+		start = parseNonNegParam(r, "offset")
 	}
-	end, _ = strconv.Atoi(r.URL.Query().Get("_end"))
+	end = parseNonNegParam(r, "_end")
 	if end == 0 {
 		if v := r.URL.Query().Get("_limit"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -308,7 +312,24 @@ func paginationND(r *http.Request) (start, end int) {
 	}
 	return
 }
+
+// parseNonNegParam 读取查询参数并解析为 int；负数与非法值一律视为 0，
+// 防止外部传入 _start=-1 等值导致后续切片索引越界（panic）。
+func parseNonNegParam(r *http.Request, key string) int {
+	n, err := strconv.Atoi(r.URL.Query().Get(key))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
 func sliceRange(total, start, end int) (int, int) {
+	if start < 0 {
+		start = 0
+	}
+	if end < start {
+		end = start
+	}
 	if start > total {
 		start = total
 	}

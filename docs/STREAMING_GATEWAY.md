@@ -23,6 +23,8 @@
 - Navidrome 兼容：`/auth/login` 提交 `{username, password}` 获取 token，后续请求带 `x-nd-authorization`
 - Jellyfin / Emby：`/auth/login` 或 `?api_key=` 等标准方式
 
+**用户名策略**：登录时**用户名可任意填写**（如 `admin`、`test`、播放器默认值均可），网关**只校验流媒体密码**（`stream_pass`），不比较用户名；成功后的返回身份统一为配置的管理员用户名。这是为了兼容 Navidrome 风格客户端（音流、箭头音乐等）在登录时提交非配置用户名的行为，实测为必要兼容。安全边界不变：密码错误一律拒绝，未配置流媒体密码时网关不可用。
+
 认证失败统一返回协议标准错误（如 Subsonic `{"subsonic-response":{"status":"failed","error":{"code":40,...}}}`）。
 
 ---
