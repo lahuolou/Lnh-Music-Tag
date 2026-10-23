@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	pluginZipMaxSize  = 256 << 20 // 插件包上限 256MiB
+	pluginZipMaxSize  = 256 << 20 // 插件包/单文件上限 256MiB
 	pluginRunTimeout  = 120 * time.Second
 	pluginZipFileName = "plugin.json"
+	pluginZipMaxFiles = 10000
 )
 
 // pluginZipDecl 是插件包内 plugin.json 的声明格式。
@@ -59,6 +60,9 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	if err != nil {
 		return nil, errors.New("无法解析 zip 插件包: " + err.Error())
 	}
+	if len(zr.File) > pluginZipMaxFiles {
+		return nil, errors.New("插件包文件数量超过 10000 个上限")
+	}
 	// 1. 读取 plugin.json
 	var decl pluginZipDecl
 	found := false
@@ -87,6 +91,9 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	if decl.Name == "" || decl.Label == "" {
 		return nil, errors.New("plugin.json 缺少 name/label")
 	}
+	if !validPluginName(decl.Name) {
+		return nil, errors.New("plugin.json name 只能包含字母、数字、点、下划线和连字符，且不能以点开头")
+	}
 	kind := PluginKind(decl.Kind)
 	switch kind {
 	case PluginScrape, PluginTool:
@@ -95,6 +102,23 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	}
 	if len(decl.Entries) == 0 {
 		return nil, errors.New("plugin.json 缺少 entries（平台 -> 入口文件映射）")
+	}
+	for platform, rel := range decl.Entries {
+		if strings.TrimSpace(platform) == "" || !validPluginRelativePath(rel) {
+			return nil, errors.New("plugin.json entries 包含非法相对路径")
+		}
+	}
+	if decl.Panel != "" && !validPluginRelativePath(decl.Panel) {
+		return nil, errors.New("plugin.json panel 必须是安全的相对路径")
+	}
+	// 在删除/覆盖旧插件目录前先验证整个 ZIP 的路径，避免恶意条目位于包尾时
+	// 导致旧插件先被删除，再因路径错误而导入失败。
+	for _, f := range zr.File {
+		name := strings.TrimPrefix(f.Name, "./")
+		if name == "" || strings.Contains(name, "\\") || filepath.IsAbs(name) ||
+			strings.Contains(name, ":") || !validPluginRelativePath(name) {
+			return nil, errors.New("插件包包含非法路径: " + f.Name)
+		}
 	}
 	// 3. 冲突检查：内置插件不可覆盖；已导入的第三方插件允许覆盖升级，
 	//    覆盖时保留用户已填的配置（Config 不变），只更新插件定义。
@@ -123,6 +147,13 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	var extracted int64
 	for _, f := range zr.File {
 		name := strings.TrimPrefix(f.Name, "./")
+		// ZIP 规范使用正斜杠；拒绝反斜杠、盘符/绝对路径和父目录组件，
+		// 避免不同操作系统对路径的解释差异。
+		if name == "" || strings.Contains(name, "\\") || filepath.IsAbs(name) ||
+			strings.Contains(name, ":") || !validPluginRelativePath(name) {
+			os.RemoveAll(cleanDest)
+			return nil, errors.New("插件包包含非法路径: " + f.Name)
+		}
 		// zip-slip 防护：目标必须仍在 cleanDest 内
 		target := filepath.Join(cleanDest, filepath.FromSlash(name))
 		if !strings.HasPrefix(filepath.Clean(target), cleanDest+string(os.PathSeparator)) &&
@@ -158,12 +189,16 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			os.RemoveAll(cleanDest)
 			return nil, err
 		}
-		n, err := io.Copy(out, io.LimitReader(rc, pluginZipMaxSize))
+		n, err := io.Copy(out, io.LimitReader(rc, pluginZipMaxSize+1))
 		out.Close()
 		rc.Close()
 		if err != nil {
 			os.RemoveAll(cleanDest)
 			return nil, err
+		}
+		if n > pluginZipMaxSize {
+			os.RemoveAll(cleanDest)
+			return nil, errors.New("插件包单文件解压大小超过 256MiB 上限")
 		}
 		extracted += n
 		if extracted > maxExtractTotal {
@@ -208,6 +243,39 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	replacePlugin(p, nil)
 	savePluginsToDB(cfg)
 	return p, nil
+}
+
+// validPluginName prevents path traversal and platform-specific path interpretation
+// before a plugin name is used as a directory or registry key.
+func validPluginName(name string) bool {
+	if name == "" || name == "." || name == ".." || name[0] == '.' {
+		return false
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// validPluginRelativePath accepts only non-empty relative paths using ZIP's
+// forward-slash convention. It rejects traversal before any filesystem access.
+func validPluginRelativePath(rel string) bool {
+	if strings.TrimSpace(rel) == "" || strings.Contains(rel, "\\") ||
+		strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) || strings.Contains(rel, ":") {
+		return false
+	}
+	parts := strings.Split(strings.TrimSuffix(rel, "/"), "/")
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	return clean != "." && clean != ".." && !strings.HasPrefix(clean, ".."+string(os.PathSeparator))
 }
 
 // pluginEntryPath 返回当前平台可执行入口的绝对路径（不存在返回空串）。

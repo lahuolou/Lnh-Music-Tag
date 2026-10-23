@@ -324,6 +324,10 @@ func parseNonNegParam(r *http.Request, key string) int {
 }
 
 func sliceRange(total, start, end int) (int, int) {
+	// 空/负总库一律返回空区间 [0,0)，保证任何情况下都不会产生负切片索引。
+	if total <= 0 {
+		return 0, 0
+	}
 	if start < 0 {
 		start = 0
 	}
