@@ -24,6 +24,7 @@ func TestPaginationND(t *testing.T) {
 		{"_end 负数归零", "_start=2&_end=-3", 2, 102},
 		{"start 回退", "start=3", 3, 103},
 		{"offset 回退", "offset=4", 4, 104},
+		{"offset 负数归零后按 limit 推算", "offset=-9&limit=5", 0, 5},
 		{"_limit 推算", "_start=2&_limit=7", 2, 9},
 		{"limit 推算", "start=1&limit=3", 1, 4},
 		{"size 推算", "start=1&size=3", 1, 4},
@@ -54,6 +55,8 @@ func TestSliceRange(t *testing.T) {
 		{10, 11, 15, 10, 10}, // start > total
 		{0, 0, 5, 0, 0},      // 空库
 		{0, -5, -1, 0, 0},    // 空库 + 负数
+		{-1, 3, 5, 0, 0},     // 负 total（防御：任何输入都不产生负切片索引）
+		{-1, -3, -1, 0, 0},   // 负 total + 负参数
 	}
 	for _, c := range cases {
 		s, e := sliceRange(c.total, c.start, c.end)
