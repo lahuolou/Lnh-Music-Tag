@@ -318,24 +318,24 @@ onBeforeUnmount(stopPoll);
             <th class="th-sort" @click="setSort('artist')">{{ t('hArtist') }} {{ sortIcon('artist') }}</th>
             <th class="th-sort" style="width:64px" @click="setSort('bitrate')">{{ t('bQuality') }} {{ sortIcon('bitrate') }}</th>
             <th class="th-sort" @click="setSort('album')">{{ t('hAlbum') }} {{ sortIcon('album') }}</th>
-            <th class="col-deskhide" style="width:52px" :title="t('lyrTitle')">{{ t('hLyric') }}</th>
-            <th class="th-sort col-extra col-deskhide" @click="setSort('albumartist')">{{ t('hAlbumArtist') }} {{ sortIcon('albumartist') }}</th>
-            <th class="th-sort col-extra col-deskhide" @click="setSort('genre')">{{ t('hGenre') }} {{ sortIcon('genre') }}</th>
-            <th class="th-sort col-extra col-deskhide" style="width:60px" @click="setSort('year')">{{ t('hYear') }} {{ sortIcon('year') }}</th>
-            <th class="th-sort col-extra col-deskhide" style="width:56px" @click="setSort('tracknumber')">{{ t('bTrack') }} {{ sortIcon('tracknumber') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bFileName') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bComposer') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bLyricist') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bAlbumType') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bLanguage') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bComment') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bDiscNumber') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bDiscTotal') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bTrackTotal') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bSampleRate') }}</th>
-            <th class="col-extra col-deskhide">{{ t('bBitDepth') }}</th>
-            <th class="th-sort col-extra col-deskhide" style="width:56px" @click="setSort('duration')">{{ t('bDuration') }} {{ sortIcon('duration') }}</th>
-            <th class="th-sort col-extra col-deskhide" style="width:64px" @click="setSort('size')">{{ t('hSize') }} {{ sortIcon('size') }}</th>
+            <th style="width:52px" :title="t('lyrTitle')">{{ t('hLyric') }}</th>
+            <th class="th-sort col-extra" @click="setSort('albumartist')">{{ t('hAlbumArtist') }} {{ sortIcon('albumartist') }}</th>
+            <th class="th-sort col-extra" @click="setSort('genre')">{{ t('hGenre') }} {{ sortIcon('genre') }}</th>
+            <th class="th-sort col-extra" style="width:60px" @click="setSort('year')">{{ t('hYear') }} {{ sortIcon('year') }}</th>
+            <th class="th-sort col-extra" style="width:56px" @click="setSort('tracknumber')">{{ t('bTrack') }} {{ sortIcon('tracknumber') }}</th>
+            <th class="col-extra">{{ t('bFileName') }}</th>
+            <th class="col-extra">{{ t('bComposer') }}</th>
+            <th class="col-extra">{{ t('bLyricist') }}</th>
+            <th class="col-extra">{{ t('bAlbumType') }}</th>
+            <th class="col-extra">{{ t('bLanguage') }}</th>
+            <th class="col-extra">{{ t('bComment') }}</th>
+            <th class="col-extra">{{ t('bDiscNumber') }}</th>
+            <th class="col-extra">{{ t('bDiscTotal') }}</th>
+            <th class="col-extra">{{ t('bTrackTotal') }}</th>
+            <th class="col-extra">{{ t('bSampleRate') }}</th>
+            <th class="col-extra">{{ t('bBitDepth') }}</th>
+            <th class="th-sort col-extra" style="width:56px" @click="setSort('duration')">{{ t('bDuration') }} {{ sortIcon('duration') }}</th>
+            <th class="th-sort col-extra" style="width:64px" @click="setSort('size')">{{ t('hSize') }} {{ sortIcon('size') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -349,24 +349,24 @@ onBeforeUnmount(stopPoll);
             <td :title="item.tags.ARTIST ? item.tags.ARTIST : nameArtist(item)">{{ displayArtist(item) }}</td>
             <td class="col-extra">{{ item.quality || '' }}</td>
             <td>{{ tag(item, 'ALBUM') }}</td>
-            <td class="col-deskhide" :title="item.hasLrcFile || hasLyrics(item) ? t('lyrTitle') : ''">{{ lrcMark(item) }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'ALBUMARTIST') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'GENRE') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'DATE') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'TRACKNUMBER') }}</td>
-            <td class="col-extra col-deskhide" :title="item.fileName">{{ item.fileName }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'COMPOSER') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'LYRICIST') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'RELEASETYPE') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'LANGUAGE') }}</td>
-            <td class="col-extra col-deskhide" :title="tag(item, 'COMMENT')">{{ tag(item, 'COMMENT') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'DISCNUMBER') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'DISCTOTAL') }}</td>
-            <td class="col-extra col-deskhide">{{ tag(item, 'TRACKTOTAL') }}</td>
-            <td class="col-extra col-deskhide">{{ fmtKHz(item.sampleRate) }}</td>
-            <td class="col-extra col-deskhide">{{ item.bitDepth || '' }}</td>
-            <td class="col-extra col-deskhide">{{ fmtDur(item.duration) }}</td>
-            <td class="muted col-extra col-deskhide">{{ fmtSize(item.size) }}</td>
+            <td :title="item.hasLrcFile || hasLyrics(item) ? t('lyrTitle') : ''">{{ lrcMark(item) }}</td>
+            <td class="col-extra">{{ tag(item, 'ALBUMARTIST') }}</td>
+            <td class="col-extra">{{ tag(item, 'GENRE') }}</td>
+            <td class="col-extra">{{ tag(item, 'DATE') }}</td>
+            <td class="col-extra">{{ tag(item, 'TRACKNUMBER') }}</td>
+            <td class="col-extra" :title="item.fileName">{{ item.fileName }}</td>
+            <td class="col-extra">{{ tag(item, 'COMPOSER') }}</td>
+            <td class="col-extra">{{ tag(item, 'LYRICIST') }}</td>
+            <td class="col-extra">{{ tag(item, 'RELEASETYPE') }}</td>
+            <td class="col-extra">{{ tag(item, 'LANGUAGE') }}</td>
+            <td class="col-extra" :title="tag(item, 'COMMENT')">{{ tag(item, 'COMMENT') }}</td>
+            <td class="col-extra">{{ tag(item, 'DISCNUMBER') }}</td>
+            <td class="col-extra">{{ tag(item, 'DISCTOTAL') }}</td>
+            <td class="col-extra">{{ tag(item, 'TRACKTOTAL') }}</td>
+            <td class="col-extra">{{ fmtKHz(item.sampleRate) }}</td>
+            <td class="col-extra">{{ item.bitDepth || '' }}</td>
+            <td class="col-extra">{{ fmtDur(item.duration) }}</td>
+            <td class="muted col-extra">{{ fmtSize(item.size) }}</td>
           </tr>
           <tr v-if="!shown.length">
             <td colspan="24" class="muted" style="padding:16px;text-align:center">

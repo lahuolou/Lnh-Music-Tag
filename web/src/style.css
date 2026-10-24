@@ -148,10 +148,6 @@ label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
   .split .left .music-list{height:auto}
   .tree-scroll{max-height:calc(100vh - 330px);flex:none}
 }
-/* 电脑版精简列：桌面宽视口仅保留 封面/标题/艺术家/品质/专辑 五列（勾选列除外） */
-@media(min-width:1081px){
-  .col-deskhide{display:none}
-}
 
 /* 手机适配：窄屏隐藏低优先级列（col-extra），表格宽度收敛、禁止横向滚动
    列序（24 列）：1勾选 2封面 3歌名 4歌手 5专辑 6歌词 7专辑艺术家 8风格 9年代
