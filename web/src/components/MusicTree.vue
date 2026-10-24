@@ -377,6 +377,13 @@ onBeforeUnmount(stopPoll);
       </table>
       <!-- 手机上使用卡片列表，避免桌面宽表格挤压歌名和操作控件。 -->
       <div class="mobile-track-list">
+        <div class="mobile-sel-bar">
+          <label class="mobile-sel-all">
+            <input type="checkbox" class="tchk" :checked="isAllSel()" @change="toggleAll" />
+            <span>{{ t('bSelectAll') }}</span>
+          </label>
+          <span v-if="state.selected.size" class="muted mobile-sel-count">{{ t('selCount', { n: state.selected.size }) }}</span>
+        </div>
         <article v-for="item in shown" :key="item.id" class="mobile-track-card" :class="{ on: state.selected.has(item.id) }" @click="openTrack(item)">
           <input type="checkbox" class="tchk mobile-track-check" :checked="state.selected.has(item.id)" :aria-label="displayTitle(item)" @click.stop @change="toggleSel(item, $event)" />
           <img v-if="item.hasCover" class="mobile-track-cover" :src="coverUrl(item.id)" loading="lazy" @error="retryCover($event, item)" @click.stop="openTrack(item)" />

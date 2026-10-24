@@ -121,7 +121,7 @@ label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
 .err{color:var(--err)}
 .navbar{flex:1}
 .topnav{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:6px;padding:10px 24px;background:var(--panel);border-bottom:1px solid var(--line)}
-.topnav .brand{font-weight:700;font-size:15px;margin-right:8px;white-space:nowrap}
+.topnav .brand{font-weight:700;font-size:15px;margin-right:8px;white-space:nowrap;cursor:pointer}
 .topnav .spacer{flex:1}
 /* 齿轮二级导航：悬停或点击弹出（设置/关于/检查更新/退出） */
 .gear{position:relative;display:inline-flex}
@@ -178,9 +178,9 @@ label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
   .mtbl th:nth-child(5),.mtbl td:nth-child(5){max-width:80px}
   .login-box{width:88vw;padding:26px 20px}
   .fmt-grid{grid-template-columns:1fr}
-  /* 手机触控友好：按钮/下拉最小高度，避免点击困难 */
-  .ghost.sm, .chip, select, .mtbl .tchk{min-height:40px;touch-action:manipulation}
-  .ghost.sm{padding:6px 14px}
+  /* 手机触控友好：按钮/下拉最小高度，避免点击困难（.sm 与 .ghost.sm 统一，保证扫描/刷新按钮尺寸一致） */
+  button.sm, button.ghost.sm, .chip, select, .mtbl .tchk{min-height:40px;touch-action:manipulation}
+  button.sm, button.ghost.sm{padding:6px 14px}
   /* 窄屏细节：顶栏更紧凑、齿轮菜单防溢出、工作台全宽 */
   .topnav .brand{font-size:13px}
   .topnav{gap:4px;padding:6px 10px}
@@ -218,6 +218,9 @@ button.danger:hover{background:var(--err);color:#fff}
 
 /* Mobile-first music list and task visibility improvements. */
 .mobile-track-list { display: none; }
+.mobile-sel-bar{display:flex;align-items:center;gap:10px;padding:2px 2px 4px}
+.mobile-sel-all{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.mobile-sel-count{font-size:12px}
 @media (max-width: 600px) {
   .page { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
   .topnav { padding-top: calc(8px + env(safe-area-inset-top)); padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); flex-wrap: wrap; }
@@ -231,6 +234,7 @@ button.danger:hover{background:var(--err);color:#fff}
   .mobile-track-card { display: grid; grid-template-columns: 22px 48px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
   .mobile-track-card.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
   .mobile-track-check { width: 18px; height: 18px; margin: 0; }
+  .mobile-sel-all .tchk{width:18px;height:18px;min-height:18px;margin:0}
   .mobile-track-cover { width: 48px; height: 48px; border-radius: 7px; object-fit: cover; background: var(--panel2); }
   .mobile-track-cover-empty { display: inline-flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; }
   .mobile-track-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -241,6 +245,8 @@ button.danger:hover{background:var(--err);color:#fff}
   .mobile-track-edit { min-height: 40px; padding: 6px 9px; }
   .mobile-empty { padding: 24px 10px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
   .ml-toolbar .row { align-items: stretch; }
+  /* 筛选标签紧凑化：避免「全部/乱码/繁体/无歌词/无海报/待识别」在窄屏换行 */
+  .filters .chip { padding: 2px 9px; font-size: 11px; min-height: 30px; border-radius: 12px; }
   .ml-toolbar .row button, .ml-toolbar .row select, .ml-toolbar .row input { min-height: 42px; }
   .modal-mask { align-items: flex-end; padding: 0; }
   .modal { width: 100%; max-width: none; max-height: calc(90dvh - env(safe-area-inset-top)); border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }

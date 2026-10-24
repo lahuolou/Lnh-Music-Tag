@@ -85,7 +85,7 @@ onMounted(async () => {
     <Login v-if="!state.authed" />
     <template v-else>
     <nav class="topnav">
-      <span class="brand">{{ t('brand') }}</span>
+      <span class="brand" :title="t('home')" @click="goHome">{{ t('brand') }}</span>
       <span class="spacer"></span>
       <span class="badge">{{ t('tracks', { n: state.tracks.length }) }}</span>
       <!-- 新版本徽标：点击打开更新弹窗 -->
@@ -96,14 +96,7 @@ onMounted(async () => {
         {{ topJob.type === 'batch' ? t('batchProgress', { d: topJob.d, t: topJob.t }) : t('jobRunning', { d: topJob.d, t: topJob.t, c: '' }) }}
       </span>
       <button class="ghost sm" :class="{ on: !['settings', 'plugins', 'logs'].includes(state.activeTab) }" @click="tab('list')">{{ t('list') }}</button>
-      <button class="ghost sm" :title="t('home')" @click="goHome">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-      </button>
-      <!-- 回收站入口：删除/去重的文件先进这里，可恢复 -->
-      <button class="ghost sm trash-btn" :title="t('trash')" @click="trashOpen = true">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-      </button>
-      <!-- 齿轮二级导航（按用户指定顺序）：主题 / 语言 / 插件 / 更新 / 关于 / 退出 -->
+      <!-- 齿轮二级导航（按用户指定顺序）：主题 / 语言 / 插件 / 日志 / 回收站 / 设置 / 更新 / 关于 / 退出 -->
       <div class="gear" :class="{ open: gearOpen }" @click="gearOpen = !gearOpen">
         <button class="ghost sm gear-btn" :title="t('menu')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -113,6 +106,7 @@ onMounted(async () => {
           <button @click="toggleLang(); gearOpen = false">{{ lang === 'zh' ? '切换EN' : 'Switch CN' }}</button>
           <button @click="tab('plugins'); gearOpen = false">{{ t('plugins') }}</button>
           <button @click="tab('logs'); gearOpen = false">{{ t('logs') }}</button>
+          <button @click="trashOpen = true; gearOpen = false">{{ t('trash') }}</button>
           <button @click="tab('settings'); gearOpen = false">{{ t('settings') }}</button>
           <button @click="checkVersion(true); gearOpen = false">{{ t('checkUpdate') }}</button>
           <button @click="aboutOpen = true; gearOpen = false">{{ t('about') }}</button>
