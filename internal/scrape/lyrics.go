@@ -39,14 +39,20 @@ var simpForMatch = func() func(string) string {
 //     then lrclib (international) with the same artist check.
 func (m *MultiSource) FetchLyrics(sr SearchResult) (string, error) {
 	// 选中候选自带 SourceID（前端手选 / 融合代表源）：直接按 ID 取，不二次搜索。
-	if sr.Source == "netease" && sr.SourceID != "" {
+	if sr.Source == "netease" && sr.SourceID != "" && m.SourceHealthy("netease") {
 		if l, err := neteaseLyric(m.client, sr.SourceID); err == nil && l != "" {
+			m.recordSourceSuccess("netease")
 			return l, nil
+		} else if err != nil {
+			m.recordSourceFailure("netease")
 		}
 	}
-	if sr.Source == "qq" && sr.SourceID != "" {
+	if sr.Source == "qq" && sr.SourceID != "" && m.SourceHealthy("qq") {
 		if l, err := qqLyric(m.client, sr.SourceID); err == nil && l != "" {
+			m.recordSourceSuccess("qq")
 			return l, nil
+		} else if err != nil {
+			m.recordSourceFailure("qq")
 		}
 	}
 	if strings.TrimSpace(sr.Title) == "" {
@@ -55,24 +61,41 @@ func (m *MultiSource) FetchLyrics(sr SearchResult) (string, error) {
 	q := strings.TrimSpace(sr.Title + " " + strings.Join(sr.Artists, " "))
 
 	// QQ 兜底：取多候选，按标题+艺人匹配择优，艺人不符一律不取（宁缺毋滥）。
-	if qres, err := (qqSource{}).Search(m.client, q, 6); err == nil {
-		if cand := pickLyricCandidate(qres, sr.Title, sr.Artists); cand.SourceID != "" {
-			if l, err2 := qqLyric(m.client, cand.SourceID); err2 == nil && l != "" {
-				return l, nil
+	if m.SourceHealthy("qq") {
+		if qres, err := (qqSource{}).Search(m.client, q, 6); err == nil {
+			m.recordSourceSuccess("qq")
+			if cand := pickLyricCandidate(qres, sr.Title, sr.Artists); cand.SourceID != "" {
+				if l, err2 := qqLyric(m.client, cand.SourceID); err2 == nil && l != "" {
+					m.recordSourceSuccess("qq")
+					return l, nil
+				}
 			}
+		} else {
+			m.recordSourceFailure("qq")
 		}
 	}
 	// 网易兜底：短超时；同样只取艺人匹配候选。
-	if res, err := (neteaseSource{}).Search(m.client, q, 6); err == nil {
-		if cand := pickLyricCandidate(res, sr.Title, sr.Artists); cand.SourceID != "" && cand.SourceID != sr.SourceID {
-			if l, err2 := neteaseLyric(m.client, cand.SourceID); err2 == nil && l != "" {
-				return l, nil
+	if m.SourceHealthy("netease") {
+		if res, err := (neteaseSource{}).Search(m.client, q, 6); err == nil {
+			m.recordSourceSuccess("netease")
+			if cand := pickLyricCandidate(res, sr.Title, sr.Artists); cand.SourceID != "" && cand.SourceID != sr.SourceID {
+				if l, err2 := neteaseLyric(m.client, cand.SourceID); err2 == nil && l != "" {
+					m.recordSourceSuccess("netease")
+					return l, nil
+				}
 			}
+		} else {
+			m.recordSourceFailure("netease")
 		}
 	}
 	// lrclib 国际源：结果自带 artistName，一并校验艺人。
-	if l, err := lrclibLyric(m.client, sr.Title, sr.Artists); err == nil && l != "" {
-		return l, nil
+	if m.SourceHealthy("lrclib") {
+		if l, err := lrclibLyric(m.client, sr.Title, sr.Artists); err == nil && l != "" {
+			m.recordSourceSuccess("lrclib")
+			return l, nil
+		} else if err != nil {
+			m.recordSourceFailure("lrclib")
+		}
 	}
 	return "", fmt.Errorf("未找到歌词")
 }

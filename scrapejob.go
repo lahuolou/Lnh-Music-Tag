@@ -879,6 +879,12 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 				// 多源元数据融合：每个 ID3 字段独立从各候选按匹配度+完整度择优，
 				// 合并到一条结果上，替代"整条候选整体采用"。
 				sr = fuseMetadata(results, title, artist)
+				// 融合结果回填匹配置信度（标题+艺人+时长对齐），供低置信度队列判定
+				// 与前端展示（internal/scrape 各源不设置该字段，仅主包回填）。
+				sr.Confidence = candidateConfidence(sr, title, artist, trackDuration(t))
+				// 低置信度匹配结果入「待确认」队列（原标签 vs 融合候选快照），
+				// 供曲库前端人工核对；best-effort，不中断刮削。
+				enqueuePending(t, title, artist, sr)
 
 				// 部分源会把 GBK 编码字节按 Latin-1 塞进 JSON，得到
 				// "习惯了寂寞" → "Ï°¹ßÁË¼ÅÄ¯" 这类乱码。写入标签前统一修复，

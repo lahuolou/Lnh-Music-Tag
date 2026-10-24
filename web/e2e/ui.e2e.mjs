@@ -84,7 +84,7 @@ try {
   const essential = ['歌', '艺', '专'].filter((k) => headText.some((t) => t.includes(k)));
   ok('桌面：歌名/歌手/专辑列存在', essential.length >= 2, headText.join('/'));
   // 筛选按钮组
-  const filters = ['全部', '乱码', '繁体', '无歌词', '无海报', '待识别'];
+  const filters = ['全部', '乱码', '繁体', '无歌词', '无海报', '待识别', '待确认'];
   const bodyFull = await page.locator('body').innerText();
   const present = filters.filter((f) => bodyFull.includes(f));
   ok('桌面：筛选标签渲染', present.length >= 4, present.join('/'));

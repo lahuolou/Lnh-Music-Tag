@@ -147,6 +147,12 @@ Lnh-Music-Tag-main/
 
 `main()` 注册 `SIGINT/SIGTERM`：停止接收新连接、等待在途请求完成（上限 5s），随后 `defer cfg.Close()` 关闭配置库。容器 `docker stop` 不会硬中断在途写库/流。
 
+### 3.11 刮削可靠性（P0）
+
+- **来源健康度 / 熔断 / 自适应退避**（`internal/scrape/health.go`）：每个源独立统计连续失败（阈值 3），熔断期间 `SearchWithFallback` / `FetchCoverFallback` / `FetchLyrics` 直接跳过该源；冷却指数退避（5m→30m 封顶），成功清零；时钟可注入（`var now`），单测覆盖熔断/恢复/退避/回退链跳过
+- **匹配置信度**（`confidence.go`）：`candidateConfidence` 按标题 50% + 艺人 30% + 时长 20% 输出 0-100；目标维度缺失不扣分并归一化权重；融合结果在 `scrapejob.go` 回填 `SearchResult.Confidence`
+- **低置信度队列**（`pending.go` + MusicTree.vue）：`Confidence < 55` 的结果按 path 入 `pending_tracks` 表（upsert 覆盖，best-effort）；曲库「待确认」筛选 + 核对模态（确认/忽略），接口 `GET /api/scrape/pending`、`POST /api/scrape/pending/resolve`
+
 ---
 
 ## 4. 构建与测试

@@ -45,6 +45,11 @@ const filtered = computed(() => {
   else if (filter.value === 'nolyric') list = list.filter(t => !t.hasLyrics && !t.hasLrcFile);
   else if (filter.value === 'nocover') list = list.filter(t => !t.hasCover);
   else if (filter.value === 'needsid') list = list.filter(t => t.needsIdentify);
+  else if (filter.value === 'pending') {
+    // 低置信度待确认：按 path 匹配队列中仍为 pending 的条目
+    const ps = new Set(pendingItems.value.filter(p => p.status === 'pending').map(p => p.path));
+    list = list.filter(t => ps.has(t.path));
+  }
   return list;
 });
 const filterOpts = [
@@ -53,9 +58,36 @@ const filterOpts = [
   { id: 'trad', label: () => t('filterTrad') },
   { id: 'nolyric', label: () => t('filterNoLyric') },
   { id: 'nocover', label: () => t('filterNoCover') },
-  { id: 'needsid', label: () => t('filterNeedIdentify') }
+  { id: 'needsid', label: () => t('filterNeedIdentify') },
+  { id: 'pending', label: () => t('filterPending') }
 ];
 const filtering = computed(() => q.value.trim() !== '' || filter.value !== 'all');
+
+// ——— 低置信度待确认队列（P0）：刮削匹配置信度低于阈值的结果人工核对 ———
+const pendingItems = ref([]);
+const pendingModal = ref(false);
+async function loadPending() {
+  try {
+    const r = await api('/api/scrape/pending');
+    pendingItems.value = (r && r.items) || [];
+  } catch (e) { pendingItems.value = []; }
+}
+function openPending() {
+  loadPending();
+  pendingModal.value = true;
+}
+async function resolvePending(item, action) {
+  try {
+    await api('/api/scrape/pending/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ id: item.id, action })
+    });
+    pendingItems.value = pendingItems.value.filter(x => x.id !== item.id);
+    toast(t(action === 'confirm' ? 'pendingConfirmed' : 'pendingIgnored'));
+  } catch (e) {
+    toast(t('opFail') + ': ' + (e.message || e));
+  }
+}
 
 // 音频后缀正则（文件名显示/解析共用）
 const AUDIO_EXT = /\.(mp3|flac|wav|m4a|aac|ogg|opus|ape|wma|aiff|aif|mka|mpc|tta|dsf|dff)$/i
@@ -297,6 +329,10 @@ onBeforeUnmount(stopPoll);
         </button>
         <span class="muted" style="font-size:12px">{{ t('fillLyricsHint') }}</span>
       </div>
+      <div v-if="filter === 'pending'" style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="sm" @click="openPending">{{ t('pendingList', { n: pendingItems.length }) }}</button>
+        <span class="muted" style="font-size:12px">{{ t('pendingHint') }}</span>
+      </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
         <button v-if="state.selected.size > 0" class="ghost sm danger" :disabled="busy()" @click="delSel">{{ t('deleteSel', { n: state.selected.size }) }}</button>
         <button v-if="state.selected.size > 0" class="ghost sm" :disabled="busy()" @click="state.selected.clear()">{{ t('clearSel') }}</button>
@@ -403,6 +439,35 @@ onBeforeUnmount(stopPoll);
       </div>
       <!-- 加载更多哨兵：滚到底触发下一页（桌面容器滚动靠 @scroll，移动端 body 滚动靠 IO 兜底） -->
       <div ref="setSentinel" style="height:1px" aria-hidden="true"></div>
+    </div>
+
+    <!-- 低置信度待确认队列模态（P0）：原标签 vs 融合候选 + 置信度 + 确认/忽略 -->
+    <div v-if="pendingModal" class="modal-mask" @click.self="pendingModal = false">
+      <div class="modal-box" style="max-width:720px">
+        <div class="modal-head">
+          <b>{{ t('filterPending') }}</b>
+          <button class="ghost sm" @click="pendingModal = false">✕</button>
+        </div>
+        <div v-if="pendingItems.length === 0" class="muted" style="padding:12px">{{ t('pendingEmpty') }}</div>
+        <div style="max-height:60vh;overflow:auto">
+          <div v-for="it in pendingItems" :key="it.id"
+            style="display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid #e5e5e5">
+            <div style="min-width:0;flex:1">
+              <div style="font-size:12px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="it.path">{{ it.path }}</div>
+              <div style="font-size:13px;margin-top:2px">
+                <span style="color:#c33">{{ it.title }}{{ it.artist ? ' / ' + it.artist : '' }}</span>
+                <span style="color:#999"> → </span>
+                <span>{{ it.fusedTitle }}{{ it.fusedArtist ? ' / ' + it.fusedArtist : '' }}</span>
+              </div>
+              <div style="font-size:12px;color:#888;margin-top:2px">{{ t('pendingConf', { n: it.confidence }) }}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="sm" @click="resolvePending(it, 'confirm')">✓ {{ t('pendingConfirm') }}</button>
+              <button class="sm danger" @click="resolvePending(it, 'ignore')">✕ {{ t('pendingIgnore') }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>

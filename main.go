@@ -369,6 +369,10 @@ func main() {
 	if err := ensureActivityTable(cfg.DB()); err != nil {
 		log.Printf("ensure activity table: %v", err)
 	}
+	// 低置信度刮削队列（P0：匹配置信度低于阈值的结果待人工确认）
+	if err := ensurePendingTable(cfg.DB()); err != nil {
+		log.Printf("ensure pending table: %v", err)
+	}
 	ms := scrape.NewMultiSource()
 	// 插件框架：注册内置插件（刮削源 + FFmpeg），再从设置库恢复启停/配置
 	// （首次启动自动迁移旧的 sources_enabled / ffmpeg_path 键）
@@ -478,6 +482,8 @@ func main() {
 	pm.HandleFunc("POST /api/change-password", sessions.changePasswordHandler)
 	pm.HandleFunc("POST /api/scrape/batch", batchScrapeHandler(jobs, store, ms, cfg))
 	pm.HandleFunc("POST /api/scrape/onekey", oneKeyScrapeHandler(jobs, store, ms, cfg))
+	pm.HandleFunc("GET /api/scrape/pending", pendingListHandler(cfg.DB()))
+	pm.HandleFunc("POST /api/scrape/pending/resolve", pendingResolveHandler(cfg.DB()))
 	pm.HandleFunc("GET /api/scrape/jobs/{id}", jobProgressHandler(jobs))
 	pm.HandleFunc("POST /api/jobs/{id}/cancel", cancelJobHandler(jobs)) // 取消批量/工具任务
 	pm.HandleFunc("GET /api/jobs/{id}", jobProgressHandler(jobs))       // 通用后台任务进度（转换/识别/乱码/简繁）

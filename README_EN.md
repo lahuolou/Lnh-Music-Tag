@@ -43,7 +43,10 @@ Lnh-Music-Tag is a self-hosted music library tool whose **core highlights are sc
 - **Multi-source auto-scrape**: 17 built-in metadata sources (Netease, QQ Music, KuGou, KuWo, Migu, Bilibili, Qishui, Bodian, 5sing, MusicBrainz, iTunes, ListenBrainz, Deezer, Last.fm, Spotify, Discogs, Jamendo) with automatic fallback, dedup and candidate merging
 - **One-key pipeline**: encoding fix → traditional-to-simplified → artist-from-filename → full scrape, one click for the whole library
 - **Scheduled auto-scrape**: pick a schedule with dropdowns (daily / weekly / custom + time) in Settings — the cron is generated for you; modes: one-key scrape or dedup-then-one-key; no re-entry while running, every run logged, next/last run shown in Settings
-- **Watch & silent scrape**: periodically checks the music directory, auto-imports newly added audio files and silently scrapes them (cover/lyrics/all metadata) — no manual action needed
+- **Watch & silent scrape**: periodically checks the music directory, auto-imports newly added audio files and silently scrapes them (cover/lyrics/all metadata) — no manual action needed;
+- **Source circuit-breaking & adaptive backoff**: per-source health tracking with automatic circuit-breaking (skip failing sources), exponential cooldown and instant recovery on success — rate-limited or dead sources no longer slow down batch pipelines;
+- **Match confidence & field-level fusion**: candidates scored 0-100 by title/artist/duration weighting; every ID3 field is merged independently from the best-confidence candidate, with an artist gate blocking same-title different-artist impostors;
+- **Low-confidence "To review" queue**: low-confidence results are queued automatically; the "To review" filter in the library shows original tags vs. fused candidates with confidence, one-tap confirm/ignore;
 - **Batch completion**: scrape only the fields you check; already-filled tags are skipped
 - **Audio identification**: untagged files like `track01.mp3` are matched against known tracks by audio fingerprint
 

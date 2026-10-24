@@ -29,6 +29,9 @@ type SearchResult struct {
 	TrackNumber int      `json:"trackNumber,omitempty"`
 	Duration    int      `json:"duration"` // seconds
 	CoverURL    string   `json:"coverURL,omitempty"`
+	// Confidence 候选/融合结果与目标的匹配置信度（0-100，0 表示未评分）。
+	// 由主包 candidateConfidence 在融合后回填（internal/scrape 各源不设置）。
+	Confidence int `json:"confidence,omitempty"`
 	// 扩展元素（MusicBrainz 提供；其他源暂留空）
 	Composer    []string `json:"composer,omitempty"`
 	Lyricist    []string `json:"lyricist,omitempty"`
@@ -58,11 +61,13 @@ type SourceInfo struct {
 
 // MultiSource aggregates domestic + international scrape sources.
 type MultiSource struct {
-	client  *Client
-	byName  map[string]Source
-	order   []string
-	enabled map[string]bool // 插件式开关：false 的源在 auto 中跳过、直接选择时报错
-	emu     sync.RWMutex
+	client   *Client
+	byName   map[string]Source
+	order    []string
+	enabled  map[string]bool // 插件式开关：false 的源在 auto 中跳过、直接选择时报错
+	emu      sync.RWMutex
+	health   map[string]*srcHealth // 来源健康度/熔断状态（health.go）
+	healthMu sync.Mutex
 }
 
 // Source preference groups used by auto: Chinese queries hit domestic sources
@@ -74,7 +79,7 @@ var internationalOrder = []string{"itunes", "musicbrainz", "listenbrainz", "deez
 // dropdown and auto mode both prefer Chinese services). Every source starts
 // enabled; the settings page can switch any of them off.
 func NewMultiSource() *MultiSource {
-	m := &MultiSource{client: NewClient(), byName: map[string]Source{}, enabled: map[string]bool{}}
+	m := &MultiSource{client: NewClient(), byName: map[string]Source{}, enabled: map[string]bool{}, health: map[string]*srcHealth{}}
 	m.register(neteaseSource{})
 	m.register(qqSource{})
 	m.register(kugouSource{})
@@ -220,12 +225,21 @@ func (m *MultiSource) SearchWithFallback(name, query string, limit int) ([]Searc
 		if !ok || !m.IsEnabled(n) {
 			continue
 		}
+		if !m.SourceHealthy(n) {
+			continue // 熔断中：跳过该源，不发起请求
+		}
 		wg.Add(1)
-		go func(s Source) {
+		go func(s Source, name string) {
 			defer wg.Done()
 			r, err := s.Search(m.client, query, limit)
-			ch <- srcRes{r, err}
-		}(s)
+			if err != nil {
+				m.recordSourceFailure(name)
+				ch <- srcRes{nil, err}
+				return
+			}
+			m.recordSourceSuccess(name)
+			ch <- srcRes{r, nil}
+		}(s, n)
 	}
 	wg.Wait()
 	close(ch)
@@ -292,11 +306,17 @@ func (m *MultiSource) FetchCoverFallback(query, prefer, titleOnly, wantArtist st
 			if !ok || !m.IsEnabled(n) {
 				continue
 			}
+			if !m.SourceHealthy(n) {
+				continue // 熔断中：跳过
+			}
 			res, err := s.Search(m.client, q, 4)
-			if err != nil || len(res) == 0 {
-				if err != nil {
-					lastErr = err
-				}
+			if err != nil {
+				m.recordSourceFailure(n)
+				lastErr = err
+				continue
+			}
+			m.recordSourceSuccess(n)
+			if len(res) == 0 {
 				continue
 			}
 			// 优先取艺人匹配候选；无艺人约束（wantA 空）退回第一条。
