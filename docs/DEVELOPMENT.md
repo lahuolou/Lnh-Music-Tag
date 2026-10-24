@@ -166,7 +166,17 @@ go test -count=1 ./...
 LNH_CONFIG_DIR=./config LNH_PORT=:10248 go run .
 ```
 
-已有测试覆盖：乱码修复、FFmpeg 探测/安装、网关功能（评分/播放列表/认证）、流媒体回退、流媒体 Range/HEAD/416、分页边界（负数/越界/空库/多参数优先级）、插件路径校验、scheduler（cron 解析/监控）、任务框架、辅助函数、改名、主流程等。
+已有测试覆盖：乱码修复、FFmpeg 探测/安装、网关功能（评分/播放列表/认证）、流媒体回退、流媒体 Range/HEAD/416、分页边界（负数/越界/空库/多参数优先级）、插件路径校验、scheduler（cron 解析/监控）、任务框架、辅助函数、改名、主流程、来源响应夹具（网易云 mock）、标签原子写/损坏文件安全、品质分级边界等。
+
+```bash
+# 移动端/桌面 UI 冒烟测试（Playwright + 系统 Edge，不下载浏览器）
+# 先启动后端（如 :10248），再执行：
+cd web && npm run e2e
+# 或指定目标与环境变量：
+LNH_E2E_BASE=http://localhost:10248 LNH_E2E_USER=admin LNH_E2E_PASS=xxx npm run e2e
+```
+
+E2E 覆盖：Web 登录（表单提交）、桌面列表与「品质」列/筛选标签、移动端（420×900）卡片展示/品质文本/无横向溢出/全选条/滚动加载；截图证据存 `web/e2e/*.png`（已 gitignore）。
 
 > 本机无 C 编译器时 `go test -race` 可能无法运行（依赖 cgo），可用普通 `go test` 替代。
 

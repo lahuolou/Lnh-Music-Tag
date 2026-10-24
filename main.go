@@ -504,6 +504,9 @@ func main() {
 		fmt.Fprintf(w, "lnh_background_jobs_active %d\n", len(jobSem))
 		fmt.Fprintf(w, "lnh_background_jobs_capacity %d\n", cap(jobSem))
 		fmt.Fprintf(w, "lnh_cover_cache_entries %d\n", len(store.coverCache))
+		fmt.Fprintf(w, "lnh_scrape_jobs_total %d\n", metricScrapeTotal.Load())
+		fmt.Fprintf(w, "lnh_scrape_jobs_success %d\n", metricScrapeSuccess.Load())
+		fmt.Fprintf(w, "lnh_gateway_requests_total %d\n", metricGatewayReq.Load())
 		if ffmpegActive(cfg) {
 			fmt.Fprintln(w, "lnh_ffmpeg_available 1")
 		} else {

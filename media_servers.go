@@ -53,6 +53,7 @@ func mediaGatewayHandler(s *store, cfg *cstore.Config, kind string) http.Handler
 	})
 }
 func (g *mediaGateway) serve(w http.ResponseWriter, r *http.Request, kind string) {
+	metricGatewayReq.Add(1)
 	log.Printf("MEDIA-GATEWAY rid=%s kind=%s method=%s path=%s", requestID(r), kind, r.Method, r.URL.Path)
 	prefix := "/" + kind
 	p := strings.TrimPrefix(r.URL.Path, prefix)

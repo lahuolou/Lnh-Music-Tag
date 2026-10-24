@@ -6,13 +6,15 @@
   "license": "GPL-3.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "e2e": "node e2e/ui.e2e.mjs"
   },
   "dependencies": {
     "vue": "^3.4.38"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.4",
+    "playwright-core": "^1.64.1",
     "vite": "^5.4.8"
   }
 }

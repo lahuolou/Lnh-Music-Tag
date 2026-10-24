@@ -105,6 +105,7 @@ func logJobDone(j *scrapeJob) {
 		act = "act_renameclean"
 	}
 	addLog(act, fail == 0, ok, fail, skip, "")
+	bumpScrapeMetric(act, fail == 0)
 }
 
 // listLogs returns the newest logs (descending).

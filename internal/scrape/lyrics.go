@@ -202,7 +202,9 @@ func normForMatch(s string) string {
 // 网易接口偶发限流：请求挂起不响应或返回空。用独立 3s 短超时 + 2 次重试，
 // 失败快速让位给后续兜底（共享 client 的 10s 会让失败路径拖慢整条流水线）。
 func neteaseLyric(c *Client, songID string) (string, error) {
-	hc := &http.Client{Timeout: 3 * time.Second}
+	// 独立短超时 client：网易接口偶发挂起时快速失败让位兜底；
+	// 继承共享 Transport，使测试可通过注入 RoundTripper 提供响应夹具。
+	hc := &http.Client{Timeout: 3 * time.Second, Transport: c.HTTP.Transport}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {

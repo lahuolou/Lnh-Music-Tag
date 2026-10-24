@@ -40,3 +40,5 @@ release-pkg/
 # Vue frontend
 web/node_modules/
 web/dist/
+# E2E 截图证据（本地验证产物，不入库）
+web/e2e/*.png

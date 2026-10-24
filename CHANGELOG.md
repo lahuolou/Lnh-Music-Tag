@@ -37,6 +37,12 @@
 - **文件安全测试**：截断/损坏音频读取与原子写不 panic、不产生临时/备份残留（taglibx_atomic_test.go 新增用例）
 - **CI 测试门禁**：docker.yml 新增 test job（gofmt 检查 + go vet + go test ./...），任一失败即阻断镜像构建，版本一致性校验保持不变
 
+### 运行时指标与来源夹具、移动端 E2E
+
+- **/api/metrics 扩展**：新增 `lnh_scrape_jobs_total` / `lnh_scrape_jobs_success`（刮削/一键类任务计数，挂接任务完成日志）与 `lnh_gateway_requests_total`（流媒体网关请求计数）
+- **来源响应夹具测试**（netease_fixture_test.go）：网易云搜索/歌词接口本地 mock 夹具——字段提取、业务错误码降级、HTTP 失败、歌词解析全覆盖，CI 不依赖公网
+- **移动端 Playwright E2E**（web/e2e/ui.e2e.mjs，`npm run e2e`）：桌面登录/列表/「品质」列/筛选标签 + 移动端卡片/品质文本/无横向溢出/全选条/滚动加载，11 项断言；使用系统 Edge（channel: msedge）不下载浏览器，截图证据保存 web/e2e/*.png（gitignore 排除）
+
 ## 1.0.13
 
 插件体系与 Navidrome 兼容性加固，新增移动端歌曲卡片 UI 与一批安全/并发测试。
