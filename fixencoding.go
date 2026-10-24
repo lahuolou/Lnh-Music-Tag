@@ -421,7 +421,7 @@ func fixEncodingHandler(js *jobStore, s *store) http.HandlerFunc {
 			changed, m, newBase := repairTrackText(t)
 			// 先写标签（写入当前路径；若有重命名，标签先写好再移动文件）
 			if len(m) > 0 {
-				if err := taglibx.WriteTags(t.Path, m, false); err != nil {
+				if err := taglibx.SaveTagsAtomic(t.Path, m, false); err != nil {
 					return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "写标签失败: " + err.Error()}
 				}
 			}

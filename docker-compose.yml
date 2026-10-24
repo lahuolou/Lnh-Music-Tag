@@ -21,6 +21,15 @@ services:
       # 设 false/留空 则不自动装，可改用：插件页“一键安装”，或挂载宿主机 /usr/bin 并在插件页填路径。
       - LNH_INSTALL_FFMPEG=true
     restart: unless-stopped
+    # 健康检查：/health 存活探针（容器内 wget 由 busybox 提供）。
+    # 安全边界：默认配置仅适合可信内网；公网暴露务必通过 Caddy/Nginx/Traefik
+    # 反向代理启用 HTTPS，并配置可信代理头（详见 docs/DEPLOYMENT.md）。
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:10248/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   lnh_config:

@@ -439,6 +439,10 @@ func main() {
 	} {
 		mux.HandleFunc(path, navidromeHandler(store, cfg).ServeHTTP)
 	}
+	// 健康检查：/health 存活探针（进程响应即 200）；/ready 就绪探针（SQLite 可读），
+	// 供 Docker healthcheck 区分进程存活与服务可用；不泄露内部路径/密钥/错误细节。
+	mux.Handle("GET /health", healthHandler())
+	mux.Handle("GET /ready", readyHandler(cfg))
 	// Jellyfin and Emby use separate URL namespaces and JSON adapters.
 	mux.Handle("/jellyfin/", mediaGatewayHandler(store, cfg, "jellyfin"))
 	mux.Handle("/jellyfin", mediaGatewayHandler(store, cfg, "jellyfin"))
@@ -810,7 +814,7 @@ func main() {
 				m[strings.ToUpper(k)] = []string{v}
 			}
 		}
-		if err := taglibx.WriteTags(t.Path, m, req.Clear); err != nil {
+		if err := taglibx.SaveTagsAtomic(t.Path, m, req.Clear); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -873,7 +877,7 @@ func main() {
 			writeErr(w, http.StatusBadRequest, "url, dataBase64 or clear required")
 			return
 		}
-		if err := taglibx.WriteCover(t.Path, img); err != nil {
+		if err := taglibx.SaveCoverAtomic(t.Path, img); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -1004,7 +1008,7 @@ func main() {
 				tags[taglibx.Lyrics] = []string{lyric}
 			}
 		}
-		if err := taglibx.WriteTags(t.Path, tags, false); err != nil {
+		if err := taglibx.SaveTagsAtomic(t.Path, tags, false); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -1013,7 +1017,7 @@ func main() {
 				Source: req.Source, ReleaseMBID: req.ReleaseMBID,
 				CoverURL: req.CoverURL, AlbumID: req.AlbumID,
 			}); err == nil && len(img) > 0 {
-				taglibx.WriteCover(t.Path, img)
+				taglibx.SaveCoverAtomic(t.Path, img)
 			}
 		}
 		refreshTrack(store, t.Path)
@@ -1129,7 +1133,7 @@ func scanDirLive(s *store, dir string, st *scanState, autoFix, autoRename bool) 
 				title = t.FileName
 			}
 			if fixed := stripAudioExt(title); fixed != title {
-				if taglibx.WriteTags(path, map[string][]string{taglibx.Title: {fixed}}, false) == nil {
+				if taglibx.SaveTagsAtomic(path, map[string][]string{taglibx.Title: {fixed}}, false) == nil {
 					t, _ = taglibx.ReadTrackLight(path)
 				}
 			}

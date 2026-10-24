@@ -10,7 +10,18 @@ Lnh-Music-Tag is a self-hosted music library tool whose **core highlights are sc
 - **Library management & playback**: batch-edit 30+ tag fields in a web UI, cover/lyrics management, encoding repair, simplified/traditional conversion, content-based dedup; the curated library is also served by a built-in **unified streaming gateway** over **Subsonic / Jellyfin / Emby / Navidrome** protocols — Yingliu, Archer, Jellyfin and dozens of other players connect and play directly;
 - **Local-first**: your data lives in a local SQLite database, tags are written back to the files, no cloud dependency, one-command Docker deployment.
 
-**Version**: 1.0.12 ｜ Language: English / [中文](./README.md)
+**Version**: 1.0.13 ｜ Language: English / [中文](./README.md)
+
+---
+
+## Security Boundary (Read Before Deploying)
+
+> The default configuration targets **trusted intranet use** (home LAN / NAS / personal server). If you expose the service to the **public internet**, you MUST enable HTTPS through a reverse proxy:
+>
+> - Recommended: Caddy (automatic certificates), Nginx, or Traefik. Proxy port `10248` to 443 and forward the real client IP plus `X-Forwarded-Proto` (examples in [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md#6-安全边界与公网部署必读));
+> - The app itself does not terminate TLS; the session cookie can only reliably honor `Secure` behind an HTTPS proxy;
+> - Login and streaming-gateway authentication are rate-limited (5 consecutive failures per IP locks for 5 minutes), but do not rely on rate limiting instead of a strong password;
+> - Recommended: intranet-only access + a strong random password + regular backups of `/config` and your music library.
 
 ---
 

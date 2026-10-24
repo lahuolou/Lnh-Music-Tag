@@ -103,7 +103,7 @@ func convertScriptHandler(js *jobStore, s *store) http.HandlerFunc {
 				}
 			}
 			if len(m) > 0 {
-				if err := taglibx.WriteTags(t.Path, m, false); err != nil {
+				if err := taglibx.SaveTagsAtomic(t.Path, m, false); err != nil {
 					return scrapeResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "写标签失败: " + err.Error()}
 				}
 				refreshTrack(s, t.Path)

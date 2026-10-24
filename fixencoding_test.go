@@ -215,7 +215,7 @@ func TestFixEncodingHandlerFilenameFallback(t *testing.T) {
 	}
 	// 写入模拟的严重乱码标签（无法自动还原的多级损坏）
 	bad := "姒荤◈锇ㄣ储锟◈妞圭粮簆◈控权塲ジ锟◈濮栴◈锟斤拷妤f控铍勤"
-	if err := taglibx.WriteTags(mp3, map[string][]string{
+	if err := taglibx.SaveTagsAtomic(mp3, map[string][]string{
 		taglibx.Title:  {bad},
 		taglibx.Artist: {"濞肩◈锜τ綾澪"},
 		taglibx.Album:  {"濞肩◈锜τ綾澪炒娓濮栴锟◈错愦薜澪"},

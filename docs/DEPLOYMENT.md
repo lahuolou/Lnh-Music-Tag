@@ -127,7 +127,52 @@ docker compose pull && docker compose up -d
 
 ---
 
-## 6. 相关文档
+## 6. 安全边界与公网部署（必读）
+
+默认配置面向**可信内网**（局域网 / NAS / 个人服务器）。将服务暴露到公网前必须启用 HTTPS。
+
+### 6.1 默认安全属性
+
+- 登录、流媒体网关认证（Subsonic / Navidrome / Jellyfin / Emby）均有**失败限速**：同一 IP 连续 5 次认证失败锁定 5 分钟，防止暴力破解；
+- 会话 Cookie 为 `HttpOnly` + `SameSite=Lax`；代理 HTTPS 场景下 `Secure` 由代理侧判定；
+- 管理 API 统一走会话认证 + CSRF 校验 + 请求体限制；
+- 健康端点 `/health`（存活）与 `/ready`（SQLite 可读）不泄露路径/密钥/内部错误，可直接用于 Docker healthcheck（docker-compose.yml 已内置）。
+
+### 6.2 公网反向代理（HTTPS）
+
+应用自身不终止 TLS。公网访问请用反向代理启用 HTTPS，并传递真实客户端 IP 与协议头：
+
+**Caddy（自动 HTTPS 证书）**
+
+```caddyfile
+music.example.com {
+    reverse_proxy 127.0.0.1:10248
+}
+```
+
+**Nginx**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name music.example.com;
+    # 配置证书：ssl_certificate / ssl_certificate_key
+    location / {
+        proxy_pass http://127.0.0.1:10248;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+### 6.3 建议
+
+- 使用强随机密码（不要依赖限速替代强密码）；
+- 定期备份 `/config` 卷与音乐库；
+- 无公网需求时保持仅内网访问即可。
+
+## 7. 相关文档
 
 - [README.md](../README.md)：快速上手
 - [API.md](./API.md)：API 参考

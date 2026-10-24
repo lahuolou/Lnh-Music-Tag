@@ -32,6 +32,7 @@ type mediaGateway struct {
 	mu      sync.RWMutex
 	tokens  map[string]time.Time
 	plays   map[string]playState
+	guard   *loginGuard // 流媒体密码认证限速（防暴力破解）；nil 时不启用（测试构造）
 }
 type playState struct {
 	UserID   string
@@ -42,7 +43,7 @@ type playState struct {
 }
 
 func mediaGatewayHandler(s *store, cfg *cstore.Config, kind string) http.Handler {
-	g := &mediaGateway{library: s, cfg: cfg, kind: kind, tokens: map[string]time.Time{}, plays: map[string]playState{}}
+	g := &mediaGateway{library: s, cfg: cfg, kind: kind, tokens: map[string]time.Time{}, plays: map[string]playState{}, guard: newLoginGuard()}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if cfg != nil && cfg.GetDefault("streaming_gateway_enabled", "true") == "false" {
 			http.NotFound(w, r)
@@ -131,6 +132,10 @@ func (g *mediaGateway) tokenFor(user string) string {
 // authenticate 仅以流媒体密码 stream_pass 作为唯一凭证（单用户自托管）：
 // 不校验管理员密码、不接受任意空/残留密码。密码即凭证，用户名仅用于派生稳定 token。
 func (g *mediaGateway) authenticate(w http.ResponseWriter, r *http.Request, kind string) {
+	if g.guard != nil && !g.guard.allow(r) {
+		g.json(w, http.StatusTooManyRequests, map[string]any{"Message": "认证失败次数过多，请 5 分钟后再试"})
+		return
+	}
 	_, pass := g.userPass(r)
 	wantUser := g.cfg.GetDefault("admin_user", "admin")
 	streamPass := strings.TrimSpace(g.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
@@ -139,8 +144,14 @@ func (g *mediaGateway) authenticate(w http.ResponseWriter, r *http.Request, kind
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(pass), []byte(streamPass)) != 1 {
+		if g.guard != nil {
+			g.guard.fail(r)
+		}
 		g.json(w, http.StatusUnauthorized, map[string]any{"Message": "Invalid username or password"})
 		return
+	}
+	if g.guard != nil {
+		g.guard.success(r)
 	}
 	// 登录来源不影响 token：token 始终使用稳定配置派生，重启后仍可校验。
 	token := g.tokenFor(wantUser)

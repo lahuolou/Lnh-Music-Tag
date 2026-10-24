@@ -396,12 +396,12 @@ func finalizeIdentify(s *store, ms *scrape.MultiSource, t *model.Track, title st
 			tags[k] = []string{v}
 		}
 	}
-	if err := taglibx.WriteTags(t.Path, tags, false); err != nil {
+	if err := taglibx.SaveTagsAtomic(t.Path, tags, false); err != nil {
 		return identifyResult{ID: t.ID, FileName: t.FileName, OK: false, Message: "写标签失败: " + err.Error()}
 	}
 	sr := scrape.SearchResult{Title: title, Artists: artists}
 	if lyric, err := ms.FetchLyrics(sr); err == nil && strings.TrimSpace(lyric) != "" {
-		taglibx.WriteTags(t.Path, map[string][]string{taglibx.Lyrics: {lyric}}, false)
+		taglibx.SaveTagsAtomic(t.Path, map[string][]string{taglibx.Lyrics: {lyric}}, false)
 	}
 	refreshTrack(s, t.Path)
 	artistLabel := strings.Join(artists, " / ")

@@ -37,11 +37,12 @@ import (
 type navidromeAPI struct {
 	library *store
 	cfg     *cstore.Config
+	guard   *loginGuard // ND 登录认证限速（防暴力破解）；nil 时不启用（测试构造）
 }
 
 // NewNavidromeAPI 导出构造，供主路由在 /api/me 等与 Web 后台共用的路径上做 ND 令牌优先判定。
 func NewNavidromeAPI(s *store, cfg *cstore.Config) *navidromeAPI {
-	return &navidromeAPI{library: s, cfg: cfg}
+	return &navidromeAPI{library: s, cfg: cfg, guard: newLoginGuard()}
 }
 
 // Valid 判断本次请求是否携带合法 Navidrome Bearer 令牌。
@@ -227,6 +228,10 @@ func (n *navidromeAPI) login(w http.ResponseWriter, r *http.Request) {
 		x.Password = q.Get("p")
 	}
 	wantUser := n.wantUser()
+	if n.guard != nil && !n.guard.allow(r) {
+		n.json(w, http.StatusTooManyRequests, map[string]any{"error": "认证失败次数过多，请 5 分钟后再试", "ok": false})
+		return
+	}
 	// 仅以流媒体密码 stream_pass 为唯一凭证（单用户）：不校验管理员密码，不接受任意残留密码。
 	streamPass := strings.TrimSpace(n.cfg.GetDefault("stream_pass", os.Getenv("LNH_STREAM_PASS")))
 	if streamPass == "" {
@@ -234,8 +239,14 @@ func (n *navidromeAPI) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(x.Password), []byte(streamPass)) != 1 {
+		if n.guard != nil {
+			n.guard.fail(r)
+		}
 		n.json(w, http.StatusUnauthorized, map[string]any{"error": "Invalid username or password", "ok": false})
 		return
+	}
+	if n.guard != nil {
+		n.guard.success(r)
 	}
 	token := n.tokenFor(wantUser)
 	subTok, subSalt := n.subsonicToken()

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"go.senan.xyz/taglib"
 
@@ -132,6 +133,109 @@ func WriteTags(path string, tagsMap map[string][]string, clear bool) error {
 // WriteCover embeds imageBytes as front cover (index 0). Pass nil to clear.
 func WriteCover(path string, imageBytes []byte) error {
 	return taglib.WriteImage(path, imageBytes)
+}
+
+// ---- 原子写：临时副本 → 写入 → 校验 → 替换（保护用户原始音频） ----
+
+// SaveTagsAtomic 以「同目录临时副本 → 写标签 → 重读校验 → 原子替换」的方式
+// 安全写标签。taglib 底层会原地改写原文件，进程中断（断电/崩溃/磁盘满）可能
+// 损坏用户原始音频；本函数先写临时副本（同文件系统，rename 才是原子的），
+// 校验可解析后再替换，替换失败自动恢复原文件，任何阶段失败原文件都保持完整。
+func SaveTagsAtomic(path string, tagsMap map[string][]string, clear bool) error {
+	tmpName, cleanup, err := makeTempCopy(path)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := WriteTags(tmpName, tagsMap, clear); err != nil {
+		return fmt.Errorf("write tags: %w", err)
+	}
+	// 校验：重读临时文件确认可解析（损坏的标签区/音频帧会导致解析失败）
+	if _, err := taglib.ReadTags(tmpName); err != nil {
+		return fmt.Errorf("verify temp file: %w", err)
+	}
+	if err := replaceFile(path, tmpName); err != nil {
+		return fmt.Errorf("replace original: %w", err)
+	}
+	return nil
+}
+
+// SaveCoverAtomic 与 SaveTagsAtomic 同理：封面（图片数据）写入也走临时副本+校验+替换。
+func SaveCoverAtomic(path string, imageBytes []byte) error {
+	tmpName, cleanup, err := makeTempCopy(path)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := WriteCover(tmpName, imageBytes); err != nil {
+		return fmt.Errorf("write cover: %w", err)
+	}
+	if _, err := taglib.ReadTags(tmpName); err != nil {
+		return fmt.Errorf("verify temp file: %w", err)
+	}
+	if err := replaceFile(path, tmpName); err != nil {
+		return fmt.Errorf("replace original: %w", err)
+	}
+	return nil
+}
+
+// makeTempCopy copies path to a same-directory temp file (same filesystem so the
+// final rename is atomic) and returns its name plus a cleanup closure.
+func makeTempCopy(path string) (string, func(), error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("make path abs: %w", err)
+	}
+	dir := filepath.Dir(abs)
+	tmp, err := os.CreateTemp(dir, ".lnh-tmp-*"+filepath.Ext(abs))
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	_ = tmp.Close()
+	if err := copyFile(abs, tmpName); err != nil {
+		os.Remove(tmpName)
+		return "", nil, fmt.Errorf("copy original: %w", err)
+	}
+	return tmpName, func() { os.Remove(tmpName) }, nil
+}
+
+// copyFile copies src to dst, preserving the source file's permission bits.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// replaceFile atomically swaps src into dst: dst is first renamed to a unique
+// backup (Windows rename does not overwrite), then src is moved in; on failure
+// the original is restored. The backup is removed only after a successful swap.
+func replaceFile(dst, src string) error {
+	bak := fmt.Sprintf("%s.lnh-bak-%d", dst, time.Now().UnixNano())
+	if err := os.Rename(dst, bak); err != nil {
+		return err
+	}
+	if err := os.Rename(src, dst); err != nil {
+		_ = os.Rename(bak, dst) // 替换失败：恢复原文件
+		return err
+	}
+	_ = os.Remove(bak)
+	return nil
 }
 
 // Useful tag key aliases re-exported for convenience.

@@ -1020,7 +1020,7 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 	newPath := ""
 	coverWritten := false
 	if len(tags) > 0 {
-		if err := taglibx.WriteTags(t.Path, tags, false); err != nil {
+		if err := taglibx.SaveTagsAtomic(t.Path, tags, false); err != nil {
 			return "写标签失败: " + err.Error(), false
 		}
 		// 标签与文件名不符时重命名「艺术家 - 标题.后缀」（如
@@ -1079,7 +1079,7 @@ func scrapeOneTrack(t *model.Track, ms *scrape.MultiSource, source string, field
 			if newPath != "" {
 				coverPath = newPath
 			}
-			if err := taglibx.WriteCover(coverPath, img); err == nil {
+			if err := taglibx.SaveCoverAtomic(coverPath, img); err == nil {
 				t.HasCover = true // 同步内存状态，列表“海报”筛选/统计立即生效
 				coverWritten = true
 			} else {

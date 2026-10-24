@@ -239,7 +239,7 @@ func stageFixEncoding(s *store) stageFunc {
 	return func(t *model.Track) (*model.Track, bool, bool, string) {
 		changed, m, newBase := repairTrackText(t)
 		if len(m) > 0 {
-			if err := taglibx.WriteTags(t.Path, m, false); err != nil {
+			if err := taglibx.SaveTagsAtomic(t.Path, m, false); err != nil {
 				return t, false, false, "写标签失败: " + err.Error()
 			}
 		}
@@ -287,7 +287,7 @@ func stageScript(s *store) stageFunc {
 			}
 		}
 		if len(m) > 0 {
-			if err := taglibx.WriteTags(t.Path, m, false); err != nil {
+			if err := taglibx.SaveTagsAtomic(t.Path, m, false); err != nil {
 				return t, false, false, "写标签失败: " + err.Error()
 			}
 			refreshTrack(s, t.Path)
@@ -321,7 +321,7 @@ func stageFixArtist(s *store) stageFunc {
 			m[taglibx.Title] = []string{ft}
 		}
 		if len(m) > 0 {
-			if err := taglibx.WriteTags(t.Path, m, false); err != nil {
+			if err := taglibx.SaveTagsAtomic(t.Path, m, false); err != nil {
 				return t, false, false, "写标签失败: " + err.Error()
 			}
 			refreshTrack(s, t.Path)
