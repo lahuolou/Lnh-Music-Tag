@@ -76,6 +76,7 @@ func loadTracksFromDB(s *store, db *sql.DB) {
 			log.Printf("loadTracks unmarshal %s: %v", r.id, err)
 			continue
 		}
+		t.Quality = t.ComputeQuality() // 旧数据无 quality 字段，加载时按音频属性补算
 		parsedOut = append(parsedOut, parsed{track: &t, seq: r.seq})
 	}
 	// 一次性加锁批量写入

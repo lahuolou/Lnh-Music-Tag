@@ -1,6 +1,8 @@
 // Package model defines the core data structures shared across the app.
 package model
 
+import "strings"
+
 // AudioExts lists the audio file extensions the scanner accepts.
 var AudioExts = map[string]bool{
 	".mp3": true, ".flac": true, ".m4a": true, ".aac": true,
@@ -21,6 +23,7 @@ type Track struct {
 	SampleRate    uint              `json:"sampleRate"`
 	BitDepth      uint              `json:"bitDepth"` // bits per sample（无损；有损为 0）
 	Channels      uint              `json:"channels"`
+	Quality       string            `json:"quality"`  // 流畅/普通/高品/无损/Hi-Res（自动识别）
 	HasCover      bool              `json:"hasCover"`
 	HasLrcFile    bool              `json:"hasLrcFile"`    // 同目录存在外挂 .lrc 歌词文件
 	HasLyrics     bool              `json:"hasLyrics"`     // 内嵌歌词非空（列表瘦身：歌词正文不下发，仅标志）
@@ -37,4 +40,32 @@ type DuplicateGroup struct {
 	Count  int      `json:"count"`
 	IDs    []string `json:"ids"`
 	KeepID string   `json:"keepId,omitempty"` // "format" 组的保留者（音质最佳）
+}
+
+// losslessExts lists extensions that always represent lossless audio,
+// used as a fallback when BitDepth was not probed (e.g. some WAV/AIFF).
+var losslessExts = map[string]bool{
+	".flac": true, ".ape": true, ".wav": true, ".aiff": true, ".mka": true,
+}
+
+// ComputeQuality classifies a track's audio quality from its probed properties.
+// Lossless files (BitDepth > 0 or lossless extension) are 无损/Hi-Res; lossy
+// files are tiered by bitrate: <128k 流畅, <=192k 普通, >=224k 高品.
+func (t *Track) ComputeQuality() string {
+	if t.BitDepth > 0 || losslessExts[strings.ToLower(t.Ext)] {
+		if t.SampleRate >= 96000 || t.BitDepth >= 24 {
+			return "Hi-Res"
+		}
+		return "无损"
+	}
+	switch {
+	case t.Bitrate == 0:
+		return "未知"
+	case t.Bitrate < 128:
+		return "流畅"
+	case t.Bitrate <= 192:
+		return "普通"
+	default:
+		return "高品"
+	}
 }

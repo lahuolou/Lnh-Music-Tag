@@ -331,7 +331,7 @@ onBeforeUnmount(stopPoll);
             <th class="col-extra">{{ t('bDiscNumber') }}</th>
             <th class="col-extra">{{ t('bDiscTotal') }}</th>
             <th class="col-extra">{{ t('bTrackTotal') }}</th>
-            <th class="th-sort col-extra" style="width:64px" @click="setSort('bitrate')">{{ t('bBitrate') }} {{ sortIcon('bitrate') }}</th>
+            <th class="th-sort col-extra" style="width:64px" @click="setSort('bitrate')">{{ t('bQuality') }} {{ sortIcon('bitrate') }}</th>
             <th class="col-extra">{{ t('bSampleRate') }}</th>
             <th class="col-extra">{{ t('bBitDepth') }}</th>
             <th class="th-sort col-extra" style="width:56px" @click="setSort('duration')">{{ t('bDuration') }} {{ sortIcon('duration') }}</th>
@@ -362,7 +362,7 @@ onBeforeUnmount(stopPoll);
             <td class="col-extra">{{ tag(item, 'DISCNUMBER') }}</td>
             <td class="col-extra">{{ tag(item, 'DISCTOTAL') }}</td>
             <td class="col-extra">{{ tag(item, 'TRACKTOTAL') }}</td>
-            <td class="col-extra">{{ item.bitrate || '' }}</td>
+            <td class="col-extra">{{ item.quality || '' }}</td>
             <td class="col-extra">{{ fmtKHz(item.sampleRate) }}</td>
             <td class="col-extra">{{ item.bitDepth || '' }}</td>
             <td class="col-extra">{{ fmtDur(item.duration) }}</td>
@@ -392,7 +392,7 @@ onBeforeUnmount(stopPoll);
             <strong class="mobile-track-title">{{ displayTitle(item) }}</strong>
             <span class="mobile-track-artist">{{ displayArtist(item) || t('unknown') }}</span>
             <span class="mobile-track-album">{{ tag(item, 'ALBUM') || t('unknown') }}</span>
-            <span class="mobile-track-tags">{{ lrcMark(item) }}<template v-if="item.bitrate"> · {{ item.bitrate }} kbps</template><template v-if="item.duration"> · {{ fmtDur(item.duration) }}</template></span>
+            <span class="mobile-track-tags">{{ lrcMark(item) }}<template v-if="item.quality"> · {{ item.quality }}</template><template v-if="item.duration"> · {{ fmtDur(item.duration) }}</template></span>
           </div>
           <button class="ghost sm mobile-track-edit" @click.stop="openTrack(item)">{{ t('edit') }}</button>
         </article>

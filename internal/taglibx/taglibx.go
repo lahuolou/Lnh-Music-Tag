@@ -84,6 +84,7 @@ func trackFrom(path string, st os.FileInfo, tags map[string][]string, props tagl
 	}
 	tr.HasLyrics = strings.TrimSpace(tr.Tags["LYRICS"]) != ""
 	tr.ID = pathID(path)
+	tr.Quality = tr.ComputeQuality()
 	return tr
 }
 
