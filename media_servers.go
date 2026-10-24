@@ -53,7 +53,7 @@ func mediaGatewayHandler(s *store, cfg *cstore.Config, kind string) http.Handler
 	})
 }
 func (g *mediaGateway) serve(w http.ResponseWriter, r *http.Request, kind string) {
-	log.Printf("MEDIA-GATEWAY kind=%s method=%s path=%s", kind, r.Method, r.URL.Path)
+	log.Printf("MEDIA-GATEWAY rid=%s kind=%s method=%s path=%s", requestID(r), kind, r.Method, r.URL.Path)
 	prefix := "/" + kind
 	p := strings.TrimPrefix(r.URL.Path, prefix)
 	p = strings.TrimPrefix(p, "/")
@@ -1307,11 +1307,7 @@ func (g *mediaGateway) itemQuery(r *http.Request) map[string]any {
 	if strings.EqualFold(qv(r, "isFavorite", "IsFavorite"), "true") && !strings.Contains(filters, "IsFavorite") {
 		filters += ",IsFavorite"
 	}
-	start, _ := strconv.Atoi(qv(r, "StartIndex", "startIndex"))
-	limit, _ := strconv.Atoi(qv(r, "Limit", "limit"))
-	if start < 0 {
-		start = 0
-	}
+	start, limit := parseStartLimit(r, []string{"StartIndex", "startIndex"}, []string{"Limit", "limit"})
 	starred := map[string]bool{}
 	if strings.Contains(filters, "IsFavorite") {
 		var ids []string
@@ -1444,7 +1440,7 @@ func (g *mediaGateway) latestItems(r *http.Request) []any {
 	for _, group := range groups {
 		items = append(items, g.albumDTO(group))
 	}
-	limit, _ := strconv.Atoi(qv(r, "Limit", "limit"))
+	limit := parseLimit(r, []string{"Limit", "limit"})
 	if limit > 0 && limit < len(items) {
 		items = items[:limit]
 	}
@@ -1779,11 +1775,7 @@ func pageItems(items []any, r *http.Request) map[string]any {
 	if items == nil {
 		items = []any{}
 	}
-	start, _ := strconv.Atoi(qv(r, "StartIndex", "startIndex"))
-	limit, _ := strconv.Atoi(qv(r, "Limit", "limit"))
-	if start < 0 {
-		start = 0
-	}
+	start, limit := parseStartLimit(r, []string{"StartIndex", "startIndex"}, []string{"Limit", "limit"})
 	total := len(items)
 	if start > total {
 		start = total

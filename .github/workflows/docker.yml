@@ -30,8 +30,34 @@ jobs:
           fi
           echo "version ok: $ver == v$tag"
 
+  # Go 测试门禁：gofmt 格式 + vet 静态检查 + 全量单测（含分页契约/插件/原子写/限速/品质测试）。
+  # 任一失败即阻断镜像构建，防止未过测试的产物进入 GHCR。
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Files not formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+
   build:
     runs-on: ubuntu-24.04
+    needs: [test]
     permissions:
       contents: read
       packages: write

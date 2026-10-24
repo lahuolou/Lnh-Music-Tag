@@ -323,7 +323,7 @@ func paginationND(r *http.Request) (start, end int) {
 		start = parse("offset")
 	}
 	// Prevent overflow and pathological page sizes from reaching slice arithmetic.
-	const maxPageSize = 1000
+	// （单页上限 maxPageSize 统一见 pagination.go）
 	end = parse("_end")
 	if end == 0 {
 		for _, key := range []string{"_limit", "limit", "size"} {

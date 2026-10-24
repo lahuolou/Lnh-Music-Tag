@@ -23,6 +23,20 @@
 - 标签原子写测试（taglibx_atomic_test.go）：真实音频写标签往返、幂等、失败保原件、无残留临时/备份文件
 - 阶段 A 安全测试（stageA_security_test.go）：登录/网关/ND 限速锁定与解除、健康端点存活/就绪/不可用
 
+### P1 分页契约与安全补强
+
+- **四协议分页解析统一**：Subsonic / Jellyfin / Emby 列表接口改用共享 `parseStartLimit`/`parseLimit`（pagination.go），负数在解析层归零、单页上限 1000、非法字符串按 0、多参数拼写优先级一致；Navidrome 分页常量并入共享定义，删除局部重复声明
+- **插件升级崩溃一致性**：启动时扫描插件目录残留（`.plugin-backup-*` 回滚点、`*-staging-*` 暂存），识别中断升级并保留现场供人工处理，不自动删除可恢复副本
+- **登录失败审计与 request_id**：登录失败记录用户名与来源 IP（不记密码/令牌），HTTP 请求日志（网关/登录）带 `rid=` 关联字段
+- **Cookie Secure 条件化**：仅在 HTTPS（直连 TLS 或反向代理 `X-Forwarded-Proto: https`）下置位，纯 HTTP 内网登录不受影响
+- **登录敏感日志核查**：全仓确认无密码/令牌/stream_pass 写入日志
+
+### P2 品质分级与测试门禁
+
+- **品质判定修复**：有损扩展名（mp3/aac/ogg/opus/m4a/wma 等）即使元数据携带异常位深也不按无损/Hi-Res 判定（扩展名是格式权威），补 96kHz/24bit 临界、MKA 边界、有损高采样率等 10 个边界夹具用例
+- **文件安全测试**：截断/损坏音频读取与原子写不 panic、不产生临时/备份残留（taglibx_atomic_test.go 新增用例）
+- **CI 测试门禁**：docker.yml 新增 test job（gofmt 检查 + go vet + go test ./...），任一失败即阻断镜像构建，版本一致性校验保持不变
+
 ## 1.0.13
 
 插件体系与 Navidrome 兼容性加固，新增移动端歌曲卡片 UI 与一批安全/并发测试。

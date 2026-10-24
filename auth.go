@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -103,9 +104,24 @@ func bootstrapAdmin(cfg *cstore.Config, envUser, envPass string) (string, string
 	return user, pw, generated, nil
 }
 
+// requestID 为请求生成短随机 ID（首次生成后缓存在请求头，便于同一请求的多行日志关联）。
+// 只用于日志关联，不构成认证。
+func requestID(r *http.Request) string {
+	if id := r.Header.Get("X-Lnh-Request-Id"); id != "" {
+		return id
+	}
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	id := hex.EncodeToString(b)
+	r.Header.Set("X-Lnh-Request-Id", id)
+	return id
+}
+
 // loginHandler validates credentials (from the DB) and issues a session cookie.
 func (s *sessionStore) loginHandler(w http.ResponseWriter, r *http.Request) {
+	rid := requestID(r)
 	if !s.guard.allow(r) {
+		log.Printf("login rate-limited rid=%s ip=%s", rid, clientKey(r))
 		writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 5 分钟后再试")
 		return
 	}
@@ -122,6 +138,8 @@ func (s *sessionStore) loginHandler(w http.ResponseWriter, r *http.Request) {
 	okU := subtle.ConstantTimeCompare([]byte(req.User), []byte(wantUser)) == 1
 	okP := okU && verifyPassword(wantPass, req.Pass)
 	if !(okU && okP) {
+		// 失败审计：记录用户名与来源 IP（不记录密码/令牌），用于排查暴力尝试。
+		log.Printf("login failed rid=%s user=%q ip=%s", rid, req.User, clientKey(r))
 		if d := s.guard.fail(r); d > 0 {
 			writeErr(w, http.StatusTooManyRequests, "失败次数过多，请 5 分钟后再试")
 			return
@@ -140,9 +158,12 @@ func (s *sessionStore) loginHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.sessions[token] = exp
 	s.mu.Unlock()
+	// Secure 仅在 HTTPS 环境下置位：应用自身不终止 TLS，由反向代理的
+	// X-Forwarded-Proto=https 或直达 TLS 判定；纯 HTTP 内网登录不受影响。
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/",
-		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds()),
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure, MaxAge: int(sessionTTL.Seconds()),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "已登录", "user": wantUser})
 }

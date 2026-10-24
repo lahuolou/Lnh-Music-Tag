@@ -112,3 +112,30 @@ func TestSaveTagsAtomicFailureKeepsOriginal(t *testing.T) {
 		}
 	}
 }
+
+// 文件安全测试：截断/损坏的音频文件读取与原子写都不应 panic，
+// 且不得残留临时/备份文件（文档 P2：异常样本不仅要求不 panic，还要求原文件未被意外改变）。
+func TestDamagedFileNoPanicNoResidue(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "broken.flac")
+	// 极小截断文件（非真实音频，模拟损坏标签区/截断下载）
+	if err := os.WriteFile(f, []byte("RIFF\x00\x00\x00\x00WAVEfmt "), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	// 读取：允许返回错误或空结果，但不 panic
+	tr, err := ReadTrack(f)
+	_ = tr
+	_ = err
+	// 原子写：不强制成功（库对损坏文件行为不定），但不得留下临时/备份残留
+	_ = SaveTagsAtomic(f, map[string][]string{Title: {"x"}}, false)
+	// 原文件可读（未被删除）
+	if _, err := os.ReadFile(f); err != nil {
+		t.Fatalf("损坏文件处理后不可读: %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".lnh-tmp-") || strings.Contains(e.Name(), ".lnh-bak-") {
+			t.Errorf("损坏文件处理残留临时/备份: %s", e.Name())
+		}
+	}
+}

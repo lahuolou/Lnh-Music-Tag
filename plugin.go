@@ -7,13 +7,40 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"lnh-music-tag/internal/scrape"
 	cstore "lnh-music-tag/internal/store"
 )
+
+// scanPluginResidue 启动恢复扫描：检测未完成/中断的插件升级残留目录
+// （.plugin-backup-* 回滚点、*-staging-* 暂存目录）。升级状态机的两个
+// 过渡目录都在这里，进程在切换期间中断会留下它们。
+// 安全策略：保留现场供人工确认，不自动删除——删除可能丢失唯一可恢复副本。
+func scanPluginResidue(cfg *cstore.Config, configDir string) {
+	root := pluginsRoot(cfg, configDir)
+	if root == "" {
+		return
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return // 插件目录不存在（未装过插件）或不可读：无需扫描
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".plugin-backup-") || strings.Contains(name, "-staging-") {
+			log.Printf("WARN: 发现插件升级残留目录 %q（升级可能被中断）。已保留现场，请确认插件版本可用后手动处理。",
+				filepath.Join(root, name))
+		}
+	}
+}
 
 // PluginKind 插件类型。
 type PluginKind string
@@ -239,6 +266,9 @@ func loadPluginsFromDB(cfg *cstore.Config, configDir string, ms *scrape.MultiSou
 	if cfg == nil {
 		return
 	}
+	// 启动恢复扫描：检测未完成/中断的插件升级残留（staging/backup 目录）。
+	// 保留现场供人工确认，不自动删除（删除可能丢失唯一可恢复副本）。
+	scanPluginResidue(cfg, configDir)
 	type record struct {
 		Enabled  *bool             `json:"enabled"`
 		Config   map[string]string `json:"config,omitempty"`

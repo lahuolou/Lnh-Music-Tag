@@ -48,11 +48,21 @@ var losslessExts = map[string]bool{
 	".flac": true, ".ape": true, ".wav": true, ".aiff": true, ".mka": true,
 }
 
+// lossyExts lists lossy encodings. A track with one of these extensions is never
+// classified as lossless even if metadata carries an anomalous BitDepth (which
+// happens with corrupted/foreign tags) — the extension is the format authority.
+var lossyExts = map[string]bool{
+	".mp3": true, ".mp2": true, ".aac": true, ".m4a": true, ".m4b": true,
+	".ogg": true, ".opus": true, ".wma": true, ".ac3": true,
+}
+
 // ComputeQuality classifies a track's audio quality from its probed properties.
-// Lossless files (BitDepth > 0 or lossless extension) are 无损/Hi-Res; lossy
-// files are tiered by bitrate: <128k 流畅, <=192k 普通, >=224k 高品.
+// Lossless files (BitDepth > 0 with a non-lossy extension, or a lossless
+// extension) are 无损/Hi-Res; lossy files are tiered by bitrate:
+// <128k 流畅, <=192k 普通, >=224k 高品.
 func (t *Track) ComputeQuality() string {
-	if t.BitDepth > 0 || losslessExts[strings.ToLower(t.Ext)] {
+	ext := strings.ToLower(t.Ext)
+	if (t.BitDepth > 0 && !lossyExts[ext]) || losslessExts[ext] {
 		if t.SampleRate >= 96000 || t.BitDepth >= 24 {
 			return "Hi-Res"
 		}
