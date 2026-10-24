@@ -247,7 +247,9 @@ button.danger:hover{background:var(--err);color:#fff}
   .ml-toolbar .row { align-items: stretch; }
   /* 筛选标签紧凑化：避免「全部/乱码/繁体/无歌词/无海报/待识别」在窄屏换行 */
   .filters .chip { padding: 2px 9px; font-size: 11px; min-height: 30px; border-radius: 12px; }
-  .ml-toolbar .row button, .ml-toolbar .row select, .ml-toolbar .row input { min-height: 42px; }
+  .ml-toolbar .row select, .ml-toolbar .row input { min-height: 42px; }
+  /* 扫描/刷新/暂停按钮与筛选标签同尺寸（紧凑、单行、不挤压搜索区） */
+  .ml-toolbar .row button { min-height: 30px; padding: 2px 9px; font-size: 11px; border-radius: 12px; }
   .modal-mask { align-items: flex-end; padding: 0; }
   .modal { width: 100%; max-width: none; max-height: calc(90dvh - env(safe-area-inset-top)); border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
 }
