@@ -44,7 +44,7 @@ Body: {"user":"admin","pass":"***"}
 | POST | `/api/scan` | 扫描音乐目录（Body 含 `dir`）；进度由 `scan/status` 轮询 |
 | GET | `/api/scan/status` | 扫描进度（`scanning`/`paused`、`current`、`total`） |
 | POST | `/api/scan/pause` | 暂停/恢复扫描 |
-| GET | `/api/tracks` | 曲目列表（支持 `q` 搜索、`filter` 筛选：乱码/繁体/无歌词/无海报/待识别、`sort` 排序） |
+| GET | `/api/tracks` | 曲目列表（支持 `q` 搜索、`filter` 筛选：乱码/繁体/无歌词/无海报/待识别、`sort` 排序；每条含 `quality` 品质字段：流畅/普通/高品/无损/Hi-Res，由码率/采样率/位深自动识别） |
 | GET | `/api/tracks/refresh` | 重新读取标签刷新内存 |
 | GET | `/api/track/{id}` | 单曲详情 |
 | POST | `/api/tracks/delete` | 删除曲目（先移入回收站） |

@@ -316,7 +316,7 @@ onBeforeUnmount(stopPoll);
             <th style="width:46px">{{ t('cover') }}</th>
             <th class="th-sort" @click="setSort('title')">{{ t('hTitle') }} {{ sortIcon('title') }}</th>
             <th class="th-sort" @click="setSort('artist')">{{ t('hArtist') }} {{ sortIcon('artist') }}</th>
-            <th class="th-sort" style="width:64px" @click="setSort('bitrate')">{{ t('bQuality') }} {{ sortIcon('bitrate') }}</th>
+            <th class="th-sort col-extra" style="width:64px" @click="setSort('bitrate')">{{ t('bQuality') }} {{ sortIcon('bitrate') }}</th>
             <th class="th-sort" @click="setSort('album')">{{ t('hAlbum') }} {{ sortIcon('album') }}</th>
             <th style="width:52px" :title="t('lyrTitle')">{{ t('hLyric') }}</th>
             <th class="th-sort col-extra" @click="setSort('albumartist')">{{ t('hAlbumArtist') }} {{ sortIcon('albumartist') }}</th>
