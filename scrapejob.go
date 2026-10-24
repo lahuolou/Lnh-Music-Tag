@@ -1227,6 +1227,20 @@ func fuseMetadata(results []scrape.SearchResult, wantTitle, wantArtist string) s
 		return scrape.SearchResult{}, false
 	}
 
+	// 目标艺人已知时，若无任何候选艺人匹配（全部为同名异艺人/艺人缺失），
+	// 视作"源没有命中正确曲目"：只保留干净标题（wantTitle），其余源字段一律
+	// 不采用——避免"梁静茹 - 勇气"被同名异艺人候选（派伟俊/棉子的"勇气"）
+	// 的标题/专辑/日期等污染原标签。艺人匹配候选存在时才走完整融合。
+	artistMatched := len(wantArtists) == 0
+	if !artistMatched {
+		for _, rk := range ranks {
+			if rk.asim >= 0.5 {
+				artistMatched = true
+				break
+			}
+		}
+	}
+
 	var out scrape.SearchResult
 	rep := ranks[0].sr
 	// 代表源：封面下载、源ID、专辑ID、ReleaseMBID 挂在匹配最佳的候选上。
@@ -1239,11 +1253,14 @@ func fuseMetadata(results []scrape.SearchResult, wantTitle, wantArtist string) s
 		out.AlbumID = rep.AlbumID
 		out.CoverURL = rep.CoverURL
 	}
-	out.ReleaseMBID = rep.ReleaseMBID
-	// 代表源非 MusicBrainz 时，仍从任一 MB 候选继承发行 ID（用于写 MB 专辑标签）。
-	if out.ReleaseMBID == "" {
-		if mb, ok := pick(func(s scrape.SearchResult) bool { return s.ReleaseMBID != "" }); ok {
-			out.ReleaseMBID = mb.ReleaseMBID
+	// 代表源非 MusicBrainz 时，仍从任一 MB 候选继承发行 ID（用于写 MB 专辑标签）；
+	// 目标艺人已知但无匹配候选时同样不继承（异名候选的 MB ID 会误导）。
+	if artistMatched {
+		out.ReleaseMBID = rep.ReleaseMBID
+		if out.ReleaseMBID == "" {
+			if mb, ok := pick(func(s scrape.SearchResult) bool { return s.ReleaseMBID != "" }); ok {
+				out.ReleaseMBID = mb.ReleaseMBID
+			}
 		}
 	}
 
@@ -1259,8 +1276,14 @@ func fuseMetadata(results []scrape.SearchResult, wantTitle, wantArtist string) s
 		return complete(s) && scrape.ArtistSimilar(s.Artists, wantArtists) >= 0.5
 	}
 	switch {
-	case ranks[0].sim >= 0.35 && titleOK(ranks[0].sr):
+	case artistMatched && ranks[0].sim >= 0.35 && titleOK(ranks[0].sr):
 		out.Title = ranks[0].sr.Title
+	case !artistMatched:
+		// 目标艺人已知但候选全不匹配：只取干净的原标题（文件名/原标签），
+		// 不取同名异艺人候选的标题（如"勇气 (2018春晚表演歌曲)"）。
+		if t := strings.TrimSpace(wantTitle); t != "" {
+			out.Title = t
+		}
 	default:
 		if r, ok := pick(completeMatch); ok {
 			out.Title = r.Title
@@ -1287,54 +1310,57 @@ func fuseMetadata(results []scrape.SearchResult, wantTitle, wantArtist string) s
 	} else if r, ok := pick(artistNonPlaceholder); ok {
 		out.Artists = r.Artists
 	}
-	// 专辑：非空、非占位/Various。
-	if r, ok := pick(func(s scrape.SearchResult) bool { return albumUsable(s.Album) }); ok {
-		out.Album = r.Album
-	}
-	// 专辑艺术家：优先 MusicBrainz（Enrich 提供），其次非空。
-	if r, ok := pick(func(s scrape.SearchResult) bool {
-		return s.Source == "musicbrainz" && len(s.AlbumArtist) > 0
-	}); ok {
-		out.AlbumArtist = r.AlbumArtist
-	} else if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.AlbumArtist) > 0 }); ok {
-		out.AlbumArtist = r.AlbumArtist
-	}
-	// 流派：跨源按匹配度顺序去重合并（多源一致增强可信度）。
-	out.Genre = mergeUniqueFused(ranks, func(s scrape.SearchResult) []string { return s.Genre })
-	// 年代/日期：非空且含数字。
-	if r, ok := pick(func(s scrape.SearchResult) bool { return dateUsable(s.Date) }); ok {
-		out.Date = r.Date
-	}
-	// 曲目号。
-	if r, ok := pick(func(s scrape.SearchResult) bool { return s.TrackNumber > 0 }); ok {
-		out.TrackNumber = r.TrackNumber
-	}
-	// 作曲家 / 作词家。
-	if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.Composer) > 0 }); ok {
-		out.Composer = r.Composer
-	}
-	if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.Lyricist) > 0 }); ok {
-		out.Lyricist = r.Lyricist
-	}
-	// 语言 / 专辑类型 / 注释。
-	if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.Language) != "" }); ok {
-		out.Language = r.Language
-	}
-	if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.AlbumType) != "" }); ok {
-		out.AlbumType = r.AlbumType
-	}
-	if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.Comment) != "" }); ok {
-		out.Comment = r.Comment
-	}
-	// 光盘号 / 总音轨 / 总碟数。
-	if r, ok := pick(func(s scrape.SearchResult) bool { return s.DiscNumber > 0 }); ok {
-		out.DiscNumber = r.DiscNumber
-	}
-	if r, ok := pick(func(s scrape.SearchResult) bool { return s.TotalTracks > 0 }); ok {
-		out.TotalTracks = r.TotalTracks
-	}
-	if r, ok := pick(func(s scrape.SearchResult) bool { return s.TotalDiscs > 0 }); ok {
-		out.TotalDiscs = r.TotalDiscs
+	// 专辑：非空、非占位/Various。仅艺人匹配（或目标艺人未知）时采用，
+	// 避免同名异艺人候选的专辑名污染原标签。
+	if artistMatched {
+		if r, ok := pick(func(s scrape.SearchResult) bool { return albumUsable(s.Album) }); ok {
+			out.Album = r.Album
+		}
+		// 专辑艺术家：优先 MusicBrainz（Enrich 提供），其次非空。
+		if r, ok := pick(func(s scrape.SearchResult) bool {
+			return s.Source == "musicbrainz" && len(s.AlbumArtist) > 0
+		}); ok {
+			out.AlbumArtist = r.AlbumArtist
+		} else if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.AlbumArtist) > 0 }); ok {
+			out.AlbumArtist = r.AlbumArtist
+		}
+		// 流派：跨源按匹配度顺序去重合并（多源一致增强可信度）。
+		out.Genre = mergeUniqueFused(ranks, func(s scrape.SearchResult) []string { return s.Genre })
+		// 年代/日期：非空且含数字。
+		if r, ok := pick(func(s scrape.SearchResult) bool { return dateUsable(s.Date) }); ok {
+			out.Date = r.Date
+		}
+		// 曲目号。
+		if r, ok := pick(func(s scrape.SearchResult) bool { return s.TrackNumber > 0 }); ok {
+			out.TrackNumber = r.TrackNumber
+		}
+		// 作曲家 / 作词家。
+		if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.Composer) > 0 }); ok {
+			out.Composer = r.Composer
+		}
+		if r, ok := pick(func(s scrape.SearchResult) bool { return len(s.Lyricist) > 0 }); ok {
+			out.Lyricist = r.Lyricist
+		}
+		// 语言 / 专辑类型 / 注释。
+		if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.Language) != "" }); ok {
+			out.Language = r.Language
+		}
+		if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.AlbumType) != "" }); ok {
+			out.AlbumType = r.AlbumType
+		}
+		if r, ok := pick(func(s scrape.SearchResult) bool { return strings.TrimSpace(s.Comment) != "" }); ok {
+			out.Comment = r.Comment
+		}
+		// 光盘号 / 总音轨 / 总碟数。
+		if r, ok := pick(func(s scrape.SearchResult) bool { return s.DiscNumber > 0 }); ok {
+			out.DiscNumber = r.DiscNumber
+		}
+		if r, ok := pick(func(s scrape.SearchResult) bool { return s.TotalTracks > 0 }); ok {
+			out.TotalTracks = r.TotalTracks
+		}
+		if r, ok := pick(func(s scrape.SearchResult) bool { return s.TotalDiscs > 0 }); ok {
+			out.TotalDiscs = r.TotalDiscs
+		}
 	}
 	return out
 }

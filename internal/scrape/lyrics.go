@@ -9,7 +9,27 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/liuzl/gocc"
 )
+
+// simpForMatch 匹配用简繁归一：把繁体艺人/标题统一转简体再比较，
+// 避免"候选艺人繁体（梁靜茹）vs 目标艺人简体（梁静茹）"匹配失败，
+// 导致同名异艺人候选顶替正确结果。
+var simpForMatch = func() func(string) string {
+	cc, err := gocc.New("t2s")
+	if err != nil {
+		return func(s string) string { return s }
+	}
+	return func(s string) string {
+		o, err := cc.Convert(s)
+		if err != nil {
+			return s
+		}
+		return o
+	}
+}()
+
 
 // FetchLyrics returns the lyrics text for a result. Strategy:
 //   - NetEase / QQ: fetch by the source song ID (best for Chinese tracks)
@@ -137,7 +157,7 @@ func artistSimilar(got, want []string) float64 {
 // normalizeArtistTokens 把艺人字符串拆成归一化 token：小写、去括号备注、
 // 拆分 &/、/,/feat./ft./with/x/vs. 等并列，去标点压缩空白。
 func normalizeArtistTokens(s string) []string {
-	s = strings.ToLower(strings.TrimSpace(s))
+	s = simpForMatch(strings.ToLower(strings.TrimSpace(s)))
 	// 去掉括号及其内容（现场/feat 备注）
 	for {
 		lo := strings.IndexAny(s, "([（")

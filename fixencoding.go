@@ -15,6 +15,7 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"lnh-music-tag/internal/model"
+	"lnh-music-tag/internal/scrape"
 	"lnh-music-tag/internal/taglibx"
 )
 
@@ -331,6 +332,14 @@ func effectiveSearchTerms(t *model.Track) (title, artist string) {
 			artist = fa
 		} else {
 			artist = ""
+		}
+	} else if fa != "" && !looksGarbled(fa) && !looksUnknown(fa) && ft != "" && ft == title {
+		// 标签艺术家与文件名解析结果明显不一致（异名）且标题与文件名一致时，
+		// 优先文件名——打破"错误标签自我强化"：文件曾被同名异艺人候选刮错
+		// （如"梁静茹 - 勇气"被写成"派伟俊"）后再次刮削，若继续用错误标签
+		// 检索会一直刮回错误版本。文件名格式为标准的「艺术家 - 标题」时才回退。
+		if scrape.ArtistSimilar([]string{artist}, []string{fa}) < 0.5 {
+			artist = fa
 		}
 	}
 	return title, artist
