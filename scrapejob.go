@@ -771,6 +771,7 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.
 		job.Current = ""
 		job.mu.Unlock()
 		logJobDone(job) // 批量刮削完成后写入操作日志
+		organizeScraped(store, cfg) // 刮削完成后按专辑整理（幂等）
 	}()
 	multi := len(ids) > 1
 	// 专辑级封面缓存：同一专辑的多首歌曲共享封面，避免逐首重复搜索/下载

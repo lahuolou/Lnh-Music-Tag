@@ -77,6 +77,7 @@ func runOneKeyPipeline(job *scrapeJob, s *store, ms *scrape.MultiSource, list []
 		job.StageLabel = ""
 		job.mu.Unlock()
 		logJobDone(job) // 一键刮削完成后写入操作日志（按曲目聚合）
+		organizeScraped(s, cfg) // 一键流水线完成后按专辑整理（幂等）
 	}()
 
 	// pipelineStage 流水线的一个阶段（key/label 用于前端阶段显示）。

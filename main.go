@@ -323,7 +323,13 @@ func (sm *scanManager) start(store *store, dir string, autoFix, autoRename bool)
 		}
 		st.mu.Unlock()
 		// 写操作日志：扫描完成（新增/跳过/清理的失效文件数）
-		addLog("act_scan", err == nil, added, 0, st.snapshot().Skipped, actDetail("removed", removed))
+		// 扫描结束后按专辑整理现有曲库（幂等，已就位跳过；失败仅记录日志不阻断）
+		moved, orgFailed := organizeLibrary(store, dir, func(m string) { log.Printf("整理: %s", m) })
+		detail := actDetail("removed", removed)
+		if moved > 0 || orgFailed > 0 {
+			detail += actDetail("organized", moved)
+		}
+		addLog("act_scan", err == nil, added, orgFailed, st.snapshot().Skipped, detail)
 	}()
 	return nil
 }
