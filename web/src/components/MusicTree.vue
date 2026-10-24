@@ -125,6 +125,21 @@ function onScroll(e) {
     visible.value += pageSize;
   }
 }
+// 滚动加载双通道：桌面 @scroll 监听容器；移动端浏览器视口可能超过断点导致滚动发生在 body（scroll 不冒泡到容器），
+// 用 IntersectionObserver 哨兵兜底——哨兵进入视口即追加一页，兼容容器滚动与 body 滚动两种环境。
+let io = null;
+function setSentinel(el) {
+  if (io) { io.disconnect(); io = null; }
+  if (el) {
+    io = new IntersectionObserver(entries => {
+      if (entries[0] && entries[0].isIntersecting && visible.value < sorted.value.length) {
+        visible.value += pageSize;
+      }
+    }, { rootMargin: '120px 0px' });
+    io.observe(el);
+  }
+}
+onBeforeUnmount(() => { if (io) io.disconnect(); });
 
 function coverUrl(id) { return '/api/tracks/' + encodeURIComponent(id) + '/cover'; }
 // 封面加载失败重试（列表大并发时偶发连接中断）：最多重试 2 次，带时间戳绕过缓存。
@@ -379,6 +394,8 @@ onBeforeUnmount(stopPoll);
       <div v-if="visible < sorted.length" class="muted" style="padding:8px;text-align:center;font-size:12px">
         {{ t('moreLoading', { x: shown.length, n: sorted.length }) }}
       </div>
+      <!-- 加载更多哨兵：滚到底触发下一页（桌面容器滚动靠 @scroll，移动端 body 滚动靠 IO 兜底） -->
+      <div ref="setSentinel" style="height:1px" aria-hidden="true"></div>
     </div>
   </div>
 </template>
