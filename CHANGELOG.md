@@ -41,11 +41,11 @@
 
 - **/api/metrics 扩展**：新增 `lnh_scrape_jobs_total` / `lnh_scrape_jobs_success`（刮削/一键类任务计数，挂接任务完成日志）与 `lnh_gateway_requests_total`（流媒体网关请求计数）
 - **来源响应夹具测试**（netease_fixture_test.go）：网易云搜索/歌词接口本地 mock 夹具——字段提取、业务错误码降级、HTTP 失败、歌词解析全覆盖，CI 不依赖公网
-- **移动端 Playwright E2E**（web/e2e/ui.e2e.mjs，`npm run e2e`）：桌面登录/列表/「品质」列/筛选标签 + 移动端卡片/品质文本/无横向溢出/全选条/滚动加载，11 项断言；使用系统 Edge（channel: msedge）不下载浏览器，截图证据保存 web/e2e/*.png（gitignore 排除）
+- **移动端 Playwright E2E**（web/e2e/ui.e2e.mjs，`npm run e2e`）：桌面登录/列表/「品质」列/筛选标签/待确认模态（打开/空提示/关闭）+ 移动端卡片/品质文本/无横向溢出/全选条/滚动加载，14 项断言；使用系统 Edge（channel: msedge）不下载浏览器，截图证据保存 web/e2e/*.png（gitignore 排除）
 
 ### P0 刮削可靠性（来源健康度 / 置信度 / 低置信度队列）
 
-- **来源熔断与自适应退避**（internal/scrape/health.go）：每个刮削源独立统计成功率与连续失败；连续 3 次失败进入熔断，期间搜索/封面/歌词调用链直接跳过该源（限流与死源不再拖慢批量流水线）；冷却指数退避（5 分钟起、封顶 30 分钟），任一次成功立即清零恢复；可注入时钟，单测覆盖熔断/恢复/退避封顶/回退链跳过
+- **来源熔断与自适应退避**（internal/scrape/health.go）：每个刮削源独立统计成功率与连续失败；连续 3 次失败进入熔断，期间搜索/封面/歌词调用链直接跳过该源（限流与死源不再拖慢批量流水线）；冷却指数退避（5 分钟起、封顶 30 分钟），任一次成功立即清零恢复；可注入时钟，单测覆盖熔断/恢复/退避封顶/回退链跳过；`/api/metrics` 新增每源 `lnh_scrape_source_healthy` / `lnh_scrape_source_consecutive_fails` 观测
 - **匹配置信度评分**（confidence.go）：候选与目标按标题（50%）+ 艺人（30%）+ 时长（20%）加权归一输出 0-100；目标维度缺失不扣分并把权重让给其余维度；融合结果回填 `Confidence` 字段
 - **字段级合并标尺统一**：fuseMetadata 现有「按字段独立择优 + 艺人门控 + 低分标题回落」沿用，本轮统一接入置信度标尺供低置信度判定与前端展示
 - **低置信度「待确认」队列**（pending.go + 前端）：融合置信度低于 55 的刮削结果入队（原标签 vs 融合候选快照，按 path 唯一覆盖）；曲库新增「待确认」筛选标签与核对模态（确认/忽略，一键清队）；后端 `GET /api/scrape/pending` / `POST /api/scrape/pending/resolve`，best-effort 不中断刮削

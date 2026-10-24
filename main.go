@@ -513,6 +513,15 @@ func main() {
 		fmt.Fprintf(w, "lnh_scrape_jobs_total %d\n", metricScrapeTotal.Load())
 		fmt.Fprintf(w, "lnh_scrape_jobs_success %d\n", metricScrapeSuccess.Load())
 		fmt.Fprintf(w, "lnh_gateway_requests_total %d\n", metricGatewayReq.Load())
+		// 来源健康度（P0 熔断）：healthy=0 表示当前处于熔断冷却中（调用链跳过该源）。
+		for name, st := range ms.SourceHealthStates() {
+			state := 1
+			if st.CoolingDown {
+				state = 0
+			}
+			fmt.Fprintf(w, "lnh_scrape_source_healthy{source=\"%s\"} %d\n", name, state)
+			fmt.Fprintf(w, "lnh_scrape_source_consecutive_fails{source=\"%s\"} %d\n", name, st.ConsecFails)
+		}
 		if ffmpegActive(cfg) {
 			fmt.Fprintln(w, "lnh_ffmpeg_available 1")
 		} else {

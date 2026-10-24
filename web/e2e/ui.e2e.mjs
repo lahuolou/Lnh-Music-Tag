@@ -89,6 +89,23 @@ try {
   const present = filters.filter((f) => bodyFull.includes(f));
   ok('桌面：筛选标签渲染', present.length >= 4, present.join('/'));
 
+  // 待确认模态：点击标签进入筛选 → 点「待确认列表」按钮打开模态（空队列显示空提示），再点遮罩关闭
+  await page.locator('button.chip', { hasText: '待确认' }).first().click();
+  await page.waitForTimeout(400);
+  await page.locator('button', { hasText: '待确认列表' }).first().click();
+  await page.waitForTimeout(600);
+  const modalOpen = await page.evaluate(() => !!document.querySelector('.modal-mask'));
+  ok('桌面：待确认模态打开', modalOpen);
+  const modalBody = await page.locator('.modal-mask').innerText().catch(() => '');
+  ok('桌面：待确认空提示', modalBody.includes('没有待确认的刮削结果'), modalBody.slice(0, 60));
+  await page.evaluate(() => {
+    const m = document.querySelector('.modal-mask');
+    if (m) m.click(); // @click.self 关闭
+  });
+  await page.waitForTimeout(300);
+  const modalClosed = await page.evaluate(() => !document.querySelector('.modal-mask'));
+  ok('桌面：待确认模态关闭', modalClosed);
+
   // ——— 移动端（420×900）———
   const mp = await ctx.newPage();
   await mp.setViewportSize({ width: 420, height: 900 });
