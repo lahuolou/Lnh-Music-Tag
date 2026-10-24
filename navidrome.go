@@ -16,6 +16,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -123,13 +124,13 @@ func (n *navidromeAPI) listJSON(w http.ResponseWriter, r *http.Request, data []a
 	// Navidrome 列表接口返回裸 JSON 数组，总数通过 x-total-count 与 Content-Range 响应头传递
 	start, end := paginationND(r)
 	start, end = sliceRange(total, start, end)
+	// Public list fields must always serialize as arrays; nil slices become [].
 	if data == nil {
-		data = []any{} // 空列表返回 [] 而非 null，避免客户端 JSON 解析失败
+		data = make([]any, 0)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("x-total-count", strconv.Itoa(total))
-	if total == 0 || end <= start {
-		// 空列表 / 空范围时返回合法的空区间，避免 items 0--1/0 这类非法头
+	if total == 0 || start >= end {
 		w.Header().Set("Content-Range", fmt.Sprintf("items */%d", total))
 	} else {
 		w.Header().Set("Content-Range", fmt.Sprintf("items %d-%d/%d", start, end-1, total))
@@ -173,9 +174,27 @@ func (n *navidromeAPI) login(w http.ResponseWriter, r *http.Request) {
 	// 兼容多种提交方式：JSON body（Navidrome 客户端）、x-www-form-urlencoded
 	// （Subsonic 风格客户端）、以及 URL 查询参数。不依赖 Content-Type，因为
 	// 部分客户端不设置该头。
-	body, _ := io.ReadAll(r.Body)
-	if len(bytes.TrimSpace(body)) > 0 {
-		_ = json.Unmarshal(body, &x)
+	// Authentication payloads are small. Cap reads explicitly even when this handler
+	// is mounted outside the browser API middleware.
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	}
+	body, readErr := io.ReadAll(r.Body)
+	if readErr != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(readErr, &maxErr) {
+			n.json(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "请求体超过 1 MiB 限制", "ok": false})
+		} else {
+			n.json(w, http.StatusBadRequest, map[string]any{"error": "无法读取登录请求", "ok": false})
+		}
+		return
+	}
+	trimmedBody := bytes.TrimSpace(body)
+	if len(trimmedBody) > 0 {
+		if err := json.Unmarshal(trimmedBody, &x); err != nil && (strings.HasPrefix(string(trimmedBody), "{") || strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json")) {
+			n.json(w, http.StatusBadRequest, map[string]any{"error": "登录 JSON 格式错误", "ok": false})
+			return
+		}
 	}
 	// form（Subsonic 风格 u/p）兜底：JSON 未解出密码时再尝试。
 	if x.Password == "" && r.Method == http.MethodPost && len(bytes.TrimSpace(body)) > 0 {
@@ -278,67 +297,69 @@ func (n *navidromeAPI) authorized(r *http.Request) bool {
 }
 
 func paginationND(r *http.Request) (start, end int) {
-	start = parseNonNegParam(r, "_start")
-	if start == 0 {
-		start = parseNonNegParam(r, "start")
-	}
-	if start == 0 {
-		start = parseNonNegParam(r, "offset")
-	}
-	end = parseNonNegParam(r, "_end")
-	if end == 0 {
-		if v := r.URL.Query().Get("_limit"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				end = start + n
-			}
+	parse := func(key string) int {
+		v, err := strconv.Atoi(r.URL.Query().Get(key))
+		if err != nil || v < 0 {
+			return 0
 		}
+		return v
 	}
-	if end == 0 {
-		if v := r.URL.Query().Get("limit"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				end = start + n
-			}
-		}
+	start = parse("_start")
+	if start == 0 {
+		start = parse("start")
 	}
+	if start == 0 {
+		start = parse("offset")
+	}
+	// Prevent overflow and pathological page sizes from reaching slice arithmetic.
+	const maxPageSize = 1000
+	end = parse("_end")
 	if end == 0 {
-		if s := r.URL.Query().Get("size"); s != "" {
-			if v, err := strconv.Atoi(s); err == nil && v > 0 {
-				end = start + v
+		for _, key := range []string{"_limit", "limit", "size"} {
+			if raw := r.URL.Query().Get(key); raw != "" {
+				limit := parse(key)
+				if limit > 0 {
+					if limit > maxPageSize {
+						limit = maxPageSize
+					}
+					end = start + limit
+					break
+				}
 			}
 		}
 	}
 	if end <= start {
-		end = start + 100
+		if start > int(^uint(0)>>1)-100 {
+			end = int(^uint(0) >> 1)
+		} else {
+			end = start + 100
+		}
+	}
+	if end-start > maxPageSize {
+		end = start + maxPageSize
 	}
 	return
 }
-
-// parseNonNegParam 读取查询参数并解析为 int；负数与非法值一律视为 0，
-// 防止外部传入 _start=-1 等值导致后续切片索引越界（panic）。
-func parseNonNegParam(r *http.Request, key string) int {
-	n, err := strconv.Atoi(r.URL.Query().Get(key))
-	if err != nil || n < 0 {
-		return 0
-	}
-	return n
-}
-
 func sliceRange(total, start, end int) (int, int) {
-	// 空/负总库一律返回空区间 [0,0)，保证任何情况下都不会产生负切片索引。
-	if total <= 0 {
-		return 0, 0
+	// Defense in depth: callers should use paginationND, but this helper is also
+	// safe when called directly with invalid values.
+	if total < 0 {
+		total = 0
 	}
 	if start < 0 {
 		start = 0
 	}
-	if end < start {
-		end = start
+	if end < 0 {
+		end = 0
 	}
 	if start > total {
 		start = total
 	}
 	if end > total {
 		end = total
+	}
+	if end < start {
+		end = start
 	}
 	return start, end
 }
@@ -447,7 +468,7 @@ func (n *navidromeAPI) songJSON(t *model.Track) map[string]any {
 		"orderTitle": songTitle(t), "orderAlbumName": al,
 		"orderArtistName": ar, "orderAlbumArtistName": ar,
 		"compilation": false,
-		"createdAt": now, "updatedAt": now,
+		"createdAt":   now, "updatedAt": now,
 		"playDate": yest, "play_date": yest,
 	}
 }

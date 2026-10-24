@@ -160,8 +160,11 @@ LNH_CONFIG_DIR=./config LNH_PORT=:10248 ./lnh-music-tag
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | 开发文档：架构、模块、构建、测试、代码规范 |
 | [docs/API.md](./docs/API.md) | 后端 API 参考 |
 | [docs/PLUGINS.md](./docs/PLUGINS.md) | 插件系统与第三方插件开发 |
+| [docs/PLUGIN_API.md](./docs/PLUGIN_API.md) | 插件清单与宿主 API 版本协商（apiVersion） |
+| [docs/PROTOCOL_COMPATIBILITY_MATRIX.md](./docs/PROTOCOL_COMPATIBILITY_MATRIX.md) | 四协议兼容验收矩阵 |
 | [docs/STREAMING_GATEWAY.md](./docs/STREAMING_GATEWAY.md) | 流媒体网关协议与接入 |
 | [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | 部署与运维 |
+| [docs/ROADMAP.md](./docs/ROADMAP.md) | 后续发展路线 |
 | [CHANGELOG.md](./CHANGELOG.md) | 版本历史 |
 
 ---

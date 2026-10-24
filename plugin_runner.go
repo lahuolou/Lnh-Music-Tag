@@ -11,34 +11,41 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cstore "lnh-music-tag/internal/store"
 )
 
+var pluginImportMu sync.Mutex
+
 const (
-	pluginZipMaxSize  = 256 << 20 // 插件包/单文件上限 256MiB
+	PluginAPIVersion  = 1
+	pluginZipMaxSize  = 256 << 20 // 插件包上限 256MiB
 	pluginRunTimeout  = 120 * time.Second
 	pluginZipFileName = "plugin.json"
-	pluginZipMaxFiles = 10000
 )
 
 // pluginZipDecl 是插件包内 plugin.json 的声明格式。
 type pluginZipDecl struct {
-	Name     string            `json:"name"`
-	Label    string            `json:"label"`
-	Kind     string            `json:"kind"`
-	Version  string            `json:"version,omitempty"`
-	Hint     string            `json:"hint,omitempty"`
-	Fields   []PluginField     `json:"fields,omitempty"`
-	KeyField string            `json:"keyField,omitempty"`
-	Entries  map[string]string `json:"entries"`         // 平台 -> 相对入口（bin/xxx）
-	Panel    string            `json:"panel,omitempty"` // Web 面板入口（zip 内相对路径，如 ui/index.html）
+	Name       string            `json:"name"`
+	Label      string            `json:"label"`
+	Kind       string            `json:"kind"`
+	Version    string            `json:"version,omitempty"`
+	APIVersion int               `json:"apiVersion,omitempty"`
+	Hint       string            `json:"hint,omitempty"`
+	Fields     []PluginField     `json:"fields,omitempty"`
+	KeyField   string            `json:"keyField,omitempty"`
+	Entries    map[string]string `json:"entries"`         // 平台 -> 相对入口（bin/xxx）
+	Panel      string            `json:"panel,omitempty"` // Web 面板入口（zip 内相对路径，如 ui/index.html）
 }
 
 // pluginsRoot 返回插件包存放根目录（与配置库同级）。
@@ -49,19 +56,86 @@ func pluginsRoot(cfg *cstore.Config, configDir string) string {
 	return filepath.Join(configDir, "plugins")
 }
 
+var pluginNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`)
+
+// safePluginRelPath validates ZIP entry/manifest paths independent of host OS.
+// ZIP paths always use slash separators; reject Windows drive/UNC forms as well.
+func normalizePluginAPIVersion(v int) (int, error) {
+	if v == 0 {
+		return PluginAPIVersion, nil
+	} // legacy manifest
+	if v != PluginAPIVersion {
+		return 0, errors.New("不支持的插件 API 版本: " + strconv.Itoa(v))
+	}
+	return v, nil
+}
+
+func safePluginRelPath(rel string) (string, error) {
+	rel = strings.ReplaceAll(strings.TrimSpace(rel), "\\", "/")
+	if rel == "" || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, "//") ||
+		(len(rel) >= 2 && ((rel[0] >= 'A' && rel[0] <= 'Z') || (rel[0] >= 'a' && rel[0] <= 'z')) && rel[1] == ':') {
+		return "", errors.New("插件路径必须是相对路径")
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return "", errors.New("插件路径包含目录穿越")
+	}
+	return clean, nil
+}
+
+// atomicReplaceDir installs a fully validated staging directory. The old directory
+// is kept as a rollback point until the staging directory has been renamed in place.
+func atomicReplaceDir(staging, dest string) error {
+	parent := filepath.Dir(dest)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	backup, err := os.MkdirTemp(parent, ".plugin-backup-*")
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(backup); err != nil {
+		return err
+	}
+	oldExists := false
+	if _, err := os.Lstat(dest); err == nil {
+		if err := os.Rename(dest, backup); err != nil {
+			return err
+		}
+		oldExists = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(staging, dest); err != nil {
+		if oldExists {
+			if restoreErr := os.Rename(backup, dest); restoreErr != nil {
+				return errors.Join(err, errors.New("回滚旧插件失败: "+restoreErr.Error()))
+			}
+		}
+		return err
+	}
+	if oldExists {
+		if err := os.RemoveAll(backup); err != nil {
+			// The new version is already live. Do not report the update as failed,
+			// otherwise the registry would remain on the old metadata while disk is new.
+			log.Printf("plugin update succeeded but backup cleanup failed (%s): %v", backup, err)
+		}
+	}
+	return nil
+}
+
 // importPluginZip 校验并解压 zip 插件包，注册后返回插件。
 // 安全约束：解压目标限定在 root/<name>/ 内（防 zip-slip）；
 // entry 必须是 zip 内相对路径，禁止绝对路径与 .. 穿越。
 func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName string) (*Plugin, error) {
+	pluginImportMu.Lock()
+	defer pluginImportMu.Unlock()
 	if len(data) == 0 || len(data) > pluginZipMaxSize {
 		return nil, errors.New("插件包为空或超过 256MiB 上限")
 	}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, errors.New("无法解析 zip 插件包: " + err.Error())
-	}
-	if len(zr.File) > pluginZipMaxFiles {
-		return nil, errors.New("插件包文件数量超过 10000 个上限")
 	}
 	// 1. 读取 plugin.json
 	var decl pluginZipDecl
@@ -91,8 +165,27 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	if decl.Name == "" || decl.Label == "" {
 		return nil, errors.New("plugin.json 缺少 name/label")
 	}
-	if !validPluginName(decl.Name) {
-		return nil, errors.New("plugin.json name 只能包含字母、数字、点、下划线和连字符，且不能以点开头")
+	if !pluginNamePattern.MatchString(decl.Name) || decl.Name == "." || decl.Name == ".." || strings.HasPrefix(decl.Name, ".") {
+		return nil, errors.New("插件 name 只能包含字母、数字、点、下划线和连字符，且不能以点开头")
+	}
+	var versionErr error
+	decl.APIVersion, versionErr = normalizePluginAPIVersion(decl.APIVersion)
+	if versionErr != nil {
+		return nil, versionErr
+	}
+	for platform, rel := range decl.Entries {
+		cleanRel, err := safePluginRelPath(rel)
+		if err != nil {
+			return nil, errors.New("非法入口路径（" + platform + "）: " + err.Error())
+		}
+		decl.Entries[platform] = cleanRel
+	}
+	if decl.Panel != "" {
+		cleanPanel, err := safePluginRelPath(decl.Panel)
+		if err != nil {
+			return nil, errors.New("非法面板路径: " + err.Error())
+		}
+		decl.Panel = cleanPanel
 	}
 	kind := PluginKind(decl.Kind)
 	switch kind {
@@ -103,57 +196,62 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 	if len(decl.Entries) == 0 {
 		return nil, errors.New("plugin.json 缺少 entries（平台 -> 入口文件映射）")
 	}
-	for platform, rel := range decl.Entries {
-		if strings.TrimSpace(platform) == "" || !validPluginRelativePath(rel) {
-			return nil, errors.New("plugin.json entries 包含非法相对路径")
-		}
-	}
-	if decl.Panel != "" && !validPluginRelativePath(decl.Panel) {
-		return nil, errors.New("plugin.json panel 必须是安全的相对路径")
-	}
-	// 在删除/覆盖旧插件目录前先验证整个 ZIP 的路径，避免恶意条目位于包尾时
-	// 导致旧插件先被删除，再因路径错误而导入失败。
-	for _, f := range zr.File {
-		name := strings.TrimPrefix(f.Name, "./")
-		if name == "" || strings.Contains(name, "\\") || filepath.IsAbs(name) ||
-			strings.Contains(name, ":") || !validPluginRelativePath(name) {
-			return nil, errors.New("插件包包含非法路径: " + f.Name)
-		}
-	}
 	// 3. 冲突检查：内置插件不可覆盖；已导入的第三方插件允许覆盖升级，
 	//    覆盖时保留用户已填的配置（Config 不变），只更新插件定义。
 	oldConfig := map[string]string{}
-	if old, ok := reg.plugins[decl.Name]; ok {
-		if old.Builtin {
-			return nil, errors.New("内置插件不可覆盖: " + decl.Name)
-		}
-		oldConfig = old.Config
+	reg.mu.RLock()
+	old := reg.plugins[decl.Name]
+	if old != nil && old.Builtin {
+		reg.mu.RUnlock()
+		return nil, errors.New("内置插件不可覆盖: " + decl.Name)
 	}
+	if old != nil {
+		for k, v := range old.Config {
+			oldConfig[k] = v
+		}
+	}
+	reg.mu.RUnlock()
 	// 4. 解压到 root/<name>/
 	root := pluginsRoot(cfg, configDir)
 	if root == "" {
 		return nil, errors.New("未配置插件存储目录")
 	}
 	dest := filepath.Join(root, decl.Name)
-	cleanDest := filepath.Clean(dest)
-	if err := os.RemoveAll(cleanDest); err != nil {
+	// Stage on the same filesystem so the final rename is atomic. Never remove the
+	// currently installed version before the new package has passed every check.
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(cleanDest, 0o755); err != nil {
+	cleanDest, err := os.MkdirTemp(root, ".plugin-"+decl.Name+"-staging-*")
+	if err != nil {
 		return nil, err
 	}
+	stageLive := true
+	defer func() {
+		if stageLive {
+			_ = os.RemoveAll(cleanDest)
+		}
+	}()
 	// 总解压字节上限（防 zip bomb：压缩包很小但解压量巨大）
 	const maxExtractTotal = 512 << 20
 	var extracted int64
+	if len(zr.File) > 10000 {
+		return nil, errors.New("插件包文件数量超过 10000")
+	}
+	seenPaths := make(map[string]struct{}, len(zr.File))
 	for _, f := range zr.File {
-		name := strings.TrimPrefix(f.Name, "./")
-		// ZIP 规范使用正斜杠；拒绝反斜杠、盘符/绝对路径和父目录组件，
-		// 避免不同操作系统对路径的解释差异。
-		if name == "" || strings.Contains(name, "\\") || filepath.IsAbs(name) ||
-			strings.Contains(name, ":") || !validPluginRelativePath(name) {
-			os.RemoveAll(cleanDest)
+		rawName := strings.TrimPrefix(f.Name, "./")
+		if rawName == "" && f.FileInfo().IsDir() {
+			continue
+		}
+		name, pathErr := safePluginRelPath(rawName)
+		if pathErr != nil {
 			return nil, errors.New("插件包包含非法路径: " + f.Name)
 		}
+		if _, exists := seenPaths[name]; exists {
+			return nil, errors.New("插件包包含重复路径: " + name)
+		}
+		seenPaths[name] = struct{}{}
 		// zip-slip 防护：目标必须仍在 cleanDest 内
 		target := filepath.Join(cleanDest, filepath.FromSlash(name))
 		if !strings.HasPrefix(filepath.Clean(target), cleanDest+string(os.PathSeparator)) &&
@@ -174,6 +272,9 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			}
 			continue
 		}
+		if f.UncompressedSize64 > uint64(pluginZipMaxSize) {
+			return nil, errors.New("插件包单文件解压大小超过 256MiB: " + name)
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			os.RemoveAll(cleanDest)
 			return nil, err
@@ -189,16 +290,12 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			os.RemoveAll(cleanDest)
 			return nil, err
 		}
-		n, err := io.Copy(out, io.LimitReader(rc, pluginZipMaxSize+1))
+		n, err := io.Copy(out, io.LimitReader(rc, pluginZipMaxSize))
 		out.Close()
 		rc.Close()
 		if err != nil {
 			os.RemoveAll(cleanDest)
 			return nil, err
-		}
-		if n > pluginZipMaxSize {
-			os.RemoveAll(cleanDest)
-			return nil, errors.New("插件包单文件解压大小超过 256MiB 上限")
 		}
 		extracted += n
 		if extracted > maxExtractTotal {
@@ -224,58 +321,31 @@ func importPluginZip(cfg *cstore.Config, configDir string, data []byte, zipName 
 			return nil, errors.New("插件面板文件不存在: " + decl.Panel)
 		}
 	}
-	// 6. 注册（覆盖导入时替换旧定义，保留原配置）
+	// 6. 原子切换新版本；切换失败时旧目录会被恢复。
+	if err := atomicReplaceDir(cleanDest, dest); err != nil {
+		return nil, err
+	}
+	stageLive = false
+	// 7. 注册（覆盖导入时替换旧定义，保留原配置）
 	p := &Plugin{
-		Name:     decl.Name,
-		Label:    decl.Label,
-		Kind:     kind,
-		Enabled:  true,
-		Version:  decl.Version,
-		Hint:     decl.Hint,
-		Fields:   decl.Fields,
-		KeyField: decl.KeyField,
-		ZipDir:   cleanDest,
-		Entries:  decl.Entries,
-		ZipName:  zipName,
-		Panel:    decl.Panel,
-		Config:   oldConfig,
+		Name:       decl.Name,
+		Label:      decl.Label,
+		Kind:       kind,
+		Enabled:    true,
+		Version:    decl.Version,
+		APIVersion: decl.APIVersion,
+		Hint:       decl.Hint,
+		Fields:     decl.Fields,
+		KeyField:   decl.KeyField,
+		ZipDir:     dest,
+		Entries:    decl.Entries,
+		ZipName:    zipName,
+		Panel:      decl.Panel,
+		Config:     oldConfig,
 	}
 	replacePlugin(p, nil)
 	savePluginsToDB(cfg)
 	return p, nil
-}
-
-// validPluginName prevents path traversal and platform-specific path interpretation
-// before a plugin name is used as a directory or registry key.
-func validPluginName(name string) bool {
-	if name == "" || name == "." || name == ".." || name[0] == '.' {
-		return false
-	}
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// validPluginRelativePath accepts only non-empty relative paths using ZIP's
-// forward-slash convention. It rejects traversal before any filesystem access.
-func validPluginRelativePath(rel string) bool {
-	if strings.TrimSpace(rel) == "" || strings.Contains(rel, "\\") ||
-		strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) || strings.Contains(rel, ":") {
-		return false
-	}
-	parts := strings.Split(strings.TrimSuffix(rel, "/"), "/")
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." {
-			return false
-		}
-	}
-	clean := filepath.Clean(filepath.FromSlash(rel))
-	return clean != "." && clean != ".." && !strings.HasPrefix(clean, ".."+string(os.PathSeparator))
 }
 
 // pluginEntryPath 返回当前平台可执行入口的绝对路径（不存在返回空串）。

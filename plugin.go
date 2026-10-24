@@ -43,6 +43,7 @@ type Plugin struct {
 	KeyField      string     `json:"keyField,omitempty"` // 对应设置库 Key 键名
 	KeyConfigured bool       `json:"keyConfigured"`      // 当前 Key 是否已配置（快照时由 API 层计算）
 	Version       string     `json:"version,omitempty"`
+	APIVersion    int        `json:"apiVersion,omitempty"` // 插件宿主协议版本；第三方插件当前支持 v1
 	Hint          string     `json:"hint,omitempty"`
 	// Available 由 API 层按当前环境实时计算（不持久化）：依赖是否就绪。
 	// false 时前端禁用开关并展示 Unavailable 原因，避免"开着但用不了"的死状态。

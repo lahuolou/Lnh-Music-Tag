@@ -218,13 +218,14 @@ func pluginsHandler(cfg *cstore.Config) http.HandlerFunc {
 
 // pluginImportDecl 第三方插件导入声明（与 Plugin 同构的 JSON 子集）。
 type pluginImportDecl struct {
-	Name     string        `json:"name"`
-	Label    string        `json:"label"`
-	Kind     string        `json:"kind"`
-	Version  string        `json:"version,omitempty"`
-	Hint     string        `json:"hint,omitempty"`
-	Fields   []PluginField `json:"fields,omitempty"`
-	KeyField string        `json:"keyField,omitempty"`
+	Name       string        `json:"name"`
+	Label      string        `json:"label"`
+	Kind       string        `json:"kind"`
+	Version    string        `json:"version,omitempty"`
+	APIVersion int           `json:"apiVersion,omitempty"`
+	Hint       string        `json:"hint,omitempty"`
+	Fields     []PluginField `json:"fields,omitempty"`
+	KeyField   string        `json:"keyField,omitempty"`
 }
 
 // pluginsImportHandler POST /api/plugins/import 导入第三方插件。
@@ -256,6 +257,8 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 			writeJSON(w, http.StatusOK, map[string]any{"imported": []Plugin{*p}, "plugins": pluginsSnapshot()})
 			return
 		}
+		pluginImportMu.Lock()
+		defer pluginImportMu.Unlock()
 		var decls []pluginImportDecl
 		// 先探测形态：{plugins:[...]} / 裸数组 / 单对象
 		var probe struct {
@@ -278,8 +281,14 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 		}
 		imported := []Plugin{}
 		for _, d := range decls {
-			if d.Name == "" || d.Label == "" {
-				writeErr(w, http.StatusBadRequest, "插件 name/label 不能为空: "+d.Name)
+			if d.Name == "" || d.Label == "" || !pluginNamePattern.MatchString(d.Name) || strings.HasPrefix(d.Name, ".") {
+				writeErr(w, http.StatusBadRequest, "插件 name/label 不合法: "+d.Name)
+				return
+			}
+			var versionErr error
+			d.APIVersion, versionErr = normalizePluginAPIVersion(d.APIVersion)
+			if versionErr != nil {
+				writeErr(w, http.StatusBadRequest, versionErr.Error())
 				return
 			}
 			kind := PluginKind(d.Kind)
@@ -289,27 +298,35 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 				writeErr(w, http.StatusBadRequest, "非法插件类型 kind: "+d.Kind+"（可选 scrape/tool）")
 				return
 			}
-			if old, ok := reg.plugins[d.Name]; ok && old.Builtin {
+			// Read the registry under lock and copy config so a concurrent plugin
+			// update cannot race with this import or mutate the copied map.
+			oldConfig := map[string]string{}
+			reg.mu.RLock()
+			old := reg.plugins[d.Name]
+			if old != nil && old.Builtin {
+				reg.mu.RUnlock()
 				writeErr(w, http.StatusBadRequest, "内置插件不可覆盖: "+d.Name)
 				return
 			}
-			// 覆盖导入：已导入的第三方插件允许覆盖（更新定义），保留原配置。
-			oldConfig := map[string]string{}
-			if old, ok := reg.plugins[d.Name]; ok {
-				oldConfig = old.Config
+			if old != nil {
+				for k, v := range old.Config {
+					oldConfig[k] = v
+				}
 			}
+			reg.mu.RUnlock()
 			replacePlugin(&Plugin{
-				Name:     d.Name,
-				Label:    d.Label,
-				Kind:     kind,
-				Enabled:  true,
-				Version:  d.Version,
-				Hint:     d.Hint,
-				Fields:   d.Fields,
-				KeyField: d.KeyField,
-				Config:   oldConfig,
+				Name:       d.Name,
+				Label:      d.Label,
+				Kind:       kind,
+				Enabled:    true,
+				Version:    d.Version,
+				APIVersion: d.APIVersion,
+				Hint:       d.Hint,
+				Fields:     d.Fields,
+				KeyField:   d.KeyField,
+				Config:     oldConfig,
 			}, nil)
-			imported = append(imported, Plugin{Name: d.Name, Label: d.Label, Kind: kind, Enabled: true, Version: d.Version, Hint: d.Hint, Fields: d.Fields, KeyField: d.KeyField, Config: oldConfig})
+			imported = append(imported, Plugin{Name: d.Name, Label: d.Label, Kind: kind, Enabled: true, Version: d.Version, APIVersion: d.APIVersion, Hint: d.Hint, Fields: d.Fields, KeyField: d.KeyField, Config: oldConfig})
 			addLog("act_plugin_import", true, 1, 0, 0, "导入插件 "+d.Label+"（"+d.Name+"）")
 		}
 		savePluginsToDB(cfg)
@@ -321,6 +338,8 @@ func pluginsImportHandler(cfg *cstore.Config, configDir string) http.HandlerFunc
 // 内置插件不可删除（返回 400）；删除后立即持久化。
 func pluginsDeleteHandler(cfg *cstore.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		pluginImportMu.Lock()
+		defer pluginImportMu.Unlock()
 		name := r.PathValue("name")
 		if name == "" {
 			writeErr(w, http.StatusBadRequest, "missing plugin name")
@@ -398,6 +417,8 @@ func pluginsRunHandler() http.HandlerFunc {
 // 只更新传了 enabled / config 的字段；未知插件名直接报错。
 func pluginsUpdateHandler(cfg *cstore.Config, ms *scrape.MultiSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		pluginImportMu.Lock()
+		defer pluginImportMu.Unlock()
 		var req map[string]struct {
 			Enabled *bool             `json:"enabled"`
 			Config  map[string]string `json:"config"`

@@ -360,6 +360,22 @@ onBeforeUnmount(stopPoll);
           </tr>
         </tbody>
       </table>
+      <!-- 手机上使用卡片列表，避免桌面宽表格挤压歌名和操作控件。 -->
+      <div class="mobile-track-list">
+        <article v-for="item in shown" :key="item.id" class="mobile-track-card" :class="{ on: state.selected.has(item.id) }" @click="openTrack(item)">
+          <input type="checkbox" class="tchk mobile-track-check" :checked="state.selected.has(item.id)" :aria-label="displayTitle(item)" @click.stop @change="toggleSel(item, $event)" />
+          <img v-if="item.hasCover" class="mobile-track-cover" :src="coverUrl(item.id)" loading="lazy" @error="retryCover($event, item)" @click.stop="openTrack(item)" />
+          <span v-else class="mobile-track-cover mobile-track-cover-empty">♪</span>
+          <div class="mobile-track-meta">
+            <strong class="mobile-track-title">{{ displayTitle(item) }}</strong>
+            <span class="mobile-track-artist">{{ displayArtist(item) || t('unknown') }}</span>
+            <span class="mobile-track-album">{{ tag(item, 'ALBUM') || t('unknown') }}</span>
+            <span class="mobile-track-tags">{{ lrcMark(item) }}<template v-if="item.bitrate"> · {{ item.bitrate }} kbps</template><template v-if="item.duration"> · {{ fmtDur(item.duration) }}</template></span>
+          </div>
+          <button class="ghost sm mobile-track-edit" @click.stop="openTrack(item)">{{ t('edit') }}</button>
+        </article>
+        <div v-if="!shown.length" class="muted mobile-empty">{{ state.tracks.length ? t('noMatch') : t('noTracks') }}</div>
+      </div>
       <div v-if="visible < sorted.length" class="muted" style="padding:8px;text-align:center;font-size:12px">
         {{ t('moreLoading', { x: shown.length, n: sorted.length }) }}
       </div>

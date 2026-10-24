@@ -30,7 +30,8 @@ func TestPaginationND(t *testing.T) {
 		{"size 推算", "start=1&size=3", 1, 4},
 		{"end 小于 start 补默认", "_start=8&_end=2", 8, 108},
 		{"非法值归零", "_start=abc&_end=xyz", 0, 100},
-		{"超大页大小", "_start=0&_end=999999", 0, 999999},
+		{"超大页大小按上限钳制", "_start=0&_end=999999", 0, 1000},
+		{"limit 超大按上限钳制", "_start=2&_limit=999999", 2, 1002},
 		{"_start 优先级高于 start", "_start=5&start=1&_end=9", 5, 9},
 		{"_end 优先级高于 _limit", "_start=0&_end=9&_limit=3", 0, 9},
 	}

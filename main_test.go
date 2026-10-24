@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -83,4 +84,16 @@ func TestEnsureHashesProgressAndCancel(t *testing.T) {
 		t.Fatalf("cancel immediately: want hashed=0, got %d", n2)
 	}
 	_ = cancelled
+}
+
+// BenchmarkStoreAll10kTracks is a repeatable baseline for in-memory library reads.
+func BenchmarkStoreAll10kTracks(b *testing.B) {
+	s := newStore(nil)
+	for i := 0; i < 10000; i++ {
+		s.add(&model.Track{ID: fmt.Sprintf("track-%05d", i), Path: fmt.Sprintf("/music/%05d.flac", i), FileName: fmt.Sprintf("%05d.flac", i)})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = s.all()
+	}
 }
