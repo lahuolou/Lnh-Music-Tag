@@ -152,7 +152,7 @@ onMounted(() => { loadCfg(); loadSched(); });
           <select v-model="cfg.organizeMode">
             <option value="off">{{ t('organizeOff') }}</option>
             <option value="album">{{ t('organizeAlbum') }}</option>
-            <option value="title">{{ t('organizeTitle') }}</option>
+            <option value="artist">{{ t('organizeArtist') }}</option>
           </select>
           <p class="muted" style="margin:4px 0 0">{{ t('fOrganizeHint') }}</p>
         </div>

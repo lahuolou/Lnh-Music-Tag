@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"lnh-music-tag/internal/model"
+	cstore "lnh-music-tag/internal/store"
 )
 
 func TestOrganizeDirName(t *testing.T) {
@@ -30,16 +31,20 @@ func TestOrganizeDirName(t *testing.T) {
 			t.Errorf("organizeDirName(album, %q) = %q, want %q", c.album, got, c.want)
 		}
 	}
-	// title 模式
-	titleCases := []struct{ title, want string }{
-		{"勇气", "勇气"},
+	// artist 模式：多艺人取第一个
+	artistCases := []struct{ artist, want string }{
+		{"梁静茹", "梁静茹"},
 		{"", ""},
-		{"Bad/Name: *X?", "Bad Name   X"}, // / : * ? 各变空格，与原文空格连排共三连空格
+		{"Various Artists", ""},
+		{"未知歌手", ""},
+		{"A; B", "A"},
+		{"A / B", "A"},
+		{"A、B", "A"},
 	}
-	for _, c := range titleCases {
-		tr := &model.Track{Tags: map[string]string{"TITLE": c.title}}
-		if got := organizeDirName(organizeTitle, tr); got != c.want {
-			t.Errorf("organizeDirName(title, %q) = %q, want %q", c.title, got, c.want)
+	for _, c := range artistCases {
+		tr := &model.Track{Tags: map[string]string{"ARTIST": c.artist}}
+		if got := organizeDirName(organizeArtist, tr); got != c.want {
+			t.Errorf("organizeDirName(artist, %q) = %q, want %q", c.artist, got, c.want)
 		}
 	}
 	// off 模式一律返回空
@@ -92,7 +97,7 @@ func TestOrganizeTrackMovesToAlbumDir(t *testing.T) {
 	}
 }
 
-func TestOrganizeTrackByTitle(t *testing.T) {
+func TestOrganizeTrackByArtist(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "old", "勇气.flac")
 	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
@@ -102,19 +107,47 @@ func TestOrganizeTrackByTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := newStore(nil)
-	tr := &model.Track{ID: "t4", Path: src, FileName: "勇气.flac", Tags: map[string]string{"TITLE": "勇气"}}
+	tr := &model.Track{ID: "t6", Path: src, FileName: "勇气.flac", Tags: map[string]string{"ARTIST": "梁静茹; 某某"}}
 	st.add(tr)
 
-	ok, err := organizeTrack(st, tr, root, organizeTitle)
+	ok, err := organizeTrack(st, tr, root, organizeArtist)
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v, want move", ok, err)
 	}
-	want := filepath.Join(root, "勇气", "勇气.flac")
+	want := filepath.Join(root, "梁静茹", "勇气.flac") // 多艺人取第一个
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("target not exists: %v", err)
 	}
 	if tr.Path != want {
 		t.Errorf("track.Path = %q, want %q", tr.Path, want)
+	}
+}
+
+func TestOrganizeModeOfFallback(t *testing.T) {
+	cfg, err := cstore.OpenConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cfg.Close()
+	// 默认 off
+	if got := organizeModeOf(cfg); got != organizeOff {
+		t.Errorf("default = %q, want off", got)
+	}
+	// album / artist 有效
+	for _, m := range []string{"album", "artist"} {
+		cfg.Set("organize_mode", m)
+		if got := organizeModeOf(cfg); string(got) != m {
+			t.Errorf("mode %q -> %q", m, got)
+		}
+	}
+	// 已取消的 title 及非法值一律回退 off
+	cfg.Set("organize_mode", "title")
+	if got := organizeModeOf(cfg); got != organizeOff {
+		t.Errorf("legacy title -> %q, want off", got)
+	}
+	cfg.Set("organize_mode", "bogus")
+	if got := organizeModeOf(cfg); got != organizeOff {
+		t.Errorf("bogus -> %q, want off", got)
 	}
 }
 

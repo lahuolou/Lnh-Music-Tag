@@ -645,7 +645,7 @@ func main() {
 			"autoRenameFile": cfg.GetDefault("auto_rename_file", "1") == "1",
 			"scanDir":        cfg.GetDefault("scan_dir", "/music"),
 			"ffmpegPath":     cfg.GetDefault("ffmpeg_path", ""),
-			"organizeMode":   cfg.GetDefault("organize_mode", "off"),
+			"organizeMode":   string(organizeModeOf(cfg)),
 			"editFields":     editFieldsList(cfg),
 		})
 	})
@@ -696,7 +696,7 @@ func main() {
 		if req.OrganizeMode != nil {
 			m := strings.TrimSpace(*req.OrganizeMode)
 			switch m {
-			case "off", "album", "title":
+			case "off", "album", "artist":
 				cfg.Set("organize_mode", m)
 			}
 		}

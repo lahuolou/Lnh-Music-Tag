@@ -1,7 +1,7 @@
-// organize.go：按专辑/歌曲名存放整理——扫描/刮削完成后把曲目移动到音乐库根目录
-// 下的「专辑名/」或「歌曲名/」子目录（文件名保持不变，同目录 .lrc 外挂歌词跟随
+// organize.go：按专辑/歌手名存放整理——扫描/刮削完成后把曲目移动到音乐库根目录
+// 下的「专辑名/」或「歌手名/」子目录（文件名保持不变，同目录 .lrc 外挂歌词跟随
 // 移动）。三种模式由后台统一设置（organize_mode）：off=不整理（保持原目录，
-// 默认）/ album=按专辑名 / title=按歌曲名。
+// 默认）/ album=按专辑名 / artist=按歌手名。
 // 幂等：已就位（目标路径与现路径相同）直接跳过；同名目标已存在时不覆盖。
 package main
 
@@ -19,13 +19,13 @@ import (
 	cstore "lnh-music-tag/internal/store"
 )
 
-// organizeMode 整理方式：off=不整理 / album=按专辑名 / title=按歌曲名。
+// organizeMode 整理方式：off=不整理 / album=按专辑名 / artist=按歌手名。
 type organizeMode string
 
 const (
-	organizeOff   organizeMode = "off"
-	organizeAlbum organizeMode = "album"
-	organizeTitle organizeMode = "title"
+	organizeOff    organizeMode = "off"
+	organizeAlbum  organizeMode = "album"
+	organizeArtist organizeMode = "artist"
 )
 
 // cleanDirName 清洗 Windows/路径非法字符与路径分隔符，避免名称破坏目录层级。
@@ -48,8 +48,12 @@ func organizeDirName(mode organizeMode, t *model.Track) string {
 	switch mode {
 	case organizeAlbum:
 		name = t.Tags["ALBUM"]
-	case organizeTitle:
-		name = t.Tags["TITLE"]
+	case organizeArtist:
+		name = t.Tags["ARTIST"]
+		// 多艺人（; / 、 , 等分隔）取第一个
+		if i := strings.IndexAny(name, ";/、,"); i >= 0 {
+			name = name[:i]
+		}
 	default:
 		return ""
 	}
@@ -58,7 +62,7 @@ func organizeDirName(mode organizeMode, t *model.Track) string {
 		return ""
 	}
 	switch strings.ToLower(name) {
-	case "various", "various artists", "unknown", "unknown album", "untitled", "单曲", "未知专辑":
+	case "various", "various artists", "unknown", "unknown album", "unknown artist", "untitled", "单曲", "未知专辑", "未知歌手":
 		return ""
 	}
 	return cleanDirName(name)
@@ -188,11 +192,17 @@ func organizeLibrary(s *store, root string, mode organizeMode, logf func(string)
 }
 
 // organizeModeOf 读取配置的整理方式（organize_mode，默认 off=不整理）。
+// 无效值（含已取消的旧 title 配置）一律视为 off，安全回退。
 func organizeModeOf(cfg *cstore.Config) organizeMode {
 	if cfg == nil {
 		return organizeOff
 	}
-	return organizeMode(strings.TrimSpace(cfg.GetDefault("organize_mode", "off")))
+	switch m := organizeMode(strings.TrimSpace(cfg.GetDefault("organize_mode", "off"))); m {
+	case organizeAlbum, organizeArtist:
+		return m
+	default:
+		return organizeOff
+	}
 }
 
 // organizeScraped 刮削/一键流水线完成后按配置模式整理（幂等）。
