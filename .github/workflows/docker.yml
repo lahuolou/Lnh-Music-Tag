@@ -42,6 +42,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Set up Node (frontend for go:embed)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend (produces web/dist for go:embed)
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
       - name: gofmt check
         run: |
           unformatted=$(gofmt -l .)
