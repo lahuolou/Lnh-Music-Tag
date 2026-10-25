@@ -38,6 +38,17 @@ Lnh-Music-Tag 内置**音乐统一网关**：一个网关对外提供 **Subsonic
 
 > Navidrome 客户端若把 Base URL 配成 `http://IP:10248/rest`（Subsonic 习惯），登录会落在 `/rest/auth/login`，同样兼容。
 
+**协议后缀是否强制（Base URL 怎么填）**：
+
+| 协议 | `/rest` 等后缀是否强制 | 说明 |
+|---|---|---|
+| Subsonic / OpenSubsonic | `/rest` **必填** | 网关只在 `/rest` 与 `/rest/` 两个前缀上提供 Subsonic API，根路径（如直接请求 `/ping.view`）不是 Subsonic 端点。Base URL 填 `http://IP:10248`（客户端会自动补 `/rest/xxx`）或 `http://IP:10248/rest` 均可 |
+| Navidrome 兼容 | `/rest` **可选** | 原生在根路径（`/api/*`、`/auth/login`、`/ping`），同时注册了 `/rest/api/*`、`/rest/auth/login` 前缀。Base URL 填 `http://IP:10248` 或 `http://IP:10248/rest` 都可用 |
+| Jellyfin | `/jellyfin` **可选** | `/jellyfin` 前缀与根路径（`/System/`、`/Items`、`/Users` 等）均已注册。Base URL 填 `http://IP:10248` 或 `http://IP:10248/jellyfin` 都可用 |
+| Emby | `/emby` **可选** | 同上，`/emby` 前缀与根路径均可，Base URL 填 `http://IP:10248` 或 `http://IP:10248/emby` 都可用 |
+
+> 结论：只有 **Subsonic 必须带 `/rest` 前缀**（填根地址靠客户端自动补全也成立）；Navidrome / Jellyfin / Emby 的后缀均可选，带不带都能连。
+
 ---
 
 ## 4. 客户端兼容性实测记录

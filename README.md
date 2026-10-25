@@ -80,7 +80,7 @@ Lnh-Music-Tag 是一款自托管音乐库工具，**核心亮点是刮削与自�
 
 ### 工程与安全
 
-- **插件系统**：刮削源、FFmpeg、AcoustID、网关均为可启停可配置插件；第三方插件 ZIP 导入，导入前校验路径（防穿越、zip-slip、文件数与大小上限）；
+- **插件系统**：刮削源、FFmpeg、AcoustID、网关均为可启停可配置插件；第三方插件 ZIP 导入，导入前校验路径（防穿越、zip-slip、文件数与大小上限）；官方示例插件：[unlock-plugin](https://github.com/lahuolou/unlock-plugin)（加密音乐解锁）、[musicdl-plugin](https://github.com/lahuolou/musicdl-plugin)（多平台音乐下载）；
 - **回收站**：删除/去重先入回收站，可恢复或彻底删除；
 - **操作日志**：扫描/刮削/转换/任务计划全程留痕，可追溯可清理；
 - **健壮性**：并发有界（信号量）、任务 panic 自动兜底、外部进程调用全部超时保护、数据库批量事务、单实例启动锁、优雅停机。
@@ -91,7 +91,47 @@ Lnh-Music-Tag 是一款自托管音乐库工具，**核心亮点是刮削与自�
 
 ### 方式一：Docker Compose（推荐）
 
-仓库自带 [docker-compose.yml](./docker-compose.yml)。按需修改后一键启动：
+按需修改下面这份 `docker-compose.yml` 后一键启动：
+
+```yaml
+services:
+  lnh-music-tag:
+    # 服务器/1Panel 部署直接用 GHCR 公开镜像（无需本地构建）
+    image: ghcr.io/lahuolou/lnh-music-tag:latest
+    container_name: lnh-music-tag
+    ports:
+      - "10248:10248"        # 宿主机 10248 -> 容器 10248（改用非常用端口）
+    volumes:
+      # 默认音乐目录（NAS 路径）。应用会把标签/封面写回文件，所以必须可读写，别改成 :ro
+      - /mnt/sata3-1/mp3:/music
+      # 配置卷：持久化后台初始/修改后的密码（admin.json）、数据库配置、第三方插件包
+      # （插件 ZIP 导入后解压到 /config/plugins/，重启不丢失）
+      - lnh_config:/config
+    environment:
+      # 账号/密码/Key 默认存数据库（/config/lnh.db），以下环境变量仅作【首次启动】的一次性初始化种子
+      - LNH_ADMIN_USER=admin
+      - LNH_ADMIN_PASS=          # 留空则首次生成随机初始密码打印到日志，登录后在“设置”页修改（存数据库）
+      # 可选：AcoustID 录音识别 Key（在「插件 → AcoustID」页填写，存数据库）
+      # - ACOUSTID_API_KEY=        # 已弃用：改为插件页配置，环境变量不再读取
+      # FFmpeg（格式转换）安装开关：默认开启，容器启动时自动 apk 安装 ffmpeg（需 root 运行）；
+      # 设 false/留空 则不自动装，可改用：插件页“一键安装”，或挂载宿主机 /usr/bin 并在插件页填路径。
+      - LNH_INSTALL_FFMPEG=true
+    restart: unless-stopped
+    # 健康检查：/health 存活探针（容器内 wget 由 busybox 提供）。
+    # 安全边界：默认配置仅适合可信内网；公网暴露务必通过 Caddy/Nginx/Traefik
+    # 反向代理启用 HTTPS，并配置可信代理头（详见 docs/DEPLOYMENT.md）。
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:10248/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  lnh_config:
+```
+
+然后按步骤修改并启动：
 
 1. **改音乐目录**：`volumes` 里把宿主机路径换成你的音乐目录。应用会把标签/封面**写回文件**，挂载必须可读写（不要用 `:ro`）；
 2. **设置初始密码**：`LNH_ADMIN_PASS` 填首次登录的管理员密码（留空则随机生成并打印到日志）；

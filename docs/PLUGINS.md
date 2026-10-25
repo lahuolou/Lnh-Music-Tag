@@ -132,6 +132,17 @@ my-plugin.zip
 4. 在插件管理页导入测试；
 5. 面板可通过 `GET /api/plugins/{name}/panel` 访问，静态资源走 `GET /api/plugins/{name}/panel/{path...}`；面板内如需读配置用浏览器会话调用 `/api/plugins` 即可。
 
+### 6.1 示例插件（可直接导入）
+
+以下两个官方示例插件演示第三方插件打包与面板开发，可在「插件管理 → 导入 ZIP 插件」直接导入（ZIP 包从各仓库 Releases 下载）：
+
+| 插件 | 仓库 | 说明 |
+|---|---|---|
+| 音乐解锁 `tool.unlock` | [lahuolou/unlock-plugin](https://github.com/lahuolou/unlock-plugin) | 将 QQ 音乐（mflac/mgg/qmc）、网易云（ncm）、酷狗（kgm/vpr）、酷我（kwm）、虾米（xm）等加密音乐解密为可播放格式；纯 Go、零外部依赖，Windows/Linux 双平台，内置网页操作面板 |
+| 音乐下载器 `musicdl.downloader` | [lahuolou/musicdl-plugin](https://github.com/lahuolou/musicdl-plugin) | 多平台聚合音乐搜索与下载（网易云/QQ 音乐/酷狗/酷我/咪咕/汽水/B 站），多音质（无损 FLAC/320k/192k/标准），默认附带封面与歌词；Windows/macOS/Linux 三平台，内置 Web 控制面板 |
+
+两者均为 `tool` 类第三方插件：`plugin.json` 声明入口与面板、`bin/` 平台可执行文件、`ui/` 面板 HTML，结构与第 3 节打包规范一致，可作为开发参考模板。
+
 ---
 
 ## 7. 相关文档
