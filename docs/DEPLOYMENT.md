@@ -95,12 +95,17 @@ $env:LNH_CONFIG_DIR="D:\config"; $env:LNH_PORT=":10248"
 
 ## 4. 升级
 
+镜像使用 `latest` 标签（GHCR 公开镜像），升级即**拉取新镜像并重建容器**：
+
 ```bash
+# docker compose 方式（在 docker-compose.yml 所在目录）
 docker compose pull && docker compose up -d
 ```
 
+- **1Panel / NAS（群晖等）**：进入「容器」→ 找到 `lnh-music-tag` → 点击**重建**（会拉取 latest 新镜像）；或在「容器 → 编排」中对原有 compose 点**更新/重建**；
+- **验证升级**：升级后进入应用「设置」页或访问 `http://<主机>:10248/api/version`，确认版本显示 `1.0.14`（应用内「检查更新」在容器环境仅作版本提示，实际升级以镜像重建为准）；
 - 数据库自动兼容旧版本；升级不丢失配置/曲目列表/回收站；
-- 版本与 Release 见 [GitHub Releases](https://github.com/lahuolou/Lnh-Music-Tag/releases)；应用内「检查更新」会提示新版本。
+- 版本与 Release 见 [GitHub Releases](https://github.com/lahuolou/Lnh-Music-Tag/releases)。
 
 ---
 
