@@ -108,8 +108,8 @@ Body: {"user":"admin","pass":"***"}
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/settings` | 读取设置（账号/目录/选项/编辑字段） |
-| POST | `/api/settings` | 保存设置 |
+| GET | `/api/settings` | 读取设置（账号/目录/选项/编辑字段；含 `organizeMode`：`off`/`album`/`artist`） |
+| POST | `/api/settings` | 保存设置（支持 `organizeMode` 字段：`off`=不整理 / `album`=按专辑存放 / `artist`=按歌手名存放） |
 | GET | `/api/logs` | 操作日志分页（`?limit=&offset=`） |
 | POST | `/api/logs/delete` | 删除日志（`{"id":n}` 或 `{"ids":[...]}`） |
 | POST | `/api/logs/clear` | 清空日志 |

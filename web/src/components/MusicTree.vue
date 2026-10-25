@@ -352,7 +352,7 @@ onBeforeUnmount(stopPoll);
             <th style="width:46px">{{ t('cover') }}</th>
             <th class="th-sort" @click="setSort('title')">{{ t('hTitle') }} {{ sortIcon('title') }}</th>
             <th class="th-sort" @click="setSort('artist')">{{ t('hArtist') }} {{ sortIcon('artist') }}</th>
-            <th class="th-sort col-extra" style="width:64px" @click="setSort('bitrate')">{{ t('bQuality') }} {{ sortIcon('bitrate') }}</th>
+            <th class="th-sort" style="width:64px" @click="setSort('bitrate')">{{ t('bQuality') }} {{ sortIcon('bitrate') }}</th>
             <th class="th-sort" @click="setSort('album')">{{ t('hAlbum') }} {{ sortIcon('album') }}</th>
             <th style="width:52px" :title="t('lyrTitle')">{{ t('hLyric') }}</th>
             <th class="th-sort col-extra" @click="setSort('albumartist')">{{ t('hAlbumArtist') }} {{ sortIcon('albumartist') }}</th>
@@ -383,7 +383,7 @@ onBeforeUnmount(stopPoll);
             </td>
             <td :title="item.tags.TITLE ? item.tags.TITLE : baseName(item)">{{ displayTitle(item) }}</td>
             <td :title="item.tags.ARTIST ? item.tags.ARTIST : nameArtist(item)">{{ displayArtist(item) }}</td>
-            <td class="col-extra">{{ item.quality || '' }}</td>
+            <td>{{ item.quality || '' }}</td>
             <td>{{ tag(item, 'ALBUM') }}</td>
             <td :title="item.hasLrcFile || hasLyrics(item) ? t('lyrTitle') : ''">{{ lrcMark(item) }}</td>
             <td class="col-extra">{{ tag(item, 'ALBUMARTIST') }}</td>
