@@ -13,8 +13,8 @@ type fakeSource struct {
 	ok   bool
 }
 
-func (f fakeSource) Name() string          { return f.name }
-func (f fakeSource) Label() string         { return f.name }
+func (f fakeSource) Name() string  { return f.name }
+func (f fakeSource) Label() string { return f.name }
 func (f fakeSource) Search(c *Client, query string, limit int) ([]SearchResult, error) {
 	if !f.ok {
 		return nil, errors.New("fake failure")

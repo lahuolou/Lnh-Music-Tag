@@ -42,8 +42,8 @@ const encProbeTimeout = 3 * time.Second
 const encCacheTTL = 10 * time.Minute
 
 type encCacheEntry struct {
-	m   map[string]bool
-	at  time.Time
+	m  map[string]bool
+	at time.Time
 }
 
 // availableEncoders 解析 `ffmpeg -encoders`，返回该二进制实际支持的音频编码器集合。

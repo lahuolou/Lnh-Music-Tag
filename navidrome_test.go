@@ -14,8 +14,8 @@ import (
 
 func TestPaginationND(t *testing.T) {
 	cases := []struct {
-		name           string
-		qs             string
+		name               string
+		qs                 string
 		wantStart, wantEnd int
 	}{
 		{"默认（无参数）", "", 0, 100},

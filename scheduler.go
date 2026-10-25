@@ -164,12 +164,12 @@ type scheduler struct {
 	stopCh  chan struct{}
 
 	// 后台监控（静默刮削新增歌曲）
-	watchMu       sync.Mutex
-	watchBase     map[string]time.Time // path -> mtime 基线；首次建立后只处理其后新增
-	watchRunning  bool
-	watchLast     time.Time // 上次目录清单检查时间
-	lastWatchRun  time.Time
-	lastWatchMsg  string
+	watchMu      sync.Mutex
+	watchBase    map[string]time.Time // path -> mtime 基线；首次建立后只处理其后新增
+	watchRunning bool
+	watchLast    time.Time // 上次目录清单检查时间
+	lastWatchRun time.Time
+	lastWatchMsg string
 }
 
 func newScheduler(cfg *cstore.Config, js *jobStore, st *store, ms *scrape.MultiSource, scans *scanManager) *scheduler {
@@ -424,15 +424,15 @@ func (s *scheduler) getHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":      s.enabled(),
-		"cron":         s.cfg.GetDefault(schedCronKey, "0 3 * * *"),
-		"mode":         s.cfg.GetDefault(schedModeKey, "onekey"),
-		"scanFirst":    s.cfg.GetDefault(schedScanKey, "1") == "1",
-		"running":      s.running,
-		"lastRun":      fmtSchedTime(s.lastRun),
-		"lastMsg":      s.lastMsg,
-		"nextRun":      fmtSchedTime(s.nextRun),
-		"watchEnabled": s.watchEnabled(),
+		"enabled":       s.enabled(),
+		"cron":          s.cfg.GetDefault(schedCronKey, "0 3 * * *"),
+		"mode":          s.cfg.GetDefault(schedModeKey, "onekey"),
+		"scanFirst":     s.cfg.GetDefault(schedScanKey, "1") == "1",
+		"running":       s.running,
+		"lastRun":       fmtSchedTime(s.lastRun),
+		"lastMsg":       s.lastMsg,
+		"nextRun":       fmtSchedTime(s.nextRun),
+		"watchEnabled":  s.watchEnabled(),
 		"watchInterval": s.watchIntervalMinutes(),
 		"watchLastRun":  fmtSchedTime(s.lastWatchRun),
 		"watchLastMsg":  s.lastWatchMsg,
@@ -442,12 +442,12 @@ func (s *scheduler) getHandler(w http.ResponseWriter, r *http.Request) {
 // saveHandler POST /api/scheduler：保存配置并立即重算下次运行时间。
 func (s *scheduler) saveHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Enabled        *bool   `json:"enabled"`
-		Cron           *string `json:"cron"`
-		Mode           *string `json:"mode"`
-		ScanFirst      *bool   `json:"scanFirst"`
-		WatchEnabled   *bool   `json:"watchEnabled"`
-		WatchInterval  *int    `json:"watchInterval"`
+		Enabled       *bool   `json:"enabled"`
+		Cron          *string `json:"cron"`
+		Mode          *string `json:"mode"`
+		ScanFirst     *bool   `json:"scanFirst"`
+		WatchEnabled  *bool   `json:"watchEnabled"`
+		WatchInterval *int    `json:"watchInterval"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

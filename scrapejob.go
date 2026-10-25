@@ -298,12 +298,12 @@ func applySkipFilled(t *model.Track, f *ScrapeFields) bool {
 }
 
 type scrapeJob struct {
-	ID      string         `json:"id"`
-	Kind    string         `json:"kind"` // scrape | convert | identify | fixEnc | script | onekey
-	Total   int            `json:"total"`
-	Done    int            `json:"done"`
-	Current string         `json:"current"`
-	Status  string         `json:"status"` // "running" | "done" | "cancelled" | "failed" | "interrupted"
+	ID      string `json:"id"`
+	Kind    string `json:"kind"` // scrape | convert | identify | fixEnc | script | onekey
+	Total   int    `json:"total"`
+	Done    int    `json:"done"`
+	Current string `json:"current"`
+	Status  string `json:"status"` // "running" | "done" | "cancelled" | "failed" | "interrupted"
 	// Message 终态附加信息（如 panic 崩溃详情）；进度轮询返回给前端展示。
 	Message string         `json:"message,omitempty"`
 	Results []scrapeResult `json:"results"`
@@ -770,7 +770,7 @@ func runBatch(job *scrapeJob, store *store, ms *scrape.MultiSource, cfg *cstore.
 		}
 		job.Current = ""
 		job.mu.Unlock()
-		logJobDone(job) // 批量刮削完成后写入操作日志
+		logJobDone(job)             // 批量刮削完成后写入操作日志
 		organizeScraped(store, cfg) // 刮削完成后按专辑整理（幂等）
 	}()
 	multi := len(ids) > 1

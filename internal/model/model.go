@@ -23,7 +23,7 @@ type Track struct {
 	SampleRate    uint              `json:"sampleRate"`
 	BitDepth      uint              `json:"bitDepth"` // bits per sample（无损；有损为 0）
 	Channels      uint              `json:"channels"`
-	Quality       string            `json:"quality"`  // 流畅/普通/高品/无损/Hi-Res（自动识别）
+	Quality       string            `json:"quality"` // 流畅/普通/高品/无损/Hi-Res（自动识别）
 	HasCover      bool              `json:"hasCover"`
 	HasLrcFile    bool              `json:"hasLrcFile"`    // 同目录存在外挂 .lrc 歌词文件
 	HasLyrics     bool              `json:"hasLyrics"`     // 内嵌歌词非空（列表瘦身：歌词正文不下发，仅标志）

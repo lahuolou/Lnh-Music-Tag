@@ -30,7 +30,6 @@ var simpForMatch = func() func(string) string {
 	}
 }()
 
-
 // FetchLyrics returns the lyrics text for a result. Strategy:
 //   - NetEase / QQ: fetch by the source song ID (best for Chinese tracks)
 //   - otherwise: search QQ then NetEase by title+artist, picking only a

@@ -28,7 +28,7 @@ func TestComputeQuality(t *testing.T) {
 		{"lossy high samplerate+bitdepth", 320, 96000, 24, ".mp3", "高品"},
 		{"mka no bitdepth lossless fallback", 320, 44100, 0, ".mka", "无损"}, // 容器假设（MKA 通常装无损），已知局限
 		{"mka hires 24/96", 2304, 96000, 24, ".mka", "Hi-Res"},
-		{"flac exactly 96k", 2304, 96000, 16, ".flac", "Hi-Res"},  // 采样率临界恰 96k
+		{"flac exactly 96k", 2304, 96000, 16, ".flac", "Hi-Res"},   // 采样率临界恰 96k
 		{"flac exactly 24bit", 2304, 44100, 24, ".flac", "Hi-Res"}, // 位深临界恰 24
 		{"lossy opus anomalous bitdepth", 128, 48000, 32, ".opus", "普通"},
 		{"upper ext case", 1000, 44100, 16, ".FLAC", "无损"}, // 扩展名大小写不敏感

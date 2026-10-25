@@ -253,6 +253,7 @@ func (a *subsonicAPI) handler() http.Handler {
 		a.respond(w, r, result)
 	})
 }
+
 // listTotal 从列表响应（albumList/albumList2/artists/playlists 等）的 total 属性提取总数，
 // 用于 x-total-count 响应头；无 total 属性的响应（如 randomSongs）返回空串、不设头。
 func listTotal(n sxNode) string {
