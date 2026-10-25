@@ -593,7 +593,16 @@ func main() {
 
 	// Static UI (Vue SPA built into web/dist; /api/... routes win over this)
 	dist, _ := fs.Sub(webFS, "web/dist")
-	mux.Handle("/", cacheControl(http.FileServer(http.FS(dist))))
+	// 协议自动路由：根路径 *.view 请求（Subsonic 风格但未带 /rest 前缀，如 /ping.view）自动
+	// 接入 Subsonic 网关，其余回退前端静态资源。Jellyfin/Emby/Navidrome 的根路径端点已在
+	// 上方注册（ServeMux 具体模式优先），因此客户端统一填 http://IP:10248 即可自动选择协议。
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".view") {
+			subsonicHandler(store, cfg).ServeHTTP(w, r)
+			return
+		}
+		cacheControl(http.FileServer(http.FS(dist))).ServeHTTP(w, r)
+	}))
 
 	// --- Scan (asynchronous, progressive) ---
 	pm.HandleFunc("POST /api/scan", func(w http.ResponseWriter, r *http.Request) {

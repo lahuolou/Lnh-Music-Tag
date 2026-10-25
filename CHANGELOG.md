@@ -4,6 +4,19 @@
 
 ---
 
+## Unreleased
+
+### 功能新增
+
+- **流媒体网关统一接入地址**：客户端 Base URL 统一填 `http://IP:10248` 即可，后端按请求特征自动选择协议（Subsonic `*.view` 免 `/rest` 前缀；Jellyfin/Emby/Navidrome 根路径端点已注册）；`/rest`、`/jellyfin`、`/emby` 旧后缀全部兼容保留。
+- 文档新增两个官方示例插件：`tool.unlock`（加密音乐解锁，[unlock-plugin](https://github.com/lahuolou/unlock-plugin)）、`musicdl.downloader`（多平台音乐下载，[musicdl-plugin](https://github.com/lahuolou/musicdl-plugin)）。
+
+### 文档
+
+- README 中英 / DEPLOYMENT：Docker Compose 部署改为直接内嵌 `docker-compose.yml` 内容（不再依赖超链接跳转）。
+
+---
+
 ## 1.0.14
 
 刮削匹配加固 + 阶段 A 安全与数据正确性（保护原始音频、认证限速、健康检查）。

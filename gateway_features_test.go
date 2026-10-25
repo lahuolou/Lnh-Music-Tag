@@ -333,6 +333,47 @@ func TestSubsonicStatisticsCounts(t *testing.T) {
 	}
 }
 
+// 根路径 *.view（不带 /rest 前缀）同样走 Subsonic 网关（协议自动路由：客户端 Base URL 填根地址即可）。
+func TestSubsonicRootViewPath(t *testing.T) {
+	cfg, _ := cstore.OpenConfig(t.TempDir())
+	defer cfg.Close()
+	s := newStore(nil)
+	s.add(&model.Track{ID: "t1", Path: "/m/t1.flac", FileName: "t1.flac"})
+	_ = cfg.Set("stream_pass", "test")
+	a := &subsonicAPI{library: s, cfg: cfg}
+
+	srv := httptest.NewServer(a.handler())
+	defer srv.Close()
+	// 根路径 /getStatistics.view（Base URL 填 http://IP:10248、未带 /rest 前缀）
+	resp, err := http.Get(srv.URL + "/getStatistics.view?u=admin&p=test&f=json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	r := raw["subsonic-response"].(map[string]any)
+	if r["status"] != "ok" {
+		t.Fatalf("root .view status=%v, want ok", r["status"])
+	}
+	// 未认证拒绝（Subsonic 风格：HTTP 200 + body status=failed；ping 属公开端点不校验）
+	bad, err := http.Get(srv.URL + "/getStatistics.view?u=admin&p=wrong&f=json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bad.Body.Close()
+	var badRaw map[string]any
+	if err := json.NewDecoder(bad.Body).Decode(&badRaw); err != nil {
+		t.Fatal(err)
+	}
+	br := badRaw["subsonic-response"].(map[string]any)
+	if br["status"] == "ok" {
+		t.Fatal("root .view with wrong password must be rejected")
+	}
+}
+
 // TEMP-DEBUG: Subsonic 建歌单加歌后 getPlaylist 是否返回歌曲。
 // Subsonic getPlaylist 标准把曲目序列化为 <entry> 子节点；音流按 entry 解析，
 // 若输出成 song，详情页会读不到任何曲目（列表计数仍对）。这里断言详情返回

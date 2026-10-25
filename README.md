@@ -74,6 +74,7 @@ Lnh-Music-Tag 是一款自托管音乐库工具，**核心亮点是刮削与自�
 ### 流媒体网关
 
 - 一个网关四协议：**Subsonic / OpenSubsonic、Jellyfin、Emby、Navidrome**；
+- **统一接入地址**：客户端 Base URL 统一填 `http://IP:10248` 即可，后端按请求自动选择协议（`/rest`、`/jellyfin`、`/emby` 等旧后缀仍兼容）；
 - 支持索引、艺术家/专辑/曲目浏览、搜索、歌词、播放列表、收藏、Now Playing、播放统计、直传/转码播放；
 - **强制密码**：必须配置流媒体密码才能启用网关，防止未授权访问；
 - 兼容音流、Archer、Jellyfin、Emby、Navidrome 官方 App 及第三方播放器。

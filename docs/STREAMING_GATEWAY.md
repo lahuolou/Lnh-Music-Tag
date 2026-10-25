@@ -29,25 +29,24 @@ Lnh-Music-Tag 内置**音乐统一网关**：一个网关对外提供 **Subsonic
 
 ## 3. 协议接入地址
 
-| 协议 | Base URL（示例） | 认证方式 |
+**统一填根地址即可，后端按请求自动选择协议**：`http://IP:10248`
+
+| 协议 | Base URL | 认证方式 |
 |---|---|---|
-| Subsonic / OpenSubsonic | `http://IP:10248/rest` | `u` + `p`（明文或 salt+token）、`t`+`s`、`apiKey` 头 |
+| Subsonic / OpenSubsonic | `http://IP:10248`（自动路由；`/rest` 前缀兼容保留） | `u` + `p`（明文或 salt+token）、`t`+`s`、`apiKey` 头 |
 | Navidrome 兼容 | `http://IP:10248`（`/auth/login`、`/api/*`） | body `username/password` 登录换 token |
-| Jellyfin | `http://IP:10248/jellyfin` | `X-Emby-Token` 头 / `api_key` |
-| Emby | `http://IP:10248/emby` | `X-Emby-Token` 头 / `api_key` |
+| Jellyfin | `http://IP:10248`（`/jellyfin` 前缀兼容保留） | `X-Emby-Token` 头 / `api_key` |
+| Emby | `http://IP:10248`（`/emby` 前缀兼容保留） | `X-Emby-Token` 头 / `api_key` |
 
-> Navidrome 客户端若把 Base URL 配成 `http://IP:10248/rest`（Subsonic 习惯），登录会落在 `/rest/auth/login`，同样兼容。
+**协议自动路由规则（按请求特征，无需手动区分后缀）**：
 
-**协议后缀是否强制（Base URL 怎么填）**：
+| 协议 | 识别方式 |
+|---|---|
+| Subsonic / OpenSubsonic | 请求路径以 `.view` 结尾（如 `/ping.view`、`/getIndexes.view`）→ 自动接入 Subsonic 网关；`/rest/*` 前缀仍兼容 |
+| Navidrome 兼容 | `/auth/login`、`/auth/token`、`/ping`、`/api/*` → Navidrome 兼容层；`/rest/api/*` 前缀仍兼容 |
+| Jellyfin / Emby | `/System/`、`/Items`、`/Users`、`/Artists` 等 Jellyfin/Emby 端点 → 网关自动适配；`/jellyfin`、`/emby` 前缀仍兼容 |
 
-| 协议 | `/rest` 等后缀是否强制 | 说明 |
-|---|---|---|
-| Subsonic / OpenSubsonic | `/rest` **必填** | 网关只在 `/rest` 与 `/rest/` 两个前缀上提供 Subsonic API，根路径（如直接请求 `/ping.view`）不是 Subsonic 端点。Base URL 填 `http://IP:10248`（客户端会自动补 `/rest/xxx`）或 `http://IP:10248/rest` 均可 |
-| Navidrome 兼容 | `/rest` **可选** | 原生在根路径（`/api/*`、`/auth/login`、`/ping`），同时注册了 `/rest/api/*`、`/rest/auth/login` 前缀。Base URL 填 `http://IP:10248` 或 `http://IP:10248/rest` 都可用 |
-| Jellyfin | `/jellyfin` **可选** | `/jellyfin` 前缀与根路径（`/System/`、`/Items`、`/Users` 等）均已注册。Base URL 填 `http://IP:10248` 或 `http://IP:10248/jellyfin` 都可用 |
-| Emby | `/emby` **可选** | 同上，`/emby` 前缀与根路径均可，Base URL 填 `http://IP:10248` 或 `http://IP:10248/emby` 都可用 |
-
-> 结论：只有 **Subsonic 必须带 `/rest` 前缀**（填根地址靠客户端自动补全也成立）；Navidrome / Jellyfin / Emby 的后缀均可选，带不带都能连。
+> 结论：客户端**统一填 `http://IP:10248`** 即可，不需要在地址里区分 `/rest`、`/jellyfin`、`/emby` 等后缀——后端自动选择协议；带后缀的旧地址也全部兼容。
 
 ---
 
@@ -76,7 +75,7 @@ Lnh-Music-Tag 内置**音乐统一网关**：一个网关对外提供 **Subsonic
 
 - 检查**流媒体密码**是否已配置且与客户端填写一致（网关唯一凭证）；
 - 检查协议选择：Subsonic 系客户端（音流/箭头音乐/Ultrasonic/DSub/Subtracks/StreamMusic/Symfonium/Feishin/Supersonic）选 Subsonic；Jellyfin/Emby 官方选对应协议；Navidrome 风格客户端选 Navidrome；
-- 检查 Base URL：Subsonic 填 `http://IP:10248/rest`，Jellyfin 填 `http://IP:10248/jellyfin`，Emby 填 `http://IP:10248/emby`，Navidrome 填 `http://IP:10248`；
+- 检查 Base URL：**统一填 `http://IP:10248` 即可**（后端自动选择协议）；旧地址 `.../rest`、`.../jellyfin`、`.../emby` 仍兼容；
 - 用户名**任意**——填什么都能过，重点是密码正确。
 
 ### 5.2 列表正常但播放失败
