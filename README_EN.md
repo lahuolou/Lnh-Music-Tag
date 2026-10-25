@@ -10,7 +10,7 @@ Lnh-Music-Tag is a self-hosted music library tool whose **core highlights are sc
 - **Library management & playback**: batch-edit 30+ tag fields in a web UI, cover/lyrics management, encoding repair, simplified/traditional conversion, content-based dedup; the curated library is also served by a built-in **unified streaming gateway** over **Subsonic / Jellyfin / Emby / Navidrome** protocols — Yingliu, Archer, Jellyfin and dozens of other players connect and play directly;
 - **Local-first**: your data lives in a local SQLite database, tags are written back to the files, no cloud dependency, one-command Docker deployment.
 
-**Version**: 1.0.14 ｜ Language: English / [中文](./README.md)
+**Version**: 1.0.15 ｜ Language: English / [中文](./README.md)
 
 ---
 
