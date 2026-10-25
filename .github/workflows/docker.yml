@@ -64,7 +64,8 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test ./...
+        # -short：跳过依赖真实外网的测试（如 TestMiguLive），避免 CI 网络抖动误伤
+        run: go test ./... -short
 
   build:
     runs-on: ubuntu-24.04
