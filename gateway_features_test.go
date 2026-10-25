@@ -374,7 +374,7 @@ func TestSubsonicRootViewPath(t *testing.T) {
 	}
 }
 
-// TEMP-DEBUG: Subsonic 建歌单加歌后 getPlaylist 是否返回歌曲。
+// Subsonic 建歌单加歌后 getPlaylist 返回曲目（entry 节点契约）。
 // Subsonic getPlaylist 标准把曲目序列化为 <entry> 子节点；音流按 entry 解析，
 // 若输出成 song，详情页会读不到任何曲目（列表计数仍对）。这里断言详情返回
 // entry 数组且 songCount 与条目数一致。

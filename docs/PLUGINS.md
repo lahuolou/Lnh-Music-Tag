@@ -90,12 +90,14 @@ my-plugin.zip
 | `panel` | 否 | 配置面板相对路径（如 `ui/index.html`），导入后插件页可打开 |
 | `fields` | 否 | 配置字段（`key/label/type=text|password`） |
 | `keyField` | 否 | 声明某字段为 API Key（需 Key 逻辑） |
+| `apiVersion` | 否 | 插件 API 版本，当前为 `1`；未填写按 v1 兼容，未知版本拒绝导入 |
 | `version / hint` | 否 | 版本号 / 提示 |
 
 ### 3.3 入口协议
 
-- `entries` 指向的可执行文件接收 JSON 配置（`fields` 的值 + 已填 Key）作为 stdin 输入，执行后在 stdout 输出结果（`{"ok":true,...}` 或 `{"ok":false,"error":"..."}`）；
-- 入口文件在导入时会被设置为可执行（`chmod +x` 等价处理）。
+- `entries` 指向的可执行文件以固定参数调用：`<entry> run --input <in.json> --output <out.json>`。宿主把操作与配置（`fields` 的值 + 已填 Key）写入 `in.json`；插件把结果写入 `out.json`（`{"ok":true,...}` 或 `{"ok":false,"error":"..."}`），并用退出码表达失败；
+- 入口文件在导入时会被设置为可执行（`chmod +x` 等价处理）；
+- 完整开发者规范（apiVersion 协商、升级事务、兼容性策略）见 [PLUGIN_API.md](./PLUGIN_API.md)。
 
 ---
 
