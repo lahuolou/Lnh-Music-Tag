@@ -10,7 +10,7 @@ const newPass = ref('')
 const confirm = ref('')
 const msg = ref('')
 
-const cfg = ref({ adminUser: '', autoFixTitle: true, autoRenameFile: true, scanDir: '', editFields: [] })
+const cfg = ref({ adminUser: '', autoFixTitle: true, autoRenameFile: true, scanDir: '', organizeMode: 'off', editFields: [] })
 const cfgMsg = ref('')
 
 // 任务计划（自动刮削）
@@ -104,6 +104,7 @@ async function saveCfg() {
         autoFixTitle: cfg.value.autoFixTitle,
         autoRenameFile: cfg.value.autoRenameFile,
         scanDir: cfg.value.scanDir,
+        organizeMode: cfg.value.organizeMode,
         editFields: cfg.value.editFields
       })
     });
@@ -146,6 +147,15 @@ onMounted(() => { loadCfg(); loadSched(); });
         <h2>{{ t('dbCfg') }}</h2>
         <div class="field"><label>{{ t('fAdmin') }}</label><input type="text" v-model="cfg.adminUser" /></div>
         <div class="field"><label>{{ t('fScanDir') }}</label><input type="text" v-model="cfg.scanDir" placeholder="/music" /></div>
+        <div class="field">
+          <label>{{ t('fOrganize') }}</label>
+          <select v-model="cfg.organizeMode">
+            <option value="off">{{ t('organizeOff') }}</option>
+            <option value="album">{{ t('organizeAlbum') }}</option>
+            <option value="title">{{ t('organizeTitle') }}</option>
+          </select>
+          <p class="muted" style="margin:4px 0 0">{{ t('fOrganizeHint') }}</p>
+        </div>
         <div class="chk" style="margin:6px 0 14px">
           <input type="checkbox" id="autoFix" class="tchk" v-model="cfg.autoFixTitle" />
           <label for="autoFix">{{ t('optAutoFix') }}</label>

@@ -303,7 +303,7 @@ type scanManager struct {
 
 func newScanManager() *scanManager { return &scanManager{} }
 
-func (sm *scanManager) start(store *store, dir string, autoFix, autoRename bool) error {
+func (sm *scanManager) start(store *store, cfg *cstore.Config, dir string, autoFix, autoRename bool) error {
 	sm.mu.Lock()
 	if sm.state != nil && sm.state.snapshot().Running {
 		sm.mu.Unlock()
@@ -323,8 +323,8 @@ func (sm *scanManager) start(store *store, dir string, autoFix, autoRename bool)
 		}
 		st.mu.Unlock()
 		// 写操作日志：扫描完成（新增/跳过/清理的失效文件数）
-		// 扫描结束后按专辑整理现有曲库（幂等，已就位跳过；失败仅记录日志不阻断）
-		moved, orgFailed := organizeLibrary(store, dir, func(m string) { log.Printf("整理: %s", m) })
+		// 扫描结束后按后台配置的整理方式整理曲库（幂等，已就位跳过；失败仅记录日志不阻断）
+		moved, orgFailed := organizeLibrary(store, dir, organizeModeOf(cfg), func(m string) { log.Printf("整理: %s", m) })
 		detail := actDetail("removed", removed)
 		if moved > 0 || orgFailed > 0 {
 			detail += actDetail("organized", moved)
@@ -615,7 +615,7 @@ func main() {
 		}
 		autoFix := cfg.GetDefault("auto_fix_title", "1") == "1"
 		autoRename := cfg.GetDefault("auto_rename_file", "1") == "1"
-		if err := scans.start(store, dir, autoFix, autoRename); err != nil {
+		if err := scans.start(store, cfg, dir, autoFix, autoRename); err != nil {
 			writeErr(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -645,6 +645,7 @@ func main() {
 			"autoRenameFile": cfg.GetDefault("auto_rename_file", "1") == "1",
 			"scanDir":        cfg.GetDefault("scan_dir", "/music"),
 			"ffmpegPath":     cfg.GetDefault("ffmpeg_path", ""),
+			"organizeMode":   cfg.GetDefault("organize_mode", "off"),
 			"editFields":     editFieldsList(cfg),
 		})
 	})
@@ -655,6 +656,7 @@ func main() {
 			AutoRenameFile *bool     `json:"autoRenameFile"`
 			ScanDir        *string   `json:"scanDir"`
 			FFmpegPath     *string   `json:"ffmpegPath"`
+			OrganizeMode   *string   `json:"organizeMode"`
 			EditFields     *[]string `json:"editFields"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -690,6 +692,13 @@ func main() {
 		}
 		if req.FFmpegPath != nil {
 			cfg.Set("ffmpeg_path", strings.TrimSpace(*req.FFmpegPath))
+		}
+		if req.OrganizeMode != nil {
+			m := strings.TrimSpace(*req.OrganizeMode)
+			switch m {
+			case "off", "album", "title":
+				cfg.Set("organize_mode", m)
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "已保存"})
 	})

@@ -384,7 +384,7 @@ func (s *scheduler) fire(now time.Time) {
 		if st, err := os.Stat(dir); err == nil && st.IsDir() {
 			autoFix := s.cfg.GetDefault("auto_fix_title", "1") == "1"
 			autoRename := s.cfg.GetDefault("auto_rename_file", "1") == "1"
-			if err := s.scans.start(s.st, dir, autoFix, autoRename); err == nil {
+			if err := s.scans.start(s.st, s.cfg, dir, autoFix, autoRename); err == nil {
 				addLog("act_sched", true, 1, 0, 0, "任务计划：开始扫描 "+dir)
 			}
 		}

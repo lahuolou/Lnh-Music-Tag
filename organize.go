@@ -1,5 +1,7 @@
-// organize.go：按专辑存放整理——刮削/扫描完成后把曲目移动到音乐库根目录下的
-// 「专辑名/」子目录（文件名保持不变，同目录 .lrc 外挂歌词跟随移动）。
+// organize.go：按专辑/歌曲名存放整理——扫描/刮削完成后把曲目移动到音乐库根目录
+// 下的「专辑名/」或「歌曲名/」子目录（文件名保持不变，同目录 .lrc 外挂歌词跟随
+// 移动）。三种模式由后台统一设置（organize_mode）：off=不整理（保持原目录，
+// 默认）/ album=按专辑名 / title=按歌曲名。
 // 幂等：已就位（目标路径与现路径相同）直接跳过；同名目标已存在时不覆盖。
 package main
 
@@ -13,22 +15,21 @@ import (
 	"strings"
 	"time"
 
-	cstore "lnh-music-tag/internal/store"
 	"lnh-music-tag/internal/model"
+	cstore "lnh-music-tag/internal/store"
 )
 
-// albumDirName 返回整理目标子目录名：ALBUM 标签有效（非空、非占位）才返回，
-// 否则返回 ""（无专辑信息的单曲不整理，留在原目录）。
-func albumDirName(t *model.Track) string {
-	name := strings.TrimSpace(t.Tags["ALBUM"])
-	if name == "" {
-		return ""
-	}
-	switch strings.ToLower(name) {
-	case "various", "various artists", "unknown", "unknown album", "untitled", "单曲", "未知专辑":
-		return ""
-	}
-	// 清洗 Windows/路径非法字符与路径分隔符，避免专辑名破坏目录层级
+// organizeMode 整理方式：off=不整理 / album=按专辑名 / title=按歌曲名。
+type organizeMode string
+
+const (
+	organizeOff   organizeMode = "off"
+	organizeAlbum organizeMode = "album"
+	organizeTitle organizeMode = "title"
+)
+
+// cleanDirName 清洗 Windows/路径非法字符与路径分隔符，避免名称破坏目录层级。
+func cleanDirName(name string) string {
 	var b strings.Builder
 	for _, r := range name {
 		switch r {
@@ -39,6 +40,28 @@ func albumDirName(t *model.Track) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// organizeDirName 按模式返回目标子目录名：off 或标签无效（空/占位）返回 ""。
+func organizeDirName(mode organizeMode, t *model.Track) string {
+	var name string
+	switch mode {
+	case organizeAlbum:
+		name = t.Tags["ALBUM"]
+	case organizeTitle:
+		name = t.Tags["TITLE"]
+	default:
+		return ""
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	switch strings.ToLower(name) {
+	case "various", "various artists", "unknown", "unknown album", "untitled", "单曲", "未知专辑":
+		return ""
+	}
+	return cleanDirName(name)
 }
 
 // moveAcrossVol 跨卷移动：复制到目标后删除源文件（源删除带瞬时锁重试，
@@ -88,16 +111,16 @@ func moveSiblingLrc(oldPath, newPath string) {
 	}
 }
 
-// organizeTrack 整理单首曲目：移动到 root/<专辑>/<原文件名>，已就位返回 false。
+// organizeTrack 按模式整理单首曲目：移动到 root/<目录名>/<原文件名>，已就位返回 false。
 // 同卷 rename（Windows 瞬时锁重试 8s 窗口），跨卷 copy+remove；成功后经
 // renameTrack 同步更新内存与数据库路径（列表/勾选/去重索引不失效）。
-func organizeTrack(s *store, t *model.Track, root string) (bool, error) {
+func organizeTrack(s *store, t *model.Track, root string, mode organizeMode) (bool, error) {
 	root = strings.TrimSpace(root)
 	// 库根必须是已存在的目录（fileExists 排除目录，这里用 Stat 判断）
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		return false, nil // 库根未配置或不存在，跳过整理
 	}
-	dir := albumDirName(t)
+	dir := organizeDirName(mode, t)
 	if dir == "" {
 		return false, nil
 	}
@@ -136,10 +159,10 @@ func organizeTrack(s *store, t *model.Track, root string) (bool, error) {
 	return true, nil
 }
 
-// organizeLibrary 全库按专辑整理（幂等），返回移动数与失败数。
+// organizeLibrary 全库按模式整理（幂等），返回移动数与失败数。
 // 供扫描结束与刮削完成后调用；单首失败仅记录日志，不中断整体。
-func organizeLibrary(s *store, root string, logf func(string)) (moved, failed int) {
-	if s == nil {
+func organizeLibrary(s *store, root string, mode organizeMode, logf func(string)) (moved, failed int) {
+	if s == nil || mode == organizeOff {
 		return 0, 0
 	}
 	s.mu.RLock()
@@ -149,7 +172,7 @@ func organizeLibrary(s *store, root string, logf func(string)) (moved, failed in
 	}
 	s.mu.RUnlock()
 	for _, t := range ts {
-		ok, err := organizeTrack(s, t, root)
+		ok, err := organizeTrack(s, t, root, mode)
 		if err != nil {
 			failed++
 			if logf != nil {
@@ -164,18 +187,30 @@ func organizeLibrary(s *store, root string, logf func(string)) (moved, failed in
 	return moved, failed
 }
 
-// organizeScraped 刮削/一键流水线完成后按专辑整理（幂等）。
+// organizeModeOf 读取配置的整理方式（organize_mode，默认 off=不整理）。
+func organizeModeOf(cfg *cstore.Config) organizeMode {
+	if cfg == nil {
+		return organizeOff
+	}
+	return organizeMode(strings.TrimSpace(cfg.GetDefault("organize_mode", "off")))
+}
+
+// organizeScraped 刮削/一键流水线完成后按配置模式整理（幂等）。
 // 整理根取 scan_dir 配置（音乐库根）；未配置或不存在时跳过。
 func organizeScraped(s *store, cfg *cstore.Config) {
 	if s == nil || cfg == nil {
+		return
+	}
+	mode := organizeModeOf(cfg)
+	if mode == organizeOff {
 		return
 	}
 	root := strings.TrimSpace(cfg.GetDefault("scan_dir", ""))
 	if root == "" {
 		return
 	}
-	moved, failed := organizeLibrary(s, root, func(m string) { log.Printf("整理: %s", m) })
+	moved, failed := organizeLibrary(s, root, mode, func(m string) { log.Printf("整理: %s", m) })
 	if moved > 0 || failed > 0 {
-		log.Printf("刮削后按专辑整理完成：移动 %d，失败 %d", moved, failed)
+		log.Printf("刮削后整理完成（%s）：移动 %d，失败 %d", mode, moved, failed)
 	}
 }
