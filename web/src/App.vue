@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { state, logout, resumeJobs, verState, checkVersion } from './store.js'
 import { api } from './api.js'
 import { t, lang, setLang } from './i18n.js'
@@ -74,6 +74,9 @@ onMounted(async () => {
   checkVersion(); // 已登录（如刷新恢复会话）时检查更新；未登录时静默失败，登录成功后由 Login.vue 再查
   if (state.authed) { resumeJobs(); loadExtPanels(); } // 刷新/换设备后恢复进行中的批量任务进度
 });
+
+// 与 onMounted 成对：卸载时移除全局事件监听，避免热更新/多实例下重复触发
+onUnmounted(() => window.removeEventListener('plugins-changed', loadExtPanels));
 </script>
 
 <template>

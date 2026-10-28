@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -231,7 +232,9 @@ func replaceFile(dst, src string) error {
 		return err
 	}
 	if err := os.Rename(src, dst); err != nil {
-		_ = os.Rename(bak, dst) // 替换失败：恢复原文件
+		if rb := os.Rename(bak, dst); rb != nil {
+			log.Printf("taglibx: replace %s failed (%v), restore %s also failed: %v", dst, err, bak, rb)
+		}
 		return err
 	}
 	_ = os.Remove(bak)

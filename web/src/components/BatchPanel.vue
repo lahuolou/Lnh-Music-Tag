@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onUnmounted, reactive, ref } from 'vue'
 import { state, toast, refresh, startBatchPoll, startToolJob, stopToolJob, cancelJob, busy } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
@@ -9,6 +9,10 @@ const skipFilled = ref(true)
 const fmtOpen = ref(false)
 const oneKeyDedup = ref(false) // 一键刮削自动去重（默认不勾选）
 const starting = ref(false) // 工具任务“启动中”防连点：点击立即禁用并显示启动中，避免点了没反应
+let _jobTimer = null // 工具任务完成轮询句柄：组件卸载时兜底清理，避免切页/关面板后残留轮询
+
+// 组件卸载时兜底清理任务轮询（保持行为不变：任务完成/超时/换任务时仍各自清理）
+onUnmounted(() => { if (_jobTimer) { clearInterval(_jobTimer); _jobTimer = null; } })
 
 // 统一任务进度：批量刮削(batchJob) 与 工具任务(toolJob) 共用一个进度条。
 // 同一时刻只有一个任务在跑（busy 互斥），优先显示运行中的；都结束后保留
@@ -72,11 +76,12 @@ async function runToolJob(kind, url, body, allowAll = false) {
     // jobId 匹配检查：用户在任务完成前点了别的任务时，旧轮询立即退出，
     // 避免"识别完成后点乱码，旧任务提示覆盖新任务"的串扰。
     const t0 = Date.now();
+    if (_jobTimer) { clearInterval(_jobTimer); _jobTimer = null; }
     const iv = setInterval(() => {
       const tj = state.toolJob;
-      if (tj && tj.id !== r.jobId) { clearInterval(iv); return; }
+      if (tj && tj.id !== r.jobId) { clearInterval(iv); _jobTimer = null; return; }
       if (tj && tj.finished) {
-        clearInterval(iv);
+        clearInterval(iv); _jobTimer = null;
         if (tj.status === 'cancelled') {
           toast(t('jobCancelled'), 'err');
         } else if (tj.status === 'failed') {
@@ -88,10 +93,11 @@ async function runToolJob(kind, url, body, allowAll = false) {
         refresh();
         if (kind === 'convert') fmtOpen.value = false;
       } else if (!tj || Date.now() - t0 > 120000) { // 任务丢失或 2 分钟未完成：解锁避免卡死
-        clearInterval(iv);
+        clearInterval(iv); _jobTimer = null;
         starting.value = false;
       }
     }, 500);
+    _jobTimer = iv;
   } catch (e) {
     // 启动失败：清除可能残留的旧任务展示，避免“点了 A 却看到 B 的进度”
     starting.value = false;

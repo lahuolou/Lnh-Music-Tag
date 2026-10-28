@@ -1,11 +1,16 @@
 <script setup>
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { state, toast, refresh, startToolJob, stopToolJob } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
 
 const props = defineProps({ open: Boolean })
 const emit = defineEmits(['close'])
+
+let _fmtTimer = null // 转码完成轮询句柄：对话框卸载时兜底清理
+
+// 对话框关闭/组件卸载时清理残留轮询（任务完成/超时仍各自清理，行为不变）
+onUnmounted(() => { if (_fmtTimer) { clearInterval(_fmtTimer); _fmtTimer = null; } })
 
 const inputFormats = ref([]) // 空 = 全部格式
 const target = ref('keep')
@@ -52,10 +57,11 @@ async function run() {
     await startToolJob(r.jobId, r.total);
     // 等待后台任务完成（进度在批量页全局可见）
     const t0 = Date.now();
+    if (_fmtTimer) { clearInterval(_fmtTimer); _fmtTimer = null; }
     const iv = setInterval(() => {
       const tj = state.toolJob;
       if (tj && tj.finished) {
-        clearInterval(iv);
+        clearInterval(iv); _fmtTimer = null;
         if (tj.status === 'failed') { toast(t('fmtFail', { m: tj.message || t('jobLost') }), 'err'); }
         else { toast(t('fmtDone', { ok: tj.ok, t: tj.total }), tj.ok === tj.total ? 'ok' : 'err'); }
         state.selected.clear();
@@ -63,10 +69,11 @@ async function run() {
         refresh();
         emit('close');
       } else if (!tj || Date.now() - t0 > 120000) { // 任务丢失或 2 分钟未完成：解锁避免卡死
-        clearInterval(iv);
+        clearInterval(iv); _fmtTimer = null;
         busy.value = false;
       }
     }, 500);
+    _fmtTimer = iv;
   } catch (e) { toast(t('fmtFail', { m: e.message }), 'err'); busy.value = false; }
 }
 </script>

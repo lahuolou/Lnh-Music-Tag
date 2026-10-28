@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,7 +190,9 @@ func persistFFmpegTo(bin string, libs []string, dir string, cfg *cstore.Config) 
 	}
 	for _, l := range libs {
 		if st, err := os.Stat(l); err == nil && !st.IsDir() {
-			_ = copyFileMode(l, filepath.Join(libDir, filepath.Base(l)), 0o644)
+			if err := copyFileMode(l, filepath.Join(libDir, filepath.Base(l)), 0o644); err != nil {
+				log.Printf("ffmpeg: persist lib %s failed: %v", l, err)
+			}
 		}
 	}
 	wrapper := filepath.Join(dir, "ffmpeg")
