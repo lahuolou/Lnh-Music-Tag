@@ -130,7 +130,7 @@ onUnmounted(() => window.removeEventListener('plugins-changed', loadExtPanels));
             <button class="tab" :class="{ on: state.activeTab === 'batch' }" @click="tab('batch')">{{ t('batch') }}</button>
             <button class="tab" :class="{ on: state.activeTab === 'dedup' }" @click="tab('dedup')">{{ t('dedup') }}</button>
             <!-- 第三方插件 Web 面板动态入口（编辑/批量/去重 之后） -->
-            <button v-for="e in extPanels" class="tab ext" :class="{ on: state.activeTab === 'ext:' + e.name }" @click="tab('ext:' + e.name)">{{ e.label }}</button>
+            <button v-for="e in extPanels" :key="e.name" class="tab ext" :class="{ on: state.activeTab === 'ext:' + e.name }" @click="tab('ext:' + e.name)">{{ e.label }}</button>
           </div>
           <EditPanel v-if="state.activeTab === 'edit' || state.activeTab === 'list'" />
           <BatchPanel v-else-if="state.activeTab === 'batch'" />

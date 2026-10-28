@@ -1,10 +1,10 @@
 <script setup>
 import { onUnmounted, ref } from 'vue'
-import { state, toast, refresh, startToolJob, stopToolJob } from '../store.js'
+import { state, toast, refresh, startToolJob } from '../store.js'
 import { api } from '../api.js'
 import { t } from '../i18n.js'
 
-const props = defineProps({ open: Boolean })
+defineProps({ open: Boolean })
 const emit = defineEmits(['close'])
 
 let _fmtTimer = null // 转码完成轮询句柄：对话框卸载时兜底清理

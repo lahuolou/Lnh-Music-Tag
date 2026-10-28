@@ -69,6 +69,78 @@ jobs:
         # -short：跳过依赖真实外网的测试（如 TestMiguLive），避免 CI 网络抖动误伤
         run: go test ./... -short
 
+  # UI E2E：构建后端 + 生成测试音频并扫描 → 启动服务 → Playwright（Chromium）跑桌面/移动端冒烟。
+  # 依赖 test 门禁；不参与镜像构建，仅作回归防线。
+  e2e:
+    runs-on: ubuntu-24.04
+    needs: [test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build frontend (produces web/dist for go:embed)
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Build Go binary
+        run: go build -o /tmp/lnh-server .
+      - name: Prepare test audio library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          mkdir -p /tmp/lnh-music
+          for i in $(seq 1 60); do
+            ffmpeg -loglevel error -f lavfi -i "sine=frequency=$((440 + i * 3)):duration=1" \
+              -b:a 128k -metadata "title=E2E Track $i" -metadata "artist=E2E Artist" \
+              -y "/tmp/lnh-music/track$i.mp3"
+          done
+          ls /tmp/lnh-music | wc -l
+      - name: Start gateway and scan test library
+        run: |
+          LNH_PORT=:10248 LNH_CONFIG_DIR="$RUNNER_TEMP/lnh-cfg" LNH_STREAM_PASS=test \
+          LNH_ADMIN_USER=admin LNH_ADMIN_PASS=admin123 /tmp/lnh-server > /tmp/lnh-server.log 2>&1 &
+          echo "server pid: $!"
+          for i in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:10248/api/version > /dev/null; then echo "ready after ${i}s"; break; fi
+            sleep 1
+          done
+          curl -sf -c /tmp/lnh-cookies http://127.0.0.1:10248/api/login \
+            -H 'Content-Type: application/json' \
+            -d '{"user":"admin","pass":"admin123"}' > /dev/null || { cat /tmp/lnh-server.log; exit 1; }
+          curl -sf -b /tmp/lnh-cookies http://127.0.0.1:10248/api/scan \
+            -H 'Content-Type: application/json' \
+            -d '{"dir":"/tmp/lnh-music"}' || { cat /tmp/lnh-server.log; exit 1; }
+          for i in $(seq 1 60); do
+            state=$(curl -sf -b /tmp/lnh-cookies http://127.0.0.1:10248/api/scan/status || echo '{}')
+            echo "scan status: $state"
+            if echo "$state" | grep -q '"running":false\|"idle":true'; then break; fi
+            sleep 1
+          done
+      - name: Install Chromium and run UI E2E
+        working-directory: web
+        run: |
+          sudo npx playwright-core install --with-deps chromium
+          LNH_E2E_BASE=http://127.0.0.1:10248 LNH_E2E_USER=admin LNH_E2E_PASS=admin123 \
+            node e2e/ui.e2e.mjs
+      - name: Upload E2E screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-screenshots
+          path: web/e2e/*.png
+          if-no-files-found: warn
+
   build:
     runs-on: ubuntu-24.04
     needs: [test]

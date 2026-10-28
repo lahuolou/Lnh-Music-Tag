@@ -67,7 +67,13 @@ async function doLogin(page) {
   return enterLibrary(page);
 }
 
-const browser = await chromium.launch({ channel: 'msedge', headless: true });
+// 优先系统 Edge（Windows 开发机），CI/无 Edge 环境回退 playwright-core 自带 Chromium
+let browser;
+try {
+  browser = await chromium.launch({ channel: 'msedge', headless: true });
+} catch {
+  browser = await chromium.launch({ headless: true });
+}
 const ctx = await browser.newContext();
 try {
   // ——— 桌面（1280×800）———

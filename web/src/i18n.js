@@ -1,5 +1,5 @@
 // 轻量 i18n：中英双语，默认中文，切换持久化到 localStorage。
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 const lang = ref(localStorage.getItem('lnh-lang') || 'zh')
 

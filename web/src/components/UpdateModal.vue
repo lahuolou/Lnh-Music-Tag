@@ -1,7 +1,7 @@
 <script setup>
 import { t } from '../i18n.js'
 
-const props = defineProps({ open: Boolean, data: Object })
+const props = defineProps({ open: Boolean, data: { type: Object, default: null } })
 const emit = defineEmits(['close', 'later', 'view'])
 
 function view() {
