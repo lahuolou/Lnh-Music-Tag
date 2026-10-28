@@ -325,6 +325,11 @@ func (sm *scanManager) start(store *store, cfg *cstore.Config, dir string, autoF
 		// 写操作日志：扫描完成（新增/跳过/清理的失效文件数）
 		// 扫描结束后按后台配置的整理方式整理曲库（幂等，已就位跳过；失败仅记录日志不阻断）
 		moved, orgFailed := organizeLibrary(store, dir, organizeModeOf(cfg), func(m string) { log.Printf("整理: %s", m) })
+		// 歌单导入：.m3u/.m3u8 → 网关歌单（幂等重建 m3u- 前缀；需在整理后执行，
+		// 保证曲目路径为最终形态）。失败仅记录日志，不阻断扫描结果。
+		if n := importM3UPlaylists(store, cfg, dir); n > 0 {
+			log.Printf("扫描导入 %d 个 .m3u 歌单", n)
+		}
 		detail := actDetail("removed", removed)
 		if moved > 0 || orgFailed > 0 {
 			detail += actDetail("organized", moved)

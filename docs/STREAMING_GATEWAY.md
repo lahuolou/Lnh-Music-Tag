@@ -95,8 +95,14 @@ Lnh-Music-Tag 内置**音乐统一网关**：一个网关对外提供 **Subsonic
 
 ## 6. 端点清单
 
-- Subsonic / OpenSubsonic：`/rest/ping`、`/rest/getMusicFolders`、`/rest/getIndexes`、`/rest/getArtists`、`/rest/getArtist`、`/rest/getAlbum`、`/rest/getAlbumList2`、`/rest/getSong`、`/rest/getSongs`、`/rest/search2`、`/rest/search3`、`/rest/getPlaylists`、`/rest/getPlaylist`、`/rest/star`、`/rest/unstar`、`/rest/getStarred`、`/rest/getStarred2`、`/rest/scrobble`、`/rest/getNowPlaying`、`/rest/getLyrics`、`/rest/getCoverArt`、`/rest/stream`
+- Subsonic / OpenSubsonic：`/rest/ping`、`/rest/getMusicFolders`、`/rest/getIndexes`、`/rest/getArtists`、`/rest/getArtist`、`/rest/getAlbum`、`/rest/getAlbumList2`、`/rest/getSong`、`/rest/search2`、`/rest/search3`、`/rest/getPlaylists`、`/rest/getPlaylist`、`/rest/star`、`/rest/unstar`、`/rest/getStarred`、`/rest/getStarred2`、`/rest/scrobble`、`/rest/getNowPlaying`、`/rest/getLyrics`、`/rest/getCoverArt`、`/rest/stream`
 - Navidrome 兼容：`/auth/login`、`/auth/token`、`/ping`、`/api/song`、`/api/album`、`/api/artist`、`/api/playlist`、`/api/search`、`/api/starred`、`/api/genres`、`/api/albumlist/{type}`、`/api/songlist/{type}`、`/api/library/*`、`/api/statistics`、`/api/nowplaying`、`/api/lyrics/{songId}`、`/api/stream/{id}`、`/api/coverart/{id}`（并注册 `/rest/api/*` 前缀）
 - Jellyfin / Emby：`/System/Info/Public`、`/Users/AuthenticateByName`、`/Users`、`/Items`、`/Items/{id}`、`/Artists`、`/Albums`、`/Playlists`、`/Genres`、`/Audio/{id}/stream`、`/Items/{id}/Images/Primary`、`/Sessions`、`/Sessions/Playing`（Jellyfin 同时在根路径注册 `/System/`、`/Items` 等）
+
+### 6.1 歌单（.m3u/.m3u8 自动导入）
+
+- 扫描音乐库时自动发现 `.m3u` / `.m3u8` 歌单文件并导入为网关歌单（`streaming_playlists` 配置），Subsonic `getPlaylists` / Navidrome `/api/playlist` / Jellyfin `/Playlists` 三协议共享；
+- 歌单名取文件主名（如 `最爱.m3u` → 歌单「最爱」）；条目支持相对路径（相对歌单文件所在目录、相对音乐库根）与绝对路径；`http(s)://` / `mms://` URL 条目与无法匹配的缺失文件自动跳过；Windows 路径大小写不敏感匹配；
+- 每次扫描**幂等重建**：歌单文件删除或改名后，网关中对应歌单自动消失；手工通过网关创建的歌单（ID 非 `m3u-` 前缀）不受影响。
 
 完整字段级说明见 [API.md](./API.md) 第 3 节。

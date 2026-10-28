@@ -70,6 +70,7 @@ Lnh-Music-Tag is a self-hosted music library tool whose **core highlights are sc
 ### Streaming Gateway
 - One gateway, four protocols: **Subsonic / OpenSubsonic, Jellyfin, Emby, Navidrome**
 - Standard endpoints: indexes, artist/album/song browsing, search, lyrics, playlists, favorites, Now Playing, play counts, direct/transcoded streaming
+- **Auto-import .m3u/.m3u8 playlists**: playlists found under the music library during a scan are imported as gateway playlists (shared across all three protocols); removing the playlist file drops the gateway playlist on the next scan
 - **Unified base URL**: point any client at `http://IP:10248` — the gateway auto-selects the protocol from the request (legacy `/rest`, `/jellyfin`, `/emby` suffixes still work)
 - **Password required**: a streaming password must be configured before the gateway can be enabled — unauthorized access is blocked
 - Works with official and third-party clients: Yingliu, Archer, Jellyfin, Emby, Navidrome and more
