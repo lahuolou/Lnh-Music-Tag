@@ -4,7 +4,9 @@
 
 ---
 
-## Unreleased
+## 1.0.16
+
+流媒体网关集成补全：Subsonic `getSongs` 歌曲列表端点 + `.m3u/.m3u8` 歌单自动导入（修复 NASMusicTV 等客户端歌曲数恒 0、服务器歌单为空）。
 
 ### 功能新增
 

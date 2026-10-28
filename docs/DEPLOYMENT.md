@@ -141,7 +141,7 @@ docker compose pull && docker compose up -d
 ```
 
 - **1Panel / NAS（群晖等）**：进入「容器」→ 找到 `lnh-music-tag` → 点击**重建**（会拉取 latest 新镜像）；或在「容器 → 编排」中对原有 compose 点**更新/重建**；
-- **验证升级**：升级后进入应用「设置」页或访问 `http://<主机>:10248/api/version`，确认版本显示 `1.0.15`（应用内「检查更新」在容器环境仅作版本提示，实际升级以镜像重建为准）；
+- **验证升级**：升级后进入应用「设置」页或访问 `http://<主机>:10248/api/version`，确认版本显示 `1.0.16`（应用内「检查更新」在容器环境仅作版本提示，实际升级以镜像重建为准）；
 - 数据库自动兼容旧版本；升级不丢失配置/曲目列表/回收站；
 - 版本与 Release 见 [GitHub Releases](https://github.com/lahuolou/Lnh-Music-Tag/releases)。
 
