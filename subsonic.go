@@ -170,6 +170,8 @@ func (a *subsonicAPI) handler() http.Handler {
 				a.lastGetSong = t.ID
 				a.recMu.Unlock()
 			}
+		case "getSongs":
+			result = a.songs(r)
 		case "search3":
 			result = a.search(r, "searchResult3")
 		case "search2":
@@ -566,6 +568,102 @@ func songAlbum(t *model.Track) string {
 		return v
 	}
 	return "Unknown Album"
+}
+func songGenre(t *model.Track) string {
+	if v := tag(t, "GENRE", "genre"); v != "" {
+		return v
+	}
+	return "Unknown"
+}
+func songYear(t *model.Track) int {
+	for _, k := range []string{"YEAR", "DATE", "ORIGINALDATE"} {
+		if v := tag(t, k); v != "" {
+			if y, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return y
+			}
+		}
+	}
+	return 0
+}
+
+// songs 实现 Subsonic getSongs（歌曲列表；NASMusicTV 等客户端依赖它统计"歌曲"总数）。
+// 支持规范 type：alphabetical / byArtist / byAlbum / byGenre / byYear / byFrequent /
+// byNewest / byRandom；兼容客户端扩展值（如 alphabeticalByName，未知 type 兜底按标题）。
+// size/offset 分页（size<=0 不限制，上限由 parseStartLimit 钳制到 maxPageSize）。
+// 响应结构 <subsonic-response><songs><song .../></songs></subsonic-response>。
+func (a *subsonicAPI) songs(r *http.Request) sxNode {
+	q := r.URL.Query()
+	typ := strings.ToLower(strings.TrimSpace(q.Get("type")))
+	if typ == "" {
+		return apiError(10, "Missing parameter: type")
+	}
+	start, size := parseStartLimit(r, []string{"offset"}, []string{"size"})
+	// all() 每次返回独立切片，可安全排序/分片
+	all := a.all()
+	switch typ {
+	case "byfrequent":
+		a.mu.Lock()
+		sort.SliceStable(all, func(i, j int) bool { return a.playCounts[all[i].ID] > a.playCounts[all[j].ID] })
+		n := 0
+		for _, t := range all {
+			if a.playCounts[t.ID] > 0 {
+				all[n] = t
+				n++
+			}
+		}
+		all = all[:n]
+		a.mu.Unlock()
+	case "bynewest":
+		// all() 按扫描（添加）顺序返回：逆序后"最近添加"在前
+		for i, j := 0, len(all)-1; i < j; i, j = i+1, j-1 {
+			all[i], all[j] = all[j], all[i]
+		}
+	case "byrandom":
+		rand.Shuffle(len(all), func(i, j int) { all[i], all[j] = all[j], all[i] })
+	case "bygenre":
+		g := strings.ToLower(strings.TrimSpace(q.Get("genre")))
+		n := 0
+		for _, t := range all {
+			if strings.ToLower(songGenre(t)) == g {
+				all[n] = t
+				n++
+			}
+		}
+		all = all[:n]
+	case "byyear":
+		from, _ := strconv.Atoi(q.Get("fromYear"))
+		to, _ := strconv.Atoi(q.Get("toYear"))
+		if to == 0 {
+			to = from
+		}
+		n := 0
+		for _, t := range all {
+			if y := songYear(t); y >= from && y <= to {
+				all[n] = t
+				n++
+			}
+		}
+		all = all[:n]
+		sort.Slice(all, func(i, j int) bool { return songYear(all[i]) > songYear(all[j]) })
+	case "byartist":
+		sort.Slice(all, func(i, j int) bool { return strings.ToLower(songArtist(all[i])) < strings.ToLower(songArtist(all[j])) })
+	case "byalbum":
+		sort.Slice(all, func(i, j int) bool { return strings.ToLower(songAlbum(all[i])) < strings.ToLower(songAlbum(all[j])) })
+	default: // alphabetical / alphabeticalByName 等扩展值兜底按标题
+		sort.Slice(all, func(i, j int) bool { return strings.ToLower(songTitle(all[i])) < strings.ToLower(songTitle(all[j])) })
+	}
+	if start > len(all) {
+		start = len(all)
+	}
+	end := len(all)
+	if size > 0 && start+size < end {
+		end = start + size
+	}
+	children := make([]sxNode, 0, end-start)
+	for _, t := range all[start:end] {
+		children = append(children, a.songNode(t))
+	}
+	return node("subsonic-response", attr("status", "ok"), attr("version", subsonicVersion), child("songs", node("songs", children...)))
 }
 func stableID(prefix, s string) string {
 	h := md5.Sum([]byte(strings.ToLower(strings.TrimSpace(s))))

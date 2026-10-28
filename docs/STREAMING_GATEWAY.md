@@ -95,7 +95,7 @@ Lnh-Music-Tag 内置**音乐统一网关**：一个网关对外提供 **Subsonic
 
 ## 6. 端点清单
 
-- Subsonic / OpenSubsonic：`/rest/ping`、`/rest/getMusicFolders`、`/rest/getIndexes`、`/rest/getArtists`、`/rest/getArtist`、`/rest/getAlbum`、`/rest/getAlbumList2`、`/rest/getSong`、`/rest/search2`、`/rest/search3`、`/rest/getPlaylists`、`/rest/getPlaylist`、`/rest/star`、`/rest/unstar`、`/rest/getStarred`、`/rest/getStarred2`、`/rest/scrobble`、`/rest/getNowPlaying`、`/rest/getLyrics`、`/rest/getCoverArt`、`/rest/stream`
+- Subsonic / OpenSubsonic：`/rest/ping`、`/rest/getMusicFolders`、`/rest/getIndexes`、`/rest/getArtists`、`/rest/getArtist`、`/rest/getAlbum`、`/rest/getAlbumList2`、`/rest/getSong`、`/rest/getSongs`、`/rest/search2`、`/rest/search3`、`/rest/getPlaylists`、`/rest/getPlaylist`、`/rest/star`、`/rest/unstar`、`/rest/getStarred`、`/rest/getStarred2`、`/rest/scrobble`、`/rest/getNowPlaying`、`/rest/getLyrics`、`/rest/getCoverArt`、`/rest/stream`
 - Navidrome 兼容：`/auth/login`、`/auth/token`、`/ping`、`/api/song`、`/api/album`、`/api/artist`、`/api/playlist`、`/api/search`、`/api/starred`、`/api/genres`、`/api/albumlist/{type}`、`/api/songlist/{type}`、`/api/library/*`、`/api/statistics`、`/api/nowplaying`、`/api/lyrics/{songId}`、`/api/stream/{id}`、`/api/coverart/{id}`（并注册 `/rest/api/*` 前缀）
 - Jellyfin / Emby：`/System/Info/Public`、`/Users/AuthenticateByName`、`/Users`、`/Items`、`/Items/{id}`、`/Artists`、`/Albums`、`/Playlists`、`/Genres`、`/Audio/{id}/stream`、`/Items/{id}/Images/Primary`、`/Sessions`、`/Sessions/Playing`（Jellyfin 同时在根路径注册 `/System/`、`/Items` 等）
 

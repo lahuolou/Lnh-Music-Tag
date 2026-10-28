@@ -8,11 +8,12 @@
 
 ### 功能新增
 
+- **实现 Subsonic `getSongs`**（歌曲列表）：支持规范 `type`（alphabetical / byArtist / byAlbum / byGenre / byYear / byFrequent / byNewest / byRandom），兼容客户端扩展值（如 `alphabeticalByName`），`size/offset` 分页；修复 NASMusicTV 等客户端「歌曲数恒为 0」——此前该操作未实现返回 Unsupported operation。
 - **.m3u/.m3u8 歌单自动导入**：扫描音乐库时自动发现歌单文件，解析其中曲目并导入为网关歌单（Subsonic / Navidrome / Jellyfin 三协议共享，客户端「服务器歌单」即可看到）。幂等重建——歌单文件删除/改名后网关歌单随之消失；支持相对路径（相对歌单目录/音乐库根）、绝对路径，URL 条目与缺失文件自动跳过，Windows 路径大小写不敏感匹配。
 
 ### 文档
 
-- STREAMING_GATEWAY 端点清单修正：`getSongs` 操作实际未实现，从清单移除。
+- STREAMING_GATEWAY 端点清单恢复 `getSongs`（已实现）。
 
 ---
 
