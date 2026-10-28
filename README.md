@@ -98,8 +98,8 @@ Lnh-Music-Tag 是一款自托管音乐库工具，**核心亮点是刮削与自�
 ```yaml
 services:
   lnh-music-tag:
-    # 服务器/1Panel 部署直接用 GHCR 公开镜像（无需本地构建）
-    image: ghcr.io/lahuolou/lnh-music-tag:latest
+    # 服务器/1Panel 部署直接用 Docker Hub 公开镜像（无需本地构建）；GitHub 备用源：ghcr.io/lahuolou/lnh-music-tag:latest
+    image: lahuolou/lnh-music-tag:latest
     container_name: lnh-music-tag
     ports:
       - "10248:10248"        # 宿主机 10248 -> 容器 10248（改用非常用端口）
@@ -160,7 +160,7 @@ docker run -d \
   -e LNH_ADMIN_USER=admin \
   -e LNH_ADMIN_PASS=你的密码 \
   -e LNH_INSTALL_FFMPEG=true \
-  ghcr.io/lahuolou/lnh-music-tag:latest
+  lahuolou/lnh-music-tag:latest
 ```
 
 ### 方式三：本地构建运行

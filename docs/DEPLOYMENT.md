@@ -8,13 +8,13 @@
 
 ### 1.1 Docker Compose（推荐）
 
-镜像发布在 GHCR（无需本地构建）。下面这份 `docker-compose.yml` 与仓库一致，按需修改即可：
+镜像发布在 Docker Hub（无需本地构建），GitHub GHCR 作为备用源。下面这份 `docker-compose.yml` 与仓库一致，按需修改即可：
 
 ```yaml
 services:
   lnh-music-tag:
-    # 服务器/1Panel 部署直接用 GHCR 公开镜像（无需本地构建）
-    image: ghcr.io/lahuolou/lnh-music-tag:latest
+    # 服务器/1Panel 部署直接用 Docker Hub 公开镜像（无需本地构建）；GHCR 备用源：ghcr.io/lahuolou/lnh-music-tag:latest
+    image: lahuolou/lnh-music-tag:latest
     container_name: lnh-music-tag
     ports:
       - "10248:10248"        # 宿主机 10248 -> 容器 10248（改用非常用端口）
@@ -76,7 +76,7 @@ docker run -d \
   -e LNH_ADMIN_USER=admin \
   -e LNH_ADMIN_PASS=你的密码 \
   -e LNH_INSTALL_FFMPEG=true \
-  ghcr.io/lahuolou/lnh-music-tag:latest
+  lahuolou/lnh-music-tag:latest
 ```
 
 ### 1.3 本地构建运行

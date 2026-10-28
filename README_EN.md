@@ -92,8 +92,8 @@ Adjust this `docker-compose.yml` directly, then start:
 ```yaml
 services:
   lnh-music-tag:
-    # 服务器/1Panel 部署直接用 GHCR 公开镜像（无需本地构建）
-    image: ghcr.io/lahuolou/lnh-music-tag:latest
+    # Deploy with the public Docker Hub image (no local build). GHCR fallback: ghcr.io/lahuolou/lnh-music-tag:latest
+    image: lahuolou/lnh-music-tag:latest
     container_name: lnh-music-tag
     ports:
       - "10248:10248"        # 宿主机 10248 -> 容器 10248（改用非常用端口）
@@ -154,7 +154,7 @@ docker run -d \
   -e LNH_ADMIN_USER=admin \
   -e LNH_ADMIN_PASS=your_password \
   -e LNH_INSTALL_FFMPEG=true \
-  ghcr.io/lahuolou/lnh-music-tag:latest
+  lahuolou/lnh-music-tag:latest
 ```
 
 ### Option 3: Build & Run Locally
