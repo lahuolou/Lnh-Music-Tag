@@ -33,9 +33,9 @@ Lnh-Music-Tag-main/
 ├── identify.go          音频内容识别（指纹库 + AcoustID）
 ├── fixencoding.go / zhscript.go / renameclean.go  乱码修复 / 简繁转换 / 后缀清理
 ├── scheduler.go         任务计划（cron）+ 后台监控（watcher 静默刮削）
-├── media_servers.go     网关总入口：协议分派、流媒体密码认证、流媒体
-├── subsonic.go / navidrome.go   Subsonic/OpenSubsonic、Navidrome 协议实现
-├── jellyfin/emby 适配   见 media_servers.go 内分派
+├── media_servers.go / media_servers_content.go / media_servers_meta.go  网关总入口：协议分派、流媒体密码认证、Jellyfin/Emby 适配（内容查询 / 歌单与播放杂项分文件维护）
+├── subsonic.go / subsonic_list.go / subsonic_media.go / subsonic_meta.go   Subsonic/OpenSubsonic 协议实现（核心基础设施 / 曲库浏览 / 媒体与歌词 / 歌单收藏评分用户）
+├── navidrome.go / navidrome_list.go / navidrome_meta.go   Navidrome 协议实现（核心基础设施 / 曲库浏览 / 歌单收藏搜索）
 ├── streaming.go         流媒体直传 / 转码回退
 ├── lyrics_cache.go / entity_cache.go  歌词/实体响应缓存（30s TTL，写时失效）
 ├── trash.go             回收站 API 与 manifest
